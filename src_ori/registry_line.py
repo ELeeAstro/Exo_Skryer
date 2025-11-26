@@ -18,6 +18,7 @@ from typing import List, Tuple, Optional
 
 import jax.numpy as jnp
 import numpy as np
+import h5py
 
 # Dataclass for each of the line opacity tables
 @dataclass(frozen=True)
@@ -57,33 +58,76 @@ def reset_registry():
 def has_line_data() -> bool:
     return bool(_LINE_ENTRIES)
 
-# Function to load the line opacity data from the formatted npz files
-def _load_line_npz(index: int, path: str, target_wavelengths: np.ndarray) -> LineRegistryEntry:
+# Function to load TauREx HDF5 opacity data
+def _load_line_h5(index: int, path: str, target_wavelengths: np.ndarray) -> LineRegistryEntry:
+    """
+    Load TauREx HDF5 format opacity tables.
 
-    # Read the npz file
-    data = np.load(path, allow_pickle=True)
-    name = data["mol"]
-    if not isinstance(name, str):
+    TauREx format:
+    - mol_name: molecule name (string)
+    - p: pressure grid in bar (nP,)
+    - t: temperature grid in K (nT,)
+    - bin_edges: wavenumber bin edges in cm^-1 (nwl+1,)
+    - xsecarr: cross sections in cm^2/molecule (nP, nT, nwl)
+
+    Returns data in registry format:
+    - pressures in bar (nP,)
+    - temperatures in K (nT,)
+    - wavelengths in microns (target_wavelengths,)
+    - cross_sections in log10(cm^2) (nT, nP, target_wavelengths)
+    """
+
+    with h5py.File(path, 'r') as f:
+        # Read molecule name
+        name = f["mol_name"][0]
+        if isinstance(name, bytes):
+            name = name.decode('utf-8')
         name = str(name)
 
-    pressures = np.asarray(data["P_bar"], dtype=float)
-    temperatures = np.asarray(data["T"], dtype=float)
-    native_wavelengths = np.asarray(data["wl"], dtype=float)
-    native_xs = np.asarray(data["sig"], dtype=float)
+        # Read grids
+        pressures = np.asarray(f["p"][:], dtype=float)  # bar
+        temperatures = np.asarray(f["t"][:], dtype=float)  # K
+        bin_edges = np.asarray(f["bin_edges"][:], dtype=float)  # cm^-1
+        native_xs = np.asarray(f["xsecarr"][:], dtype=float)  # (nP, nT, nwl) cm^2/molecule
 
-    # Dimensions of the table
-    n_pressures, n_temperatures, _ = native_xs.shape
+    # Dimensions
+    n_pressures = pressures.size
+    n_temperatures = temperatures.size
+
+    # Convert wavenumber bin edges to wavelength bin centers
+    # λ[μm] = 10000 / ν[cm^-1]
+    # Bin centers from edges
+    wavenumber_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    native_wavelengths = 10000.0 / wavenumber_centers  # μm
+
+    # Sort wavelengths (wavenumbers are descending, so wavelengths will be ascending after conversion)
+    sort_idx = np.argsort(native_wavelengths)
+    native_wavelengths = native_wavelengths[sort_idx]
+
+    # Transpose from (nP, nT, nwl) to (nT, nP, nwl) and apply wavelength sorting
+    native_xs_transposed = np.transpose(native_xs, (1, 0, 2))[:, :, sort_idx]
+
+    # Convert to log10 (handle zeros by setting minimum value)
+    # Use maximum to avoid log10(0) warning
+    min_xs = 1e-99  # corresponds to log10 = -99
+    native_xs_log = np.log10(np.maximum(native_xs_transposed, min_xs))
 
     # Dimensions of the master wavelength
     wavelength_count = target_wavelengths.size
 
-    # Interpolate the cross-sections to the master wavelength grid, making out of bounds = 1e-99
-    xs_interp = np.empty((n_pressures, n_temperatures, wavelength_count), dtype=float)
-    for iP in range(n_pressures):
-        for iT in range(n_temperatures):
-            xs_interp[iP, iT, :] = np.interp(target_wavelengths, native_wavelengths, native_xs[iP, iT, :], left=-99.0, right=-99.0)
+    # Interpolate to target wavelength grid
+    xs_interp = np.empty((n_temperatures, n_pressures, wavelength_count), dtype=float)
+    for iT in range(n_temperatures):
+        for iP in range(n_pressures):
+            xs_interp[iT, iP, :] = np.interp(
+                target_wavelengths,
+                native_wavelengths,
+                native_xs_log[iT, iP, :],
+                left=-99.0,
+                right=-99.0
+            )
 
-    # Return a dataclass with all the required entires
+    # Return a dataclass with all the required entries
     return LineRegistryEntry(
         name=name,
         idx=index,
@@ -120,7 +164,7 @@ def _rectangularize_entries(entries: List[LineRegistryEntry]) -> Tuple[LineRegis
         pressures = jnp.asarray(entry.pressures)
         temperatures = jnp.asarray(entry.temperatures)
         xs = jnp.asarray(entry.cross_sections)
-        current_pressures, current_temperatures, wavelength_count = xs.shape
+        current_temperatures, current_pressures, wavelength_count = xs.shape
         if wavelength_count != expected_wavelengths:
             raise ValueError(f"Species {entry.name} has λ grid length {wavelength_count}, expected {expected_wavelengths}.")
         if current_pressures != max_pressures:
@@ -128,7 +172,7 @@ def _rectangularize_entries(entries: List[LineRegistryEntry]) -> Tuple[LineRegis
         pad_temperatures = max_temperatures - current_temperatures
         if pad_temperatures > 0:
             temperatures = jnp.pad(temperatures, (0, pad_temperatures), mode="edge")
-            xs = jnp.pad(xs, ((0, 0), (0, pad_temperatures), (0, 0)), mode="edge")
+            xs = jnp.pad(xs, ((0, pad_temperatures), (0, 0), (0, 0)), mode="edge")
         padded_entries.append(
             LineRegistryEntry(
                 name=entry.name,
@@ -160,8 +204,14 @@ def load_line_registry(cfg, obs, lam_master: Optional[np.ndarray] = None):
 
     # Read in the line data for each species given by the YAML file - add to the entries list
     for index, spec in enumerate(cfg.opac.line):
-        print("[Line] Reading line xs for", spec.species, "@", spec.path)
-        entry = _load_line_npz(index, spec.path, wavelengths)
+        path = spec.path
+        print("[Line] Reading line xs for", spec.species, "@", path)
+
+        # Check file format
+        if not (path.endswith('.h5') or path.endswith('.hdf5')):
+            raise ValueError(f"Unsupported file format for {path}. Expected .h5 or .hdf5")
+
+        entry = _load_line_h5(index, path, wavelengths)
         entries.append(entry)
 
     # Now need to pad in the temperature dimension to make all grids to the same size (for JAX)

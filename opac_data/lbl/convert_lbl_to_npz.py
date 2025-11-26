@@ -69,7 +69,7 @@ def read_legacy_opacity(path: Path) -> Tuple[str, np.ndarray, np.ndarray, np.nda
         T  = _fromstring(_read_nonempty_line(f), count=nT)  # K
         P  = _fromstring(_read_nonempty_line(f), count=nP)  # bar
         wl = _fromstring(_read_nonempty_line(f), count=nb)  # μm
-        _  = _read_nonempty_line(f)                         # wn (unused)
+        wn  = _fromstring(_read_nonempty_line(f), count=nb) # wn                      # wn (unused)
 
         sigma_tp_lam = np.empty((nT, nP, nb), dtype=np.float64)
         for t in range(nT):
@@ -79,15 +79,12 @@ def read_legacy_opacity(path: Path) -> Tuple[str, np.ndarray, np.ndarray, np.nda
     if not np.all(np.diff(wl) > 0):
         raise ValueError(f"Wavelength grid must be strictly increasing (μm) in {path}")
 
-    # Transpose to (nP, nT, nLam) to match xs_registry.py
-    sigma_p_t_lam = np.transpose(sigma_tp_lam, (1, 0, 2))
-
-    return mol, P, T, wl, sigma_p_t_lam
+    return mol, P, T, wl,sigma_tp_lam
 
 
 def write_npz(out_path: Path, mol: str,
               P_bar: np.ndarray, T_k: np.ndarray,
-              lam_um: np.ndarray, sigma_p_t_lam: np.ndarray,
+              lam_um: np.ndarray, sigma_tp_lam: np.ndarray,
               overwrite: bool = False) -> None:
     if out_path.exists() and not overwrite:
         print(f"[skip] {out_path} already exists (use --overwrite to replace).")
@@ -99,7 +96,7 @@ def write_npz(out_path: Path, mol: str,
         P_bar=P_bar,
         T=T_k,
         wl=lam_um,
-        sig=sigma_p_t_lam,
+        sig=sigma_tp_lam,
         mol=np.array(mol, dtype=object),
     )
     print(f"[write] {out_path}")

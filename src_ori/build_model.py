@@ -160,7 +160,7 @@ def build_forward_model(cfg, obs, return_highres: bool = False):
         dz = jnp.diff(z_lev)
 
         # Interpolate to find p_lay (pressure at mid height)
-        p_lay = jnp.interp(z_lay, z_lev, p_lev)
+        p_lay = 10.0**jnp.interp(z_lay, z_lev, jnp.log10(p_lev))
 
         # Atmospheric density and number density
         rho = (mu_lay * amu * p_lay) / (kb * T_lay)

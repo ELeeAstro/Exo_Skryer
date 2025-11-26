@@ -128,6 +128,7 @@ opac_data/**/*.h5
 opac_data/**/*.dat
 opac_data/**/*.fits
 opac_data/**/*.txt
+opac_data/**/*.cia
 
 # Large observational data files
 obs_data/**/*.fits
@@ -145,6 +146,9 @@ JANAF_data/**/*.npy
 
 # Stash directory (old/test code)
 stash/
+
+# Agent workspace (scripts and tools created by AI agent)
+agent_workspace/
 
 # =============================================================================
 # Temporary and Output Files

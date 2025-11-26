@@ -19,15 +19,23 @@ physics:
 
 opac:
 
-  wl_master: wl_dnu_1.txt
+  wl_master: wl_taurex_R15000.txt
   full_grid: False
 
   line:
-    - {species: H2O, path: ../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: CO2, path: ../opac_data/lbl/CO2_dnu_1.npz}
-    - {species: CO, path: ../opac_data/lbl/CO_dnu_1.npz}
-    - {species: CH4, path: ../opac_data/lbl/CH4_dnu_1.npz}      
-    - {species: K, path: ../opac_data/lbl/K_dnu_1.npz}
+    # NPZ format (old)
+    # - {species: H2O, path: ../opac_data/lbl/H2O_dnu_1.npz}
+    # - {species: CO2, path: ../opac_data/lbl/CO2_dnu_1.npz}
+    # - {species: CO, path: ../opac_data/lbl/CO_dnu_1.npz}
+    # - {species: CH4, path: ../opac_data/lbl/CH4_dnu_1.npz}
+    # - {species: K, path: ../opac_data/lbl/K_dnu_1.npz}
+
+    # TauREx HDF5 format (new)
+    - {species: H2O, path: ../opac_data/lbl/1H2-16O__POKAZATEL__R15000_0.3-50mu.xsec.TauREx.h5}
+    - {species: CO2, path: ../opac_data/lbl/12C-16O2__Dozen.R15000_0.3-50mu.xsec.TauREx.h5}
+    - {species: CO, path: ../opac_data/lbl/12C-16O__Li2015.R15000_0.3-50mu.xsec.TauREx.h5}
+    - {species: CH4, path: ../opac_data/lbl/12C-1H4__MM.R15000_0.3-50mu.xsec.TauREx.h5}
+    - {species: K, path: ../opac_data/lbl/39K__Kurucz-K.R15000_0.3-50mu.xsec.TauREx.h5}
   ray:
     - {species: H2}
     - {species: He}
@@ -39,10 +47,10 @@ opac:
 
 params:
 
-  - { name: R_s,   dist: delta,   value: 1.57, transform: identity, init: 1.57}
+  - { name: R_s,   dist: delta,   value: 1.57323, transform: identity, init: 1.57323}
   - { name: p_bot, dist: delta,   value: 100.0,  transform: identity, init: 100.0 }
-  - { name: p_top, dist: delta,   value: 1e-8, transform: identity, init: 1e-8}
-  - { name: rho_d, dist: delta,   value: 1.0, transform: identity, init: 1.}
+  - { name: p_top, dist: delta,   value: 1e-5, transform: identity, init: 1e-5}
+  #- { name: rho_d, dist: delta,   value: 1.0, transform: identity, init: 1.}
 
   - { name: log_g, dist: uniform, low: 2.2,   high: 3.0, transform: logit, init: 2.8 }
   - { name: R_p, dist: uniform, low: 1.6,   high: 2.1,  transform: logit, init: 1.4}
@@ -53,7 +61,7 @@ params:
   - { name: f_CO, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
   - { name: f_CH4, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
   - { name: f_K, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
-  - { name: f_H-, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
+  - { name: f_H-, dist: log_uniform, low: 2.5e-15,   high: 0.4,  transform: log, init: 1e-6}
 
   # - { name: f_cloud, dist: uniform, low: 0.0,   high: 1.0, transform: logit, init: 0.5}
 

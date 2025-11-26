@@ -29,33 +29,58 @@ def _load_sigma_cube() -> jnp.ndarray:
     return _SIGMA_CACHE
 
 
-def _interp_weights(grid: jnp.ndarray, targets: jnp.ndarray):
-    idx = jnp.searchsorted(grid, targets, side="right") - 1
-    idx = jnp.clip(idx, 0, grid.size - 2)
-    lower = jnp.take(grid, idx)
-    upper = jnp.take(grid, idx + 1)
-    weight = jnp.where(upper > lower, (targets - lower) / (upper - lower), 0.0)
-    return idx, jnp.clip(weight, 0.0, 1.0)
-
-
 def _interpolate_sigma(layer_pressures_bar: jnp.ndarray, layer_temperatures: jnp.ndarray) -> jnp.ndarray:
+    """
+    Bilinear interpolation of cross sections on (log T, log P) grids.
+
+    sigma_cube shape: (n_species, n_temp, n_pressure, n_wavelength)
+    Returns: (n_species, n_layers, n_wavelength)
+    """
     sigma_cube = _load_sigma_cube()
     pressure_grid = XS.line_pressure_grid()
     temperature_grids = XS.line_temperature_grids()
-    pressure_idx, pressure_weight = _interp_weights(pressure_grid, layer_pressures_bar)
-    interpolate_temperatures = jax.vmap(lambda grid: _interp_weights(grid, layer_temperatures), in_axes=0)
-    temperature_idx, temperature_weight = interpolate_temperatures(temperature_grids)
 
-    def _interpolate_species(species_sigma: jnp.ndarray, temp_idx: jnp.ndarray, temp_weight: jnp.ndarray) -> jnp.ndarray:
-        s00 = species_sigma[pressure_idx, temp_idx, :]
-        s01 = species_sigma[pressure_idx, temp_idx + 1, :]
-        s10 = species_sigma[pressure_idx + 1, temp_idx, :]
-        s11 = species_sigma[pressure_idx + 1, temp_idx + 1, :]
-        lower_interp = (1.0 - temp_weight)[:, None] * s00 + temp_weight[:, None] * s01
-        upper_interp = (1.0 - temp_weight)[:, None] * s10 + temp_weight[:, None] * s11
-        return (1.0 - pressure_weight)[:, None] * lower_interp + pressure_weight[:, None] * upper_interp
+    # Convert to log10 space for interpolation
+    log_p_grid = jnp.log10(pressure_grid)
+    log_p_layers = jnp.log10(layer_pressures_bar)
+    log_t_layers = jnp.log10(layer_temperatures)
 
-    sigma_log = jax.vmap(_interpolate_species, in_axes=(0, 0, 0))(sigma_cube, temperature_idx, temperature_weight)
+    # Find pressure bracket indices and weights in log space (same for all species)
+    p_idx = jnp.searchsorted(log_p_grid, log_p_layers) - 1
+    p_idx = jnp.clip(p_idx, 0, len(log_p_grid) - 2)
+    p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
+    p_weight = jnp.clip(p_weight, 0.0, 1.0)
+
+    def _interp_one_species(sigma_3d, temp_grid):
+        """Interpolate cross sections for one species."""
+        # sigma_3d: (n_temp, n_pressure, n_wavelength)
+        # temp_grid: (n_temp,)
+
+        # Convert temperature grid to log space
+        log_t_grid = jnp.log10(temp_grid)
+
+        # Find temperature bracket indices and weights in log space
+        t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
+        t_idx = jnp.clip(t_idx, 0, len(log_t_grid) - 2)
+        t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
+        t_weight = jnp.clip(t_weight, 0.0, 1.0)
+
+        # Get four corners of bilinear interpolation rectangle
+        # Indexing: sigma_3d[temp, pressure, wavelength]
+        s_t0_p0 = sigma_3d[t_idx, p_idx, :]              # shape: (n_layers, n_wavelength)
+        s_t0_p1 = sigma_3d[t_idx, p_idx + 1, :]
+        s_t1_p0 = sigma_3d[t_idx + 1, p_idx, :]
+        s_t1_p1 = sigma_3d[t_idx + 1, p_idx + 1, :]
+
+        # Bilinear interpolation: first interpolate in pressure, then temperature
+        s_t0 = (1.0 - p_weight)[:, None] * s_t0_p0 + p_weight[:, None] * s_t0_p1
+        s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
+        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
+
+        return s_interp
+
+    # Vectorize over all species
+    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, temperature_grids)
     return 10.0 ** sigma_log
 
 

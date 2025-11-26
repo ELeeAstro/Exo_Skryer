@@ -88,8 +88,6 @@ def has_bandpass_data() -> bool:
     """
     return bool(_BAND_ENTRIES)
 
-
-@lru_cache(maxsize=16)
 def get_filter_data(mode: str) -> Tuple[np.ndarray, np.ndarray]:
     """
     Loads and caches the raw transmission data (wavelength, throughput) for a given filter mode.

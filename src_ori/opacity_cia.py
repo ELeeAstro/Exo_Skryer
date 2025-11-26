@@ -11,7 +11,7 @@ Sections to complete:
     - Notes
 """
 
-from typing import Dict, Tuple
+from typing import Dict
 
 import jax.numpy as jnp
 from jax import vmap
@@ -37,28 +37,52 @@ def _load_cia_sigma() -> jnp.ndarray:
     return _CIA_SIGMA_CACHE
 
 
-def _compute_linear_weights(grid: jnp.ndarray, targets: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    idx = jnp.searchsorted(grid, targets, side="right") - 1
-    idx = jnp.clip(idx, 0, grid.size - 2)
-    lower = jnp.take(grid, idx)
-    upper = jnp.take(grid, idx + 1)
-    weight = jnp.where(upper > lower, (targets - lower) / (upper - lower), 0.0)
-    return idx, jnp.clip(weight, 0.0, 1.0)
-
-
 def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
+    """
+    Linear interpolation of CIA cross sections on log T grids.
+
+    sigma_cube shape: (n_species, n_temp, n_wavelength)
+    Returns: (n_species, n_layers, n_wavelength)
+    """
     sigma_cube = _load_cia_sigma()
     temperature_grids = XS.cia_temperature_grids()
-    idx, weight = vmap(_compute_linear_weights, in_axes=(0, None))(temperature_grids, layer_temperatures)
-    idx_expanded = idx[:, :, None]
-    sigma_lower = jnp.take_along_axis(sigma_cube, idx_expanded, axis=1)
-    sigma_upper = jnp.take_along_axis(sigma_cube, idx_expanded + 1, axis=1)
-    weight_expanded = weight[:, :, None]
-    sigma_interp = (1.0 - weight_expanded) * sigma_lower + weight_expanded * sigma_upper
-    min_temperature = temperature_grids[:, 0]
-    mask = layer_temperatures[None, :] < min_temperature[:, None]
-    tiny = jnp.array(-199, dtype=sigma_interp.dtype)
-    return 10.0**jnp.where(mask[:, :, None], tiny, sigma_interp)
+
+    # Convert to log10 space for interpolation
+    log_t_layers = jnp.log10(layer_temperatures)
+
+    def _interp_one_species(sigma_2d, temp_grid):
+        """Interpolate cross sections for one CIA species."""
+        # sigma_2d: (n_temp, n_wavelength)
+        # temp_grid: (n_temp,)
+
+        # Convert temperature grid to log space
+        log_t_grid = jnp.log10(temp_grid)
+
+        # Find temperature bracket indices and weights in log space
+        t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
+        t_idx = jnp.clip(t_idx, 0, len(log_t_grid) - 2)
+        t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
+        t_weight = jnp.clip(t_weight, 0.0, 1.0)
+
+        # Get lower and upper temperature brackets
+        # Indexing: sigma_2d[temp, wavelength]
+        s_t0 = sigma_2d[t_idx, :]          # shape: (n_layers, n_wavelength)
+        s_t1 = sigma_2d[t_idx + 1, :]
+
+        # Linear interpolation in temperature
+        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
+
+        # Set cross sections to very small value below minimum temperature
+        min_temp = temp_grid[0]
+        below_min = layer_temperatures < min_temp
+        tiny = jnp.array(-199.0, dtype=s_interp.dtype)
+        s_interp = jnp.where(below_min[:, None], tiny, s_interp)
+
+        return s_interp
+
+    # Vectorize over all CIA species
+    sigma_log = vmap(_interp_one_species)(sigma_cube, temperature_grids)
+    return 10.0 ** sigma_log
 
 
 def _is_hminus(name: str) -> bool:
