@@ -73,7 +73,7 @@ def has_ck_data() -> bool:
     return bool(_CK_ENTRIES)
 
 # Function to load petitRADTRANS HDF5 correlated-k opacity data
-def _load_ck_h5(index: int, path: str, target_wavelengths: np.ndarray, cfg) -> CKRegistryEntry:
+def _load_ck_h5(index: int, path: str, obs: dict, cfg, use_full_grid: bool = False) -> CKRegistryEntry:
     """
     Load petitRADTRANS HDF5 format correlated-k opacity tables.
 
@@ -90,13 +90,13 @@ def _load_ck_h5(index: int, path: str, target_wavelengths: np.ndarray, cfg) -> C
     Returns data in registry format:
     - pressures in bar (nP,)
     - temperatures in K (nT,)
-    - wavelengths in microns (from ck table, must match target_wavelengths)
+    - wavelengths in microns (cut to obs bands)
     - g_points: g-point locations (ng,)
     - g_weights: gauss quadrature weights (ng,)
-    - cross_sections in log10(cm^2) (nT, nP, nwl, ng)
+    - cross_sections in log10(cm^2) (nT, nP, nwl_cut, ng)
 
     Note: Correlated-k tables are pre-banded and cannot be interpolated in wavelength.
-          The wavelength grid from the table must match the master wavelength grid.
+          This function cuts the table to only wavelengths within observation bands.
     """
 
     name = cfg.opac.line[index].species
@@ -136,24 +136,34 @@ def _load_ck_h5(index: int, path: str, target_wavelengths: np.ndarray, cfg) -> C
     # Transpose from (nP, nT, nwl, ng) to (nT, nP, nwl, ng) and apply wavelength sorting
     kcoeff_transposed = np.transpose(native_kcoeff, (1, 0, 2, 3))[:, :, sort_idx, :]
 
-    # Check that wavelength grids match
-    if target_wavelengths is not None:
-        if len(wavelengths) != len(target_wavelengths):
-            raise ValueError(
-                f"Wavelength grid mismatch for {name}: "
-                f"ck table has {len(wavelengths)} bins, master grid has {len(target_wavelengths)} bins. "
-                f"Correlated-k tables cannot be interpolated in wavelength."
-            )
-        if not np.allclose(wavelengths, target_wavelengths, rtol=1e-6):
-            raise ValueError(
-                f"Wavelength grid mismatch for {name}: "
-                f"ck table wavelengths do not match master grid. "
-                f"Correlated-k tables cannot be interpolated in wavelength."
-            )
+    # Create mask for wavelengths within observation bands
+    if use_full_grid:
+        mask = np.ones_like(wavelengths, dtype=bool)
+        print(f"[c-k] Using full wavelength grid for {name}: {len(wavelengths)} bins")
+    else:
+        wl_obs = np.asarray(obs["wl"], dtype=float)
+        dwl_obs = np.asarray(obs["dwl"], dtype=float)
+        left_edges = wl_obs - dwl_obs
+        right_edges = wl_obs + dwl_obs
+
+        # Mask wavelengths that fall within any observation bin
+        mask = np.any(
+            (wavelengths[None, :] >= left_edges[:, None]) & (wavelengths[None, :] <= right_edges[:, None]),
+            axis=0,
+        )
+
+        if not np.any(mask):
+            raise ValueError(f"No CK wavelengths for {name} lie within observation bins.")
+
+        print(f"[c-k] Cut wavelength grid for {name}: {np.sum(mask)}/{len(wavelengths)} bins retained")
+
+    # Apply mask to wavelengths and cross_sections
+    wavelengths_cut = wavelengths[mask]
+    kcoeff_cut = kcoeff_transposed[:, :, mask, :]
 
     # Convert to log10 (handle zeros by setting minimum value)
     min_xs = 1e-99  # corresponds to log10 = -99
-    kcoeff_log = np.log10(np.maximum(kcoeff_transposed, min_xs))
+    kcoeff_log = np.log10(np.maximum(kcoeff_cut, min_xs))
 
     # Return a dataclass with all the required entries
     return CKRegistryEntry(
@@ -161,7 +171,7 @@ def _load_ck_h5(index: int, path: str, target_wavelengths: np.ndarray, cfg) -> C
         idx=index,
         pressures=jnp.asarray(pressures),
         temperatures=jnp.asarray(temperatures),
-        wavelengths=jnp.asarray(wavelengths),
+        wavelengths=jnp.asarray(wavelengths_cut),
         g_points=jnp.asarray(g_points),
         g_weights=jnp.asarray(weights),
         cross_sections=jnp.asarray(kcoeff_log),
@@ -249,8 +259,8 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None):
         reset_registry()
         return
 
-    # Use the observational wavelengths to interpolate to if no master grid is present
-    wavelengths = np.asarray(obs["wl"], dtype=float) if lam_master is None else np.asarray(lam_master, dtype=float)
+    # Check if using full grid (from cfg.opac.full_grid)
+    use_full_grid = getattr(cfg.opac, "full_grid", False)
 
     # Read in the c-k data for each species given by the YAML file - add to the entries list
     for index, spec in enumerate(cfg.opac.line):
@@ -261,7 +271,7 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None):
         if not (path.endswith('.h5') or path.endswith('.hdf5')):
             raise ValueError(f"Unsupported file format for {path}. Expected .h5 or .hdf5")
 
-        entry = _load_ck_h5(index, path, wavelengths, cfg)
+        entry = _load_ck_h5(index, path, obs, cfg, use_full_grid=use_full_grid)
         entries.append(entry)
 
     # Now need to pad in the temperature and g dimensions to make all grids to the same size (for JAX)

@@ -93,11 +93,47 @@ def zero_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarr
 
 
 def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]):
+    """
+    Compute line-by-line opacity.
+
+    Args:
+        state: State dictionary containing:
+            - p_lay: Layer pressures (microbar)
+            - T_lay: Layer temperatures (K)
+            - mu_lay: Mean molecular weight per layer
+            - vmr_lay (optional): VMR dictionary indexed by species name
+        params: Parameter dictionary (fallback for VMR if not in state)
+
+    Returns:
+        Opacity array of shape (n_layers, n_wavelength) in cm^2/g
+    """
     layer_pressures = state["p_lay"]
     layer_temperatures = state["T_lay"]
     layer_mu = state["mu_lay"]
+    layer_vmr = state["vmr_lay"]
+
+    # Get species names and mixing ratios
     species_names = XS.line_species_names()
-    mixing_ratios = jnp.stack([jnp.asarray(params[f"f_{name}"]) for name in species_names])
+
+    mixing_arrays = []
+    for name in species_names:
+        # Try direct lookup first (if vmr dict), then fall back to f_ prefix
+        if name in layer_vmr:
+            arr = jnp.asarray(layer_vmr[name])
+        else:
+            arr = jnp.asarray(layer_vmr[f"f_{name}"])
+
+        if arr.ndim == 0:
+            arr = jnp.full((layer_pressures.shape[0],), arr)
+        mixing_arrays.append(arr)
+    mixing_ratios = jnp.stack(mixing_arrays)
+
+    # Interpolate cross sections for all species at layer conditions
+    # sigma_values shape: (n_species, n_layers, n_wavelength)
     sigma_values = _interpolate_sigma(layer_pressures / 1e6, layer_temperatures)
-    normalization = mixing_ratios[:, None] / (layer_mu[None, :] * amu)
+
+    # Compute mass opacity normalization
+    normalization = mixing_ratios / (layer_mu[None, :] * amu)
+
+    # Sum over species: (n_species, n_layers, n_wavelength) -> (n_layers, n_wavelength)
     return jnp.sum(sigma_values * normalization[:, :, None], axis=0)

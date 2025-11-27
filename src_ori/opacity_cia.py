@@ -91,20 +91,35 @@ def _is_hminus(name: str) -> bool:
 
 def _compute_pair_weight(
     name: str,
-    params: Dict[str, jnp.ndarray],
     layer_count: int,
-    mixing_ratios: Dict[str, jnp.ndarray],
+    layer_vmr: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    # --- special case: H- bound-free continuum uses only f_Hminus ---
+    """
+    Compute CIA pair weight from VMR dictionary.
+
+    Args:
+        name: CIA species name (e.g., "H2-H2", "H2-He", "H-" for H-minus)
+        layer_count: Number of atmospheric layers
+        layer_vmr: VMR dictionary indexed by species name
+
+    Returns:
+        Per-layer weight array of shape (nlay,)
+    """
+    # --- special case: H- bound-free continuum uses only Hminus ---
     if _is_hminus(name):
         # accept a few common spellings for convenience
+        for key in ("Hminus", "hminus", "H-", "h-", "Hm", "hm"):
+            if key in layer_vmr:
+                w = jnp.asarray(layer_vmr[key])
+                return jnp.broadcast_to(w, (layer_count,))
+        # Try with f_ prefix as fallback
         for key in ("f_Hminus", "f_hminus", "f_H-", "f_h-", "f_Hm", "f_hm"):
-            if key in params:
-                w = jnp.asarray(params[key])
+            if key in layer_vmr:
+                w = jnp.asarray(layer_vmr[key])
                 return jnp.broadcast_to(w, (layer_count,))
         raise KeyError(
             "Missing H- abundance parameter. Provide one of: "
-            "params['f_Hminus'] (preferred), or params['f_H-'], params['f_Hm']."
+            "vmr_lay['Hminus'] (preferred), or vmr_lay['H-'], vmr_lay['Hm']."
         )
 
     # --- normal CIA: requires 'A-B' and uses product of mixing ratios ---
@@ -114,12 +129,13 @@ def _compute_pair_weight(
     species_a, species_b = parts
 
     def _resolve_ratio(species: str) -> jnp.ndarray:
-        if species in mixing_ratios:
-            return jnp.asarray(mixing_ratios[species])
+        # Try direct lookup first, then f_ prefix
+        if species in layer_vmr:
+            return jnp.asarray(layer_vmr[species])
         key = f"f_{species}"
-        if key in params:
-            return jnp.asarray(params[key])
-        raise KeyError(f"Missing CIA mixing parameter for '{key}'")
+        if key in layer_vmr:
+            return jnp.asarray(layer_vmr[key])
+        raise KeyError(f"Missing CIA mixing parameter for species '{species}'")
 
     ratio_a = jnp.broadcast_to(_resolve_ratio(species_a), (layer_count,))
     ratio_b = jnp.broadcast_to(_resolve_ratio(species_b), (layer_count,))
@@ -128,26 +144,41 @@ def _compute_pair_weight(
 
 
 def compute_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """
+    Compute collision-induced absorption (CIA) opacity.
+
+    Args:
+        state: State dictionary containing:
+            - nlay: Number of layers
+            - wl: Wavelengths
+            - T_lay: Layer temperatures
+            - nd_lay: Number density per layer
+            - rho_lay: Mass density per layer
+            - vmr_lay: VMR dictionary indexed by species name
+        params: Parameter dictionary (kept for API compatibility)
+
+    Returns:
+        Opacity array of shape (n_layers, n_wavelength) in cm^2/g
+    """
     layer_count = int(state["nlay"])
     wavelengths = state["wl"]
     layer_temperatures = state["T_lay"]
-    number_density = state["nd"]   # (nlay,)
-    density = state["rho"]         # (nlay,)
+    number_density = state["nd_lay"]   # (nlay,)
+    density = state["rho_lay"]         # (nlay,)
+    layer_vmr = state["vmr_lay"]
 
     master_wavelength = XS.cia_master_wavelength()
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("CIA wavelength grid must match the forward-model master grid.")
 
-    sigma_values = _interpolate_sigma(layer_temperatures)  # (nspecies, nlay, nwl) presumably
+    sigma_values = _interpolate_sigma(layer_temperatures)  # (nspecies, nlay, nwl)
     species_names = XS.cia_species_names()
-    mixing_ratios = state.get("mixing_ratios", {})
 
     pair_weights = jnp.stack(
-        [_compute_pair_weight(name, params, layer_count, mixing_ratios) for name in species_names],
+        [_compute_pair_weight(name, layer_count, layer_vmr) for name in species_names],
         axis=0,
     )  # (nspecies, nlay)
 
-    density = jnp.where(density == 0.0, jnp.inf, density)
 
     # - CIA pairs:   nd^2 / rho
     # - H-:          nd / rho

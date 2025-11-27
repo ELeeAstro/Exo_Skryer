@@ -116,55 +116,75 @@ def _rom_mix_band(
     g_points: jnp.ndarray,
     base_weights: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Mix one wavelength band's species using RORR."""
+    """
+    Mix one wavelength band's species using RORR.
+
+    Follows the algorithm from RT_opac.py:mix_k_table_RORR more directly:
+    - Initialize with first species
+    - Sequentially mix in remaining species
+    """
+    n_species = sigma_stack.shape[0]
     ng = sigma_stack.shape[-1]
-    dtype = sigma_stack.dtype
+
+    if n_species == 0:
+        return jnp.zeros(ng, dtype=sigma_stack.dtype)
+
+    # Initialize with first species (following original: cs_mix = kc_int[k,0,b,:] * VMR_tot)
+    vmr_tot = vmr_layer[0]
+    cs_mix = sigma_stack[0] * vmr_tot
+
+    if n_species == 1:
+        return cs_mix
+
+    # Pre-compute the ROM weight matrix (same for all species since g-weights are identical)
     rom_weights = jnp.outer(base_weights, base_weights).reshape(-1)
 
     def body(carry, inputs):
-        prev_mix, prev_vmr = carry
+        cs_mix_prev, vmr_tot_prev = carry
         sigma_spec, vmr_spec = inputs
 
-        def skip(_):
-            return carry, None
+        # Skip mixing if species has negligible cross-section (optimization)
+        def skip_species(_):
+            # Just update total VMR without mixing
+            vmr_tot = vmr_tot_prev + vmr_spec
+            cs_mix_new = cs_mix_prev * (vmr_tot / jnp.maximum(vmr_tot_prev, 1e-30))
+            return (cs_mix_new, vmr_tot), None
 
-        def apply(_):
-            def init_branch(_):
-                return sigma_spec * vmr_spec, vmr_spec
+        def mix_species(_):
+            # Add to total VMR
+            vmr_tot = vmr_tot_prev + vmr_spec
 
-            def mix_branch(args):
-                prev_mix_val, prev_vmr_val = args
-                vmr_tot = prev_vmr_val + vmr_spec
-                vmr_safe = jnp.maximum(vmr_tot, 1e-30)
-                k_matrix = (prev_mix_val[:, None] + vmr_spec * sigma_spec[None, :]) / vmr_safe
-                k_flat = jnp.reshape(k_matrix, (-1,))
-                sort_idx = jnp.argsort(k_flat)
-                k_sorted = jnp.maximum(k_flat[sort_idx], 1e-99)
-                w_sorted = rom_weights[sort_idx]
-                g_rom = jnp.cumsum(w_sorted)
-                g_rom = g_rom / g_rom[-1]
-                interp_log = jnp.interp(g_points, g_rom, jnp.log10(k_sorted))
-                mix_new = jnp.power(10.0, interp_log) * vmr_tot
-                return mix_new, vmr_tot
+            # Create ROM matrix: k_rom_matrix[i,j] = (cs_mix[i] + vmr*sigma[j]) / vmr_tot
+            k_rom_matrix = (cs_mix_prev[:, None] + vmr_spec * sigma_spec[None, :]) / vmr_tot
 
-            new_carry = lax.cond(
-                prev_vmr <= 0.0,
-                init_branch,
-                mix_branch,
-                operand=(prev_mix, prev_vmr),
-            )
-            return new_carry, None
+            # Flatten
+            k_rom_flat = k_rom_matrix.ravel()
 
-        return lax.cond(vmr_spec <= 0.0, skip, apply, operand=None)
+            # Sort by k-value
+            sort_idx = jnp.argsort(k_rom_flat)
+            k_rom_sorted = jnp.maximum(k_rom_flat[sort_idx], 1e-99)
+            w_rom_sorted = rom_weights[sort_idx]
 
-    init = (jnp.zeros((ng,), dtype=dtype), jnp.asarray(0.0, dtype=dtype))
-    final_state, _ = lax.scan(
+            # Compute cumulative g
+            g_rom = jnp.cumsum(w_rom_sorted)
+            g_rom = g_rom / g_rom[-1]
+
+            # Interpolate to standard g-points
+            cs_mix_new = jnp.power(10.0, jnp.interp(g_points, g_rom, jnp.log10(k_rom_sorted))) * vmr_tot
+
+            return (cs_mix_new, vmr_tot), None
+
+        # Skip if max cross-section is negligible (< 1e-50)
+        return lax.cond(jnp.max(sigma_spec) < 1e-50, skip_species, mix_species, operand=None)
+
+    # Scan over species 1 onwards
+    (cs_mix_final, _), _ = lax.scan(
         body,
-        init,
-        xs=(sigma_stack, vmr_layer),
+        (cs_mix, vmr_tot),
+        (sigma_stack[1:], vmr_layer[1:])
     )
-    final_mix, _ = final_state
-    return final_mix
+
+    return cs_mix_final
 
 
 def _mix_k_tables_rorr(
@@ -187,18 +207,23 @@ def _mix_k_tables_rorr(
     if mixing_ratios.ndim == 1:
         mixing_ratios = jnp.broadcast_to(mixing_ratios[:, None], (n_species, n_layers))
 
-    # Reorder for vmaps: (n_layers, n_wl, n_species, n_g)
-    sigma_layer_major = jnp.transpose(sigma_values, (1, 2, 0, 3))
-    vmr_layer_major = jnp.transpose(mixing_ratios, (1, 0))
+    # Reorder and reshape for batched vmap: flatten (layers, wavelength) into single batch dimension
+    # sigma_values: (n_species, n_layers, n_wavelength, n_g) -> (n_layers*n_wl, n_species, n_g)
+    sigma_batch = jnp.transpose(sigma_values, (1, 2, 0, 3)).reshape(n_layers * n_wl, n_species, n_g)
 
-    mix_layer = jax.vmap(
-        lambda sigma_layer, vmr_layer: jax.vmap(
-            _rom_mix_band, in_axes=(0, None, None, None)
-        )(sigma_layer, vmr_layer, g_points, base_weights),
-        in_axes=(0, 0),
+    # mixing_ratios: (n_species, n_layers) -> (n_layers*n_wl, n_species)
+    # Broadcast VMR across wavelengths since it's per-layer
+    vmr_batch = jnp.transpose(mixing_ratios, (1, 0))  # (n_layers, n_species)
+    vmr_batch = jnp.tile(vmr_batch[:, None, :], (1, n_wl, 1))  # (n_layers, n_wl, n_species)
+    vmr_batch = vmr_batch.reshape(n_layers * n_wl, n_species)  # (n_layers*n_wl, n_species)
+
+    # Single vmap over the combined batch dimension
+    mixed_batch = jax.vmap(_rom_mix_band, in_axes=(0, 0, None, None))(
+        sigma_batch, vmr_batch, g_points, base_weights
     )
 
-    mixed = mix_layer(sigma_layer_major, vmr_layer_major)
+    # Reshape back to (n_layers, n_wl, n_g)
+    mixed = mixed_batch.reshape(n_layers, n_wl, n_g)
     return mixed
 
 
@@ -249,9 +274,16 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
 
     # Get species names and mixing ratios
     species_names = XS.ck_species_names()
+    layer_vmr = state["vmr_lay"]
+
     mixing_arrays = []
     for name in species_names:
-        arr = jnp.asarray(params[f"f_{name}"])
+        # Try direct lookup first (if vmr dict), then fall back to f_ prefix
+        if name in layer_vmr:
+            arr = jnp.asarray(layer_vmr[name])
+        else:
+            arr = jnp.asarray(layer_vmr[f"f_{name}"])
+
         if arr.ndim == 0:
             arr = jnp.full((layer_pressures.shape[0],), arr)
         mixing_arrays.append(arr)

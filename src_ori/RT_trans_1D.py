@@ -102,7 +102,7 @@ def _transit_depth_from_opacity(
     R_s = jnp.asarray(state["R_s"])
     z_lev = jnp.asarray(state["z_lev"])
     z_lay = jnp.asarray(state["z_lay"])
-    rho = jnp.asarray(state["rho"])
+    rho = jnp.asarray(state["rho_lay"])
     dz = jnp.asarray(state["dz"])
 
     k_floor = 1.0e-99

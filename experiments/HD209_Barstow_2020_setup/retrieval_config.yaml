@@ -10,23 +10,28 @@ physics:
   vert_chem: None
   vert_cloud: None
 
-  opac_line: ck
-  opac_ray: ck
-  opac_cia: ck
+  opac_line: lbl
+  opac_ray: lbl
+  opac_cia: lbl
   opac_cloud: None
 
   rt_scheme: transit_1d
 
 opac:
 
-  wl_master: wl_petitradtrans_R1000.txt
-  full_grid: True
-  ck: True
+  #wl_master: wl_petitradtrans_R1000.txt
+  wl_master: wl_taurex_R15000.txt
+  full_grid: False
+  ck: False
 
   line:
-    - {species: H2O, path: ../opac_data/ck/1H2-16O__POKAZATEL__R1000_0.3-50mu.ktable.petitRADTRANS.h5}
-    - {species: Na, path: ../opac_data/ck/23Na__Kurucz-Na.R1000_0.3-50mu.ktable.petitRADTRANS.h5}
-    - {species: K, path: ../opac_data/ck/39K__Kurucz-K.R1000_0.3-50mu.ktable.petitRADTRANS.h5}
+    #- {species: H2O, path: ../opac_data/ck/1H2-16O__POKAZATEL__R1000_0.3-50mu.ktable.petitRADTRANS.h5}
+    #- {species: Na, path: ../opac_data/ck/23Na__Kurucz-Na.R1000_0.3-50mu.ktable.petitRADTRANS.h5}
+    #- {species: K, path: ../opac_data/ck/39K__Kurucz-K.R1000_0.3-50mu.ktable.petitRADTRANS.h5}
+      - {species: H2O, path: ../opac_data/lbl/1H2-16O__POKAZATEL__R15000_0.3-50mu.xsec.TauREx.h5}
+      - {species: Na, path: ../opac_data/lbl/23Na__Kurucz-Na.R15000_0.3-50mu.xsec.TauREx.h5}
+      - {species: K, path: ../opac_data/lbl/39K__Kurucz-K.R15000_0.3-50mu.xsec.TauREx.h5} 
+
   ray:
     - {species: H2}
     - {species: He}
@@ -46,22 +51,20 @@ params:
   - { name: R_p, dist: uniform, low: 1.1,   high: 1.5,  transform: logit, init: 1.4}
   - { name: T_iso, dist: uniform, low: 100.0,   high: 3000.0, transform: logit, init: 1500.0 }
 
-  
-
-  - { name: f_H2O, dist: log_uniform, low: 1e-8,   high: 1e-2,  transform: log, init: 1e-5}
-  - { name: f_Na, dist: log_uniform, low: 1e-13,   high: 1e-3,  transform: log, init: 1e-6}
-  - { name: f_K, dist: log_uniform, low: 1e-13,   high: 1e-3,  transform: log, init: 1e-6}
+  - { name: log_10_f_H2O, dist: uniform, low: -8,   high: -2,  transform: logit, init: -5}
+  - { name: log_10_f_Na, dist: uniform, low: -13,   high: -3,  transform: logit, init: -6}
+  - { name: log_10_f_K, dist: uniform, low: -13,   high: -3,  transform: logit, init: -6}
 
   # - { name: f_cloud, dist: uniform, low: 0.0,   high: 1.0, transform: logit, init: 0.5}
-  # - { name: cld_r, dist: log_uniform, low: 1e-3,   high: 1e+2,  transform: log, init: 1e0}
+  # - { name: log_10_cld_r, dist: uniform, low: -3,   high: 2,  transform: logit, init: 0}
   # - { name: cld_Q0, dist: uniform, low: 0.1,   high: 65,  transform: logit, init: 30.0}
   # - { name: cld_a, dist: uniform, low: 3.0,   high: 7.0,  transform: logit, init: 4.0}
-  # - { name: cld_k0, dist: log_uniform, low: 1e-13,   high: 1e+13,  transform: log, init: 1e0}
+  # - { name: log_10_cld_k0, dist: uniform, low: -13,   high: 13,  transform: logit, init: 0}
 
 
 sampling:
 
-  engine: nuts
+  engine: jaxns
 
   nuts:
     backend: numpyro

@@ -68,18 +68,6 @@ def _make_numpyro_model(cfg, prep: Prepared):
                 low = float(getattr(p, "low"))
                 high = float(getattr(p, "high"))
                 theta = numpyro.sample(name, dist.Uniform(low, high))
-            elif dist_name == "log_uniform":
-                low = float(getattr(p, "low"))
-                high = float(getattr(p, "high"))
-                if not (high > low > 0.0):
-                    raise ValueError(
-                        f"log_uniform param '{name}' requires 0 < low < high."
-                    )
-                base = dist.Uniform(jnp.log(low), jnp.log(high))
-                theta = numpyro.sample(
-                    name,
-                    dist.TransformedDistribution(base, transforms.ExpTransform()),
-                )
             elif dist_name in ("gaussian", "normal"):
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
@@ -88,18 +76,6 @@ def _make_numpyro_model(cfg, prep: Prepared):
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
                 theta = numpyro.sample(name, dist.LogNormal(mu, sigma))
-            elif dist_name == "halfnormal":
-                sigma = float(getattr(p, "sigma"))
-                theta = numpyro.sample(name, dist.HalfNormal(sigma))
-            elif dist_name == "truncnormal":
-                mu = float(getattr(p, "mu"))
-                sigma = float(getattr(p, "sigma"))
-                low = float(getattr(p, "low"))
-                high = float(getattr(p, "high"))
-                theta = numpyro.sample(
-                    name,
-                    dist.TruncatedNormal(loc=mu, scale=sigma, low=low, high=high),
-                )
             else:
                 raise ValueError(
                     f"Unsupported dist '{dist_name}' for param '{name}'."

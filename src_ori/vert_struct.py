@@ -21,6 +21,35 @@ from jax.scipy.special import expn
 
 from data_constants import bar
 
+# ---------------- Hopf function ----------------
+FIT_P = jnp.asarray([0.6162, -0.3799, 2.395, -2.041, 2.578])
+FIT_Q = jnp.asarray([-0.9799, 3.917, -3.17, 3.69])
+
+def hopf_function(tau: jnp.ndarray) -> jnp.ndarray:
+    tau = jnp.asarray(tau)
+    tiny = jnp.finfo(tau.dtype).tiny
+    tau_safe = jnp.maximum(tau, tiny)
+
+    x = jnp.log10(tau_safe)
+
+    # Rational fit in x via Horner
+    p0, p1, p2, p3, p4 = FIT_P
+    q0, q1, q2, q3 = FIT_Q
+    num = ((((p0 * x + p1) * x + p2) * x + p3) * x + p4)
+    den = ((((1.0 * x + q0) * x + q1) * x + q2) * x + q3)
+    mid = num / den
+
+    # Low-tau patch (linear in tau)
+    low = 0.577351 + (tau_safe - 0.0) * (0.588236 - 0.577351) / (0.01 - 0.0)
+
+    # High-tau patch (linear in log10(tau)) -- corrected denominator
+    x0 = jnp.log10(5.0)
+    x1 = jnp.log10(10000.0) 
+    high = 0.710398 + (x - x0) * (0.710446 - 0.710398) / (x1 - x0)
+
+    out = jnp.where(tau_safe < 0.01, low, mid)
+    out = jnp.where(tau_safe > 5.0, high, out)
+    return out
 
 def isothermal(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]):
     nlev = jnp.size(p_lev)
@@ -34,7 +63,7 @@ def Milne(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]):
     k_ir = jnp.asarray(params["k_ir"])
     g = 10.0 ** log_g
     tau_ir = k_ir / g * p_lev
-    T_lev = (0.75 * T_int**4 * (2.0 / 3.0 + tau_ir)) ** 0.25
+    T_lev = (0.75 * T_int**4 * (hopf_function(tau_ir) + tau_ir)) ** 0.25
     return 0.5 * (T_lev[:-1] + T_lev[1:])
 
 
@@ -99,7 +128,7 @@ def Barstow(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]):
     return 0.5 * (T_lev[:-1] + T_lev[1:])
 
 
-def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]):
+def MS09(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]):
     a1 = jnp.asarray(params["a1"])
     a2 = jnp.asarray(params["a2"])
     p1 = jnp.asarray(params["p1"]) * bar

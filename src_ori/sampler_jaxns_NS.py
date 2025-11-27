@@ -78,30 +78,6 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
                 low = float(getattr(p, "low"))
                 high = float(getattr(p, "high"))
                 theta = yield Prior(tfpd.Uniform(low=low, high=high), name=name)
-
-            elif dist_name == "log_uniform":
-                # true log-uniform in x: p(x) ∝ 1/x on [low, high]
-                low = float(getattr(p, "low"))
-                high = float(getattr(p, "high"))
-                if not (high > low > 0.0):
-                    raise ValueError(
-                        f"log_uniform param '{name}' requires 0 < low < high; "
-                        f"got low={low}, high={high}"
-                    )
-
-                # sample u ~ Uniform(log(low), log(high)), then x = exp(u)
-                log_low  = jnp.log(low)
-                log_high = jnp.log(high)
-
-                base = tfpd.Uniform(low=log_low, high=log_high)
-                log_uniform_dist = tfpd.TransformedDistribution(
-                    distribution=base,
-                    bijector=tfb.Exp(),   # x = exp(u)
-                )
-
-                theta = yield Prior(log_uniform_dist, name=name)
-                params[name] = theta
-
             elif dist_name in ("gaussian", "normal"):
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
@@ -111,18 +87,6 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
                 theta = yield Prior(tfpd.LogNormal(loc=mu, scale=sigma), name=name)
-
-            elif dist_name == "halfnormal":
-                sigma = float(getattr(p, "sigma"))
-                theta = yield Prior(tfpd.HalfNormal(scale=sigma), name=name)
-
-            elif dist_name == "truncnormal":
-                mu = float(getattr(p, "mu"))
-                sigma = float(getattr(p, "sigma"))
-                low = float(getattr(p, "low"))
-                high = float(getattr(p, "high"))
-                base = tfpd.TruncatedNormal(loc=mu, scale=sigma, low=low, high=high)
-                theta = yield Prior(base, name=name)
 
             else:
                 raise ValueError(f"Unsupported dist '{dist_name}' for param '{name}' in JAXNS model.")

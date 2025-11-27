@@ -26,27 +26,46 @@ def zero_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
 
 
 def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """
+    Compute Rayleigh scattering opacity.
+
+    Args:
+        state: State dictionary containing:
+            - wl: Wavelengths
+            - nd_lay: Number density per layer
+            - rho_lay: Mass density per layer
+            - vmr_lay: VMR dictionary indexed by species name
+        params: Parameter dictionary (kept for API compatibility)
+
+    Returns:
+        Opacity array of shape (n_layers, n_wavelength) in cm^2/g
+    """
     if not XR.has_ray_data():
         return zero_ray_opacity(state, params)
     wavelengths = state["wl"]
-    number_density = state["nd"]
-    density = state["rho"]
+    number_density = state["nd_lay"]
+    density = state["rho_lay"]
+    layer_vmr = state["vmr_lay"]
     layer_count = number_density.shape[0]
+
     master_wavelength = XR.ray_master_wavelength()
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("Rayleigh wavelength grid must match forward-model grid.")
+
     sigma_values = XR.ray_sigma_table()
     species_names = XR.ray_species_names()
-    mixing_cache = state.get("mixing_ratios", {})
+
     mixing_ratio_list = []
     for name in species_names:
-        if name in mixing_cache:
-            value = mixing_cache[name]
+        # Try direct lookup first, then fall back to f_ prefix
+        if name in layer_vmr:
+            value = layer_vmr[name]
+        elif f"f_{name}" in layer_vmr:
+            value = layer_vmr[f"f_{name}"]
         else:
-            key = f"f_{name}"
-            if key not in params:
-                raise KeyError(f"Missing Rayleigh mixing ratio parameter '{key}'")
-            value = jnp.asarray(params[key])
+            raise KeyError(f"Missing Rayleigh mixing ratio for species '{name}'")
+
+        value = jnp.asarray(value)
         if value.ndim == 0:
             mixing_ratio_list.append(jnp.full((layer_count,), value))
         elif value.ndim == 1:
@@ -55,6 +74,7 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
             mixing_ratio_list.append(value)
         else:
             raise ValueError(f"Rayleigh mixing ratio '{name}' has unsupported shape {value.shape}.")
+
     mixing_ratios = jnp.stack(mixing_ratio_list, axis=0)
     absorption = mixing_ratios[:, :, None] * number_density[None, :, None] * sigma_values[:, None, :]
     return jnp.sum(absorption, axis=0) / density[:, None]

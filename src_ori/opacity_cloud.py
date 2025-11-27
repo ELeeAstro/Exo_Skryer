@@ -25,7 +25,7 @@ def zero_cloud_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
 def compute_grey_cloud_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]):
     layer_count = int(state["nlay"])
     wavelength_count = int(state["nwl"])
-    opacity_value = jnp.asarray(params["k_cld_grey"])
+    opacity_value = 10.0**jnp.asarray(params["log_10_k_cld_grey"])
     return jnp.full((layer_count, wavelength_count), opacity_value)
 
 
@@ -33,10 +33,10 @@ def compute_f18_cloud_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, j
     wavelengths = state["wl"]
     layer_count = int(state["nlay"])
     wavelength_count = int(state["nwl"])
-    radius = jnp.asarray(params["cld_r"])
+    radius = 10.0**jnp.asarray(params["log_10_cld_r"])
     base_efficiency = jnp.asarray(params["cld_Q0"])
     slope = jnp.asarray(params["cld_a"])
-    base_opacity = jnp.asarray(params["cld_k0"])
+    base_opacity = 10.0**jnp.asarray(params["log_10_cld_k0"])
     size_param = (2.0 * jnp.pi * radius) / wavelengths
     opacity_profile = base_opacity / (base_efficiency * size_param ** (-slope) + size_param ** 0.2)
     return jnp.broadcast_to(opacity_profile, (layer_count, wavelength_count))

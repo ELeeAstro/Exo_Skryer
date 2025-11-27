@@ -29,24 +29,9 @@ from RT_trans_1D import compute_transit_depth_1d
 from vert_mu import compute_mean_molecular_weight
 from instru_convolve import apply_response_functions
 
-
-def _gather_param_mixing_ratios(params: Dict[str, jnp.ndarray], nlay: int) -> Dict[str, jnp.ndarray]:
-    ratios: Dict[str, jnp.ndarray] = {}
-    for key, value in params.items():
-        if not key.startswith("f_"):
-            continue
-        species = key[2:]
-        arr = jnp.asarray(value)
-        if arr.ndim == 0:
-            ratios[species] = jnp.full((nlay,), arr)
-        elif arr.ndim == 1:
-            if arr.shape[0] != nlay:
-                raise ValueError(f"Mixing ratio '{key}' has length {arr.shape[0]}, expected {nlay}.")
-            ratios[species] = arr
-        else:
-            raise ValueError(f"Mixing ratio '{key}' has unsupported shape {arr.shape}.")
-    return ratios
-
+solar_h2 = 0.5
+solar_he = 0.085114
+solar_h2_he = solar_h2 + solar_he
 
 def build_forward_model(cfg, obs, return_highres: bool = False):
 
@@ -132,8 +117,9 @@ def build_forward_model(cfg, obs, return_highres: bool = False):
     @jax.jit
     def forward_model(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
 
-        # High-res wavelength grid
         wl = wl_hi
+
+        # Dimension constants
         nwl = jnp.size(wl)
 
         # Planet and star radii (R0 is radius at p_bot)
@@ -144,18 +130,38 @@ def build_forward_model(cfg, obs, return_highres: bool = False):
         p_bot = jnp.asarray(params["p_bot"]) * bar
         p_top = jnp.asarray(params["p_top"]) * bar
         p_lev = jnp.logspace(jnp.log10(p_bot), jnp.log10(p_top), nlev)
-
-        # Vertical atmospheric T-p structure
+        
+        # Vertical atmospheric T-p layer structure
+        p_lay = (p_lev[1:] - p_lev[:-1]) / jnp.log(p_lev[1:]/p_lev[:-1])
         T_lay = vert_kernel(p_lev, params)
 
-        # Mean molecular weight and mixing ratios
+        # Get the VMR structure of the atmosphere
+        vmr = {}
+        for k, v in params.items():
+            if k.startswith("log_10_f_"):
+                sp = k[len("log_10_f_"):]
+                vmr[sp] = 10.0 ** v          # store species key, e.g. "H2O"
+            elif k.startswith("f_"):
+                sp = k[len("f_"):]
+                vmr[sp] = v
+
+        # Calculate the mixing ratios of H2 and He
+        # Sum all trace species VMRs
+        total_trace_vmr = jnp.sum(jnp.array([v for v in vmr.values()]))
+        background_vmr = 1.0 - total_trace_vmr
+
+        vmr['H2'] = background_vmr * solar_h2 / solar_h2_he
+        vmr['He'] = background_vmr * solar_he / solar_h2_he
+
+        # Cast scalar VMR to per-layer VMR
+        vmr_lay = {species: jnp.full((nlay,), value) for species, value in vmr.items()}
+
+        # Mean molecular weight calculation
         if "mu" in params:
             mu_const = jnp.asarray(params["mu"])
             mu_lay = jnp.full((nlay,), mu_const)
-            mix_ratios = _gather_param_mixing_ratios(params, nlay)
         else:
-            layer_template = jnp.ones((nlay,))
-            mu_lay, mix_ratios, mu_dynamic = compute_mean_molecular_weight(layer_template, params)
+            mu_lay, mu_dynamic = compute_mean_molecular_weight(vmr_lay)
             if mu_lay is None or (not mu_dynamic):
                 raise ValueError("Dynamic mean molecular weight failed; provide 'mu' parameter or fix vert_mu.")
 
@@ -164,12 +170,9 @@ def build_forward_model(cfg, obs, return_highres: bool = False):
         z_lay = (z_lev[:-1] + z_lev[1:]) / 2.0
         dz = jnp.diff(z_lev)
 
-        # Interpolate to find p_lay (pressure at mid height)
-        p_lay = 10.0**jnp.interp(z_lay, z_lev, jnp.log10(p_lev))
-
         # Atmospheric density and number density
-        rho = (mu_lay * amu * p_lay) / (kb * T_lay)
-        nd = p_lay / (kb * T_lay)
+        rho_lay = (mu_lay * amu * p_lay) / (kb * T_lay)
+        nd_lay = p_lay / (kb * T_lay)
 
         # State dictionary for physics kernels
         g_weights = None
@@ -193,9 +196,9 @@ def build_forward_model(cfg, obs, return_highres: bool = False):
             "z_lay": z_lay,
             "dz": dz,
             "p_lay": p_lay,
-            "rho": rho,
-            "nd": nd,
-            "mixing_ratios": mix_ratios,
+            "rho_lay": rho_lay,
+            "nd_lay": nd_lay,
+            "vmr_lay": vmr_lay,
         }
         if g_weights is not None:
             state["g_weights"] = g_weights

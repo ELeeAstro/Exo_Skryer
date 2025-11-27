@@ -49,12 +49,12 @@ params:
   - { name: R_p, dist: uniform, low: 1.6,   high: 2.1,  transform: logit, init: 1.4}
   - { name: T_iso, dist: uniform, low: 400.0,   high: 2300.0, transform: logit, init: 1500.0 }
 
-  - { name: f_H2O, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
-  - { name: f_CO2, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
-  - { name: f_CO, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
-  - { name: f_CH4, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
-  - { name: f_K, dist: log_uniform, low: 1e-14,   high: 1e-2,  transform: log, init: 1e-6}
-  - { name: f_H-, dist: log_uniform, low: 2.5e-15,   high: 0.4,  transform: log, init: 1e-6}
+  - { name: log_10_f_H2O, dist: uniform, low: -14,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CO2, dist: uniform, low: -14,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CO, dist: uniform, low: -14,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CH4, dist: uniform, low: -14,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_K, dist: uniform, low: -14,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_H-, dist: uniform, low: -15,   high: -1,  transform: logit, init: -6}
 
   # - { name: f_cloud, dist: uniform, low: 0.0,   high: 1.0, transform: logit, init: 0.5}
 

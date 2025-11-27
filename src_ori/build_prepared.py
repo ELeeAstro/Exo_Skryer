@@ -106,14 +106,6 @@ def _lognormal_logpdf(x, mu, sigma):
     )
 
 
-def _halfnormal_logpdf(x, sigma):
-    return jnp.where(
-        x >= 0,
-        jnp.log(2.0) + _normal_logpdf(x, 0.0, sigma),
-        -jnp.inf,
-    )
-
-
 def _uniform_logpdf(x, low, high):
     inside = (x >= low) & (x <= high)
     return jnp.where(inside, -jnp.log(high - low), -jnp.inf)
@@ -124,30 +116,16 @@ def _log_uniform_logpdf(x, low, high):
     norm = jnp.log(high) - jnp.log(low)
     return jnp.where(inside, -jnp.log(x) - norm, -jnp.inf)
 
-
-def _truncnormal_logpdf(x, mu, sigma, low, high):
-    a = (low - mu) / sigma
-    b = (high - mu) / sigma
-    norm = _phi(b) - _phi(a)
-    base = _normal_logpdf(x, mu, sigma)
-    inside = (x >= low) & (x <= high)
-    return jnp.where(inside, base - jnp.log(norm + 1e-300), -jnp.inf)
-
-
 def _evaluate_prior_logpdf(dist: str, theta, params: dict) -> jnp.ndarray:
     selector = dist.lower()
     if selector in ("gaussian", "normal"):
         return _normal_logpdf(theta, params["mu"], params["sigma"])
     if selector == "lognormal":
         return _lognormal_logpdf(theta, params["mu"], params["sigma"])
-    if selector == "halfnormal":
-        return _halfnormal_logpdf(theta, params["sigma"])
     if selector == "uniform":
         return _uniform_logpdf(theta, params["low"], params["high"])
     if selector == "log_uniform":
         return _log_uniform_logpdf(theta, params["low"], params["high"])
-    if selector == "truncnormal":
-        return _truncnormal_logpdf(theta, params["mu"], params["sigma"], params["low"], params["high"])
     if selector == "delta":
         return jnp.array(0.0)
     return jnp.array(-jnp.inf)
@@ -196,7 +174,7 @@ def _default_init(dist: str, param) -> Optional[float]:
     selector = dist.lower()
     if selector in {"gaussian", "normal"}:
         return float(getattr(param, "mu"))
-    if selector in {"uniform", "truncnormal"}:
+    if selector in {"uniform"}:
         low = float(getattr(param, "low"))
         high = float(getattr(param, "high"))
         return 0.5 * (low + high)
@@ -211,8 +189,6 @@ def _default_init(dist: str, param) -> Optional[float]:
         return float(value)
     if selector == "lognormal":
         return float(jnp.exp(getattr(param, "mu")))
-    if selector == "halfnormal":
-        return float(getattr(param, "sigma"))
     return None
 
 
@@ -224,15 +200,6 @@ def _canonical_prior_params(dist: str, param) -> dict:
         return {"low": float(param.low), "high": float(param.high)}
     if selector == "lognormal":
         return {"mu": float(param.mu), "sigma": float(param.sigma)}
-    if selector == "halfnormal":
-        return {"sigma": float(param.sigma)}
-    if selector == "truncnormal":
-        return {
-            "mu": float(param.mu),
-            "sigma": float(param.sigma),
-            "low": float(param.low),
-            "high": float(param.high),
-        }
     if selector == "delta":
         return {}
     raise ValueError(f"Unsupported dist '{dist}' for param '{getattr(param,'name','?')}'")
