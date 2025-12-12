@@ -260,11 +260,13 @@ def plot_corner(
     posterior_path: Path,
     params: Sequence[str] | None = None,
     outname: str = "posterior_corner",
-    quantiles: Sequence[float] = (0.16, 0.5, 0.84),
+    quantiles: Sequence[float] = (0.1585, 0.5, 0.8415),  # 1σ for 1D Gaussian: 0.5 ± 0.341
     config_path: Path | None = None,
     extra_log_params: Sequence[str] | None = None,
     label_map_path: Path | None = None,
     kde_diag: bool = False,
+    enforce_label_map: bool = False,
+    plot_points: bool = True,
 ) -> Path:
     """
     Load posterior.nc, select variables, and save a classic corner plot with
@@ -289,6 +291,15 @@ def plot_corner(
         label_map_path = default_label_yaml if default_label_yaml.exists() else None
     corner_cfg = _load_corner_config(label_map_path)
 
+    if enforce_label_map and corner_cfg:
+        filtered = [name for name in var_names if name in corner_cfg]
+        skipped = [name for name in var_names if name not in corner_cfg]
+        if skipped:
+            print(f"[posterior_corner] Skipping variables not in label map: {', '.join(skipped)}")
+        if not filtered:
+            raise ValueError("No variables remain after applying label-map filtering.")
+        var_names = filtered
+
     # plot_order from retrieval config + from corner_config.yaml
     order_map = _extract_plot_order(config_data, var_names)
     label_order_overrides = {
@@ -310,6 +321,12 @@ def plot_corner(
 
     # --- sample matrix & labels ---
     samples = _build_sample_matrix(posterior_ds, var_names, log_params)
+    # Subsample to keep plots fast/lightweight.
+    max_points = 5000
+    if samples.shape[0] > max_points:
+        rng = np.random.default_rng(0)
+        idx = rng.choice(samples.shape[0], max_points, replace=False)
+        samples = samples[idx]
 
     labels = []
     for name in var_names:
@@ -343,14 +360,16 @@ def plot_corner(
         quantiles=quantiles,
         show_titles=True,
         hist_bin_factor=1.2,
-        label_kwargs={"fontsize": 12, "labelpad": 8},
-        title_kwargs={"fontsize": 12},
+        label_kwargs={"fontsize": 14, "labelpad": 8},
+        title_kwargs={"fontsize": 14},
         plot_contours=True,
         plot_density=True,   # <- explicit
         fill_contours=False,
         contour_kwargs=contour_kwargs,
-        plot_datapoints=True,
-        data_kwargs=data_kwargs,
+        # 2D Gaussian enclosed-probability levels for 1σ, 2σ, 3σ.
+        levels=[0.393, 0.864, 0.989],
+        plot_datapoints=plot_points,
+        data_kwargs=data_kwargs if plot_points else None,
         max_n_ticks=4,
         smooth=0.75,
         color=contour_color,
@@ -360,6 +379,38 @@ def plot_corner(
     if fig is None:
         raise RuntimeError("corner.corner returned None; no plot generated.")
 
+    # Ensure bottom-row x-labels are set (sometimes corner hides one)
+    try:
+        axes_grid = np.array(fig.axes).reshape(len(var_names), len(var_names))
+        # Uniform tick label size
+        for ax in axes_grid.flat:
+            ax.tick_params(axis="both", labelsize=12)
+        for col, lab in enumerate(labels):
+            ax = axes_grid[-1, col]
+            ax.set_xlabel(lab, fontsize=14, labelpad=8)
+            ax.tick_params(axis="x", labelbottom=True)
+        # Explicitly set and keep the bottom-right (last parameter) label visible
+        br_ax = axes_grid[-1, -1]
+        br_ax.set_xlabel(labels[-1], fontsize=14, labelpad=8)
+        br_ax.tick_params(axis="x", labelbottom=True)
+        br_ax.xaxis.label.set_visible(True)
+        br_ax.xaxis.set_label_coords(0.5, -0.10)
+        for lbl in br_ax.get_xticklabels():
+            lbl.set_visible(True)
+        if not br_ax.get_xlabel():
+            br_ax.set_xlabel(labels[-1], fontsize=14, labelpad=10)
+            br_ax.text(
+                0.5,
+                -0.15,
+                labels[-1],
+                transform=br_ax.transAxes,
+                ha="center",
+                va="top",
+                fontsize=14,
+            )
+    except ValueError:
+        pass
+
     # Update quantile line styles (dashed for median, dotted for bounds)
     if kde_diag:
         _replace_diag_with_kde(fig, samples, quantiles, contour_color)
@@ -368,7 +419,7 @@ def plot_corner(
 
     # Tighten layout a bit
     fig.subplots_adjust(
-        left=0.13, right=0.98, bottom=0.14, top=0.98, wspace=0.07, hspace=0.07
+        left=0.06, right=0.995, bottom=0.0525, top=0.985, wspace=0.04, hspace=0.04
     )
 
     # Example of per-parameter axis tweaks (optional)
@@ -435,6 +486,11 @@ def main():
         action="store_true",
         help="Replace diagonal histograms with KDE curves while keeping quantile markers.",
     )
+    ap.add_argument(
+        "--no-points",
+        action="store_true",
+        help="Do not plot posterior sample points in off-diagonal panels.",
+    )
     args = ap.parse_args()
 
     posterior_path = Path(args.posterior).resolve()
@@ -448,6 +504,8 @@ def main():
         extra_log_params=args.log_params,
         label_map_path=label_map_path,
         kde_diag=args.kde_diag,
+        enforce_label_map=args.label_map is not None,
+        plot_points=not args.no_points,
     )
 
 

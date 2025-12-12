@@ -27,16 +27,6 @@ def zero_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
     return jnp.zeros((layer_count, wavelength_count))
 
 
-_CIA_SIGMA_CACHE: jnp.ndarray | None = None
-
-
-def _load_cia_sigma() -> jnp.ndarray:
-    global _CIA_SIGMA_CACHE
-    if _CIA_SIGMA_CACHE is None:
-        _CIA_SIGMA_CACHE = XS.cia_sigma_cube()
-    return _CIA_SIGMA_CACHE
-
-
 def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
     """
     Linear interpolation of CIA cross sections on log T grids.
@@ -44,7 +34,7 @@ def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
     sigma_cube shape: (n_species, n_temp, n_wavelength)
     Returns: (n_species, n_layers, n_wavelength)
     """
-    sigma_cube = _load_cia_sigma()
+    sigma_cube = XS.cia_sigma_cube()
     temperature_grids = XS.cia_temperature_grids()
 
     # Convert to log10 space for interpolation

@@ -3,28 +3,63 @@ run_retrieval.py
 ================
 
 Overview:
-    Main 
+    Main entry point for running a YARN atmospheric retrieval defined by a YAML
+    configuration. This script:
+
+    1. Loads the retrieval configuration.
+    2. Sets up the JAX/NumPyro runtime.
+    3. Reads observational data and optional stellar spectrum.
+    4. Builds opacities, instrument responses, and the forward model.
+    5. Runs the chosen sampler (NUTS or nested sampling).
+    6. Writes posterior samples and a CSV copy of observations to the experiment
+       directory.
 
 Sections to complete:
     - Usage
     - Key Functions
     - Notes
+
+Usage
+-----
+From the repository root:
+
+    python src_ori/run_retrieval.py --config experiments/<name>/retrieval_config.yaml
+
+Key Functions
+-------------
+`main`
+    Orchestrates the full retrieval workflow.
+`format_duration`
+    Helper to pretty-print wall-clock runtimes.
+
+Notes
+-----
+- Paths in the YAML are resolved relative to the experiment folder.
+- For correlated-k opacities, the master wavelength grid must match the table.
 """
 
+import os
+import time
 import argparse
 from pathlib import Path
-import os
-from typing import Dict, Any
-import time
+from typing import Any, Dict, Optional
+
 import numpy as np
 
 
 def format_duration(seconds: float) -> str:
-    '''
-      Description: Function to help track the runtime of the model
-      Input: Seconds
-      Output: Seconds converted to Day, hour, min, second
-    '''
+    """Format a duration in seconds into a human-readable string.
+
+    Parameters
+    ----------
+    seconds
+        Duration in seconds.
+
+    Returns
+    -------
+    str
+        Formatted duration as ``"<d>d <h>h <m>m <s>s"``.
+    """
 
     days, rem = divmod(seconds, 24 * 3600)
     hours, rem = divmod(rem, 3600)
@@ -32,13 +67,99 @@ def format_duration(seconds: float) -> str:
 
     return f"{int(days)}d {int(hours)}h {int(minutes)}m {seconds:.3f}s"
 
-def main():
-    '''
-      Description: Main function for YARN - contains calls to main routines and retrieval model.
-      Input: None
-      Output: None
+def _resolve_obs_path(cfg: Any) -> str:
+    """Resolve the observational data path from config.
 
-    '''
+    Parameters
+    ----------
+    cfg
+        Parsed YAML configuration object.
+
+    Returns
+    -------
+    str
+        Observational data path as given in ``cfg.data.obs``.
+
+    Raises
+    ------
+    ValueError
+        If no observational data path is present.
+    """
+    data_cfg = getattr(cfg, "data", None)
+    rel_obs_path: Optional[str] = None
+
+    if data_cfg is not None:
+        rel_obs_path = getattr(data_cfg, "obs", None)
+
+    if rel_obs_path is None:
+        raise ValueError(
+            "No observational data path found. Set cfg.data.obs in the YAML config."
+        )
+
+    return rel_obs_path
+
+
+def _maybe_load_gibbs_cache(cfg: Any, exp_dir: Path) -> None:
+    """Load Gibbs free energy tables if chemical equilibrium requires it.
+
+    This is only relevant when ``physics.vert_chem`` indicates a RateJAX chemical
+    equilibrium mode.
+
+    Parameters
+    ----------
+    cfg
+        Parsed YAML configuration object.
+    exp_dir
+        Experiment directory used to resolve relative paths.
+    """
+    phys = getattr(cfg, "physics", None)
+    if phys is None:
+        return
+
+    vert_chem_raw = getattr(phys, "vert_chem", None)
+    if vert_chem_raw is None:
+        return
+
+    vert_chem_name = str(vert_chem_raw).lower()
+    if vert_chem_name not in ("rate_ce", "rate_jax", "ce_rate_jax"):
+        return
+
+    from rate_jax import is_gibbs_cache_loaded, load_gibbs_cache
+
+    if is_gibbs_cache_loaded():
+        print("[info] Gibbs cache already loaded")
+        return
+
+    data_cfg = getattr(cfg, "data", None)
+    janaf_rel_path = getattr(data_cfg, "janaf", None) if data_cfg is not None else None
+    if janaf_rel_path is None:
+        raise ValueError(
+            "JANAF data path not found in config. Please add 'janaf: path/to/JANAF_data' "
+            "under 'data:' section in your YAML config."
+        )
+
+    janaf_path = (
+        str(exp_dir / janaf_rel_path)
+        if not Path(janaf_rel_path).is_absolute()
+        else janaf_rel_path
+    )
+
+    print(f"[info] Loading Gibbs free energy tables from {janaf_path}")
+    gibbs = load_gibbs_cache(janaf_path)
+    print(f"[info] Gibbs cache loaded: {len(gibbs.data)} species")
+
+
+def main() -> None:
+    """Run a retrieval defined by a YAML configuration.
+
+    This function coordinates reading configuration and data, preparing opacities
+    and instrument responses, building the forward model, running the sampler,
+    and saving outputs to the experiment directory.
+
+    Returns
+    -------
+    None
+    """
 
     # Start runtime counter
     t_start = time.perf_counter()
@@ -92,16 +213,7 @@ def main():
     # Load the observational data - return a dictionary obs
     from read_obs import read_obs_data
     from read_stellar import read_stellar_spectrum
-    data_cfg = getattr(cfg, "data", None)
-    rel_obs_path = None
-    if data_cfg is not None:
-        rel_obs_path = getattr(data_cfg, "obs", None)
-    if rel_obs_path is None:
-        obs_cfg = getattr(cfg, "obs", None)
-        if obs_cfg is not None:
-            rel_obs_path = getattr(obs_cfg, "path", None)
-    if rel_obs_path is None:
-        raise ValueError("No observational data path found. Set cfg.data.obs (or legacy cfg.obs.path).")
+    rel_obs_path = _resolve_obs_path(cfg)
     obs = read_obs_data(rel_obs_path, base_dir=exp_dir)
 
     # Load the opacities (if present in YAML file)
@@ -115,46 +227,14 @@ def main():
     print(
         f"[info] Cut grid:    N={cut_grid.size}, range=[{cut_grid.min():.5f}, {cut_grid.max():.5f}]"
     )
+    # No longer need to pre-create KK cache for direct_nk cloud model
 
     # Read and prepare any response functions and bandpasses for each observational band
     from registry_bandpass import load_bandpass_registry
     load_bandpass_registry(obs, full_grid, cut_grid)
 
     # Load Gibbs free energy tables for chemical equilibrium (if using rate_jax)
-    phys = getattr(cfg, "physics", None)
-    if phys is not None:
-        vert_chem_raw = getattr(phys, "vert_chem", None)
-        if vert_chem_raw is not None:
-            vert_chem_name = str(vert_chem_raw).lower()
-            if vert_chem_name in ("rate_ce", "rate_jax", "ce_rate_jax"):
-                from rate_jax import load_gibbs_cache, is_gibbs_cache_loaded
-
-                # Only load if not already cached
-                if not is_gibbs_cache_loaded():
-                    # Get JANAF path from cfg.data.janaf
-                    data_cfg = getattr(cfg, "data", None)
-                    if data_cfg is not None:
-                        janaf_rel_path = getattr(data_cfg, "janaf", None)
-                    else:
-                        janaf_rel_path = None
-
-                    if janaf_rel_path is None:
-                        raise ValueError(
-                            "JANAF data path not found in config. Please add 'janaf: path/to/JANAF_data' "
-                            "under 'data:' section in your YAML config."
-                        )
-
-                    # Resolve path relative to experiment directory
-                    if not Path(janaf_rel_path).is_absolute():
-                        janaf_path = str(exp_dir / janaf_rel_path)
-                    else:
-                        janaf_path = janaf_rel_path
-
-                    print(f"[info] Loading Gibbs free energy tables from {janaf_path}")
-                    gibbs = load_gibbs_cache(janaf_path)
-                    print(f"[info] Gibbs cache loaded: {len(gibbs.data)} species")
-                else:
-                    print("[info] Gibbs cache already loaded")
+    _maybe_load_gibbs_cache(cfg, exp_dir)
 
     # Build the forward model from the YAML options - return a function that samplers can use
     from build_model import build_forward_model
@@ -182,13 +262,13 @@ def main():
         # Extract backend driver
         backend = cfg.sampling.nuts.backend
         if backend == "blackjax":
-          # Blackjax MCMC driver
-          from sampler_blackjax_MCMC import run_nuts_blackjax
-          samples_dict = run_nuts_blackjax(cfg, prep, exp_dir)
+            # Blackjax MCMC driver
+            from sampler_blackjax_MCMC import run_nuts_blackjax
+            samples_dict = run_nuts_blackjax(cfg, prep, exp_dir)
         elif backend == "numpyro":
-          # Numpyro MCMC driver
-          from sampler_numpyro_MCMC import run_nuts_numpyro
-          samples_dict = run_nuts_numpyro(cfg, prep, exp_dir)
+            # Numpyro MCMC driver
+            from sampler_numpyro_MCMC import run_nuts_numpyro
+            samples_dict = run_nuts_numpyro(cfg, prep, exp_dir)
         else:
             raise ValueError(f"Unknown backend for NUTS: {backend!r}")
 
@@ -228,11 +308,9 @@ def main():
 
     print(f"[info] Results saved to: {exp_dir.resolve()}")
 
-    # Print o
+    # Print overall runtime
     t_end = time.perf_counter()
     print(f"[done] Full model took:", format_duration(t_end - t_start))
-
-    return
 
 # Calling function
 if __name__ == "__main__":

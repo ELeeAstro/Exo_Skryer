@@ -29,16 +29,19 @@ import numpy as np
 import h5py
 
 # Dataclass for each of the correlated-k opacity tables
+# Note: During preprocessing, all arrays are NumPy (CPU)
+# They get converted to JAX (device) only at the final cache creation step
+# Mixed precision: float64 for grids (better accuracy), float32 for cross sections (memory savings)
 @dataclass(frozen=True)
 class CKRegistryEntry:
     name: str
     idx: int
-    pressures: jnp.ndarray       # (n_pressure,)
-    temperatures: jnp.ndarray    # (n_temperature,)
-    wavelengths: jnp.ndarray     # (n_wavelength,)
-    g_points: jnp.ndarray        # (n_g,)
-    g_weights: jnp.ndarray       # (n_g,) - quadrature weights
-    cross_sections: jnp.ndarray  # (n_temperature, n_pressure, n_wavelength, n_g)
+    pressures: np.ndarray        # NumPy during preprocessing (float64) - (n_pressure,)
+    temperatures: np.ndarray     # NumPy during preprocessing (float64) - (n_temperature,)
+    wavelengths: np.ndarray      # NumPy during preprocessing (float64) - (n_wavelength,)
+    g_points: np.ndarray         # NumPy during preprocessing (float64) - (n_g,)
+    g_weights: np.ndarray        # NumPy during preprocessing (float64) - (n_g,) - quadrature weights
+    cross_sections: np.ndarray   # NumPy during preprocessing (float32) - (n_temperature, n_pressure, n_wavelength, n_g)
 
 
 # Global registries and caches for forward model
@@ -163,19 +166,21 @@ def _load_ck_h5(index: int, spec, path: str, obs: dict, use_full_grid: bool = Fa
     kcoeff_cut = kcoeff_transposed[:, :, mask, :]
 
     # Convert to log10 (handle zeros by setting minimum value)
+    # Use float32 to save memory (log10 cross sections don't need float64 precision)
     min_xs = 1e-99  # corresponds to log10 = -99
-    kcoeff_log = np.log10(np.maximum(kcoeff_cut, min_xs))
+    kcoeff_log = np.log10(np.maximum(kcoeff_cut, min_xs)).astype(np.float32)
 
-    # Return a dataclass with all the required entries
+    # Return a dataclass with NumPy arrays (will be converted to JAX later)
+    # Mixed precision: float64 for grids (better interpolation accuracy), float32 for cross sections
     return CKRegistryEntry(
         name=name,
         idx=index,
-        pressures=jnp.asarray(pressures),
-        temperatures=jnp.asarray(temperatures),
-        wavelengths=jnp.asarray(wavelengths_cut),
-        g_points=jnp.asarray(g_points),
-        g_weights=jnp.asarray(weights),
-        cross_sections=jnp.asarray(kcoeff_log),
+        pressures=pressures.astype(np.float64),
+        temperatures=temperatures.astype(np.float64),
+        wavelengths=wavelengths_cut.astype(np.float64),
+        g_points=g_points.astype(np.float64),
+        g_weights=weights.astype(np.float64),
+        cross_sections=kcoeff_log,  # Already float32
     )
 
 
@@ -241,19 +246,22 @@ def _load_ck_npz(index: int, spec, path: str, obs: dict, use_full_grid: bool = F
     else:
         print(f"[c-k] Using full wavelength grid for {name}: {wavelengths.size} bins")
 
+    # Return a dataclass with NumPy arrays (will be converted to JAX later)
+    # Mixed precision: float64 for grids (better interpolation accuracy), float32 for cross sections
     return CKRegistryEntry(
         name=name,
         idx=index,
-        pressures=jnp.asarray(pressures),
-        temperatures=jnp.asarray(temperatures),
-        wavelengths=jnp.asarray(wavelengths),
-        g_points=jnp.asarray(g_points),
-        g_weights=jnp.asarray(g_weights),
-        cross_sections=jnp.asarray(cross_section),
+        pressures=pressures.astype(np.float64),
+        temperatures=temperatures.astype(np.float64),
+        wavelengths=wavelengths.astype(np.float64),
+        g_points=g_points.astype(np.float64),
+        g_weights=g_weights.astype(np.float64),
+        cross_sections=cross_section.astype(np.float32),  # float32 to save memory
     )
 
 
 # Pad the tables to a rectangle (in dimension) - usually only in T and g as wavelength and pressure grids are the same
+# Uses NumPy for preprocessing (CPU-based padding before sending to device)
 def _rectangularize_entries(entries: List[CKRegistryEntry]) -> Tuple[CKRegistryEntry, ...]:
 
     # Return if zero c-k table
@@ -280,11 +288,12 @@ def _rectangularize_entries(entries: List[CKRegistryEntry]) -> Tuple[CKRegistryE
     # Start a new list for the padded cross section tables and pad the temperature and g arrays
     padded_entries: List[CKRegistryEntry] = []
     for entry in entries:
-        pressures = jnp.asarray(entry.pressures)
-        temperatures = jnp.asarray(entry.temperatures)
-        g_points = jnp.asarray(entry.g_points)
-        g_weights = jnp.asarray(entry.g_weights)
-        xs = jnp.asarray(entry.cross_sections)
+        # Keep as NumPy arrays for preprocessing
+        pressures = entry.pressures
+        temperatures = entry.temperatures
+        g_points = entry.g_points
+        g_weights = entry.g_weights
+        xs = entry.cross_sections
 
         current_temperatures, current_pressures, wavelength_count, current_g = xs.shape
 
@@ -293,18 +302,18 @@ def _rectangularize_entries(entries: List[CKRegistryEntry]) -> Tuple[CKRegistryE
         if current_pressures != max_pressures:
             raise ValueError(f"Species {entry.name} has nP={current_pressures}, expected {max_pressures} for common grid.")
 
-        # Pad temperatures
+        # Pad temperatures (use NumPy padding)
         pad_temperatures = max_temperatures - current_temperatures
         if pad_temperatures > 0:
-            temperatures = jnp.pad(temperatures, (0, pad_temperatures), mode="edge")
-            xs = jnp.pad(xs, ((0, pad_temperatures), (0, 0), (0, 0), (0, 0)), mode="edge")
+            temperatures = np.pad(temperatures, (0, pad_temperatures), mode="edge")
+            xs = np.pad(xs, ((0, pad_temperatures), (0, 0), (0, 0), (0, 0)), mode="edge")
 
-        # Pad g-points and g-weights
+        # Pad g-points and g-weights (use NumPy padding)
         pad_g = max_g - current_g
         if pad_g > 0:
-            g_points = jnp.pad(g_points, (0, pad_g), mode="edge")
-            g_weights = jnp.pad(g_weights, (0, pad_g), constant_values=0.0)  # Pad weights with 0
-            xs = jnp.pad(xs, ((0, 0), (0, 0), (0, 0), (0, pad_g)), mode="edge")
+            g_points = np.pad(g_points, (0, pad_g), mode="edge")
+            g_weights = np.pad(g_weights, (0, pad_g), constant_values=0.0)  # Pad weights with 0
+            xs = np.pad(xs, ((0, 0), (0, 0), (0, 0), (0, pad_g)), mode="edge")
 
         padded_entries.append(
             CKRegistryEntry(
@@ -375,12 +384,46 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir
         reset_registry()
         return
 
-    # Store all the data as global scope caches - stack using JAX
-    # Cast to float32 at the end to save GPU memory (even with jax_enable_x64=True)
-    _CK_SIGMA_CACHE = jnp.stack([entry.cross_sections for entry in _CK_ENTRIES], axis=0)
-    _CK_TEMPERATURE_CACHE = jnp.stack([entry.temperatures for entry in _CK_ENTRIES], axis=0)
-    _CK_G_POINTS_CACHE = jnp.stack([entry.g_points for entry in _CK_ENTRIES], axis=0)
-    _CK_G_WEIGHTS_CACHE = jnp.stack([entry.g_weights for entry in _CK_ENTRIES], axis=0)
+    # ============================================================================
+    # CRITICAL: Convert NumPy arrays to JAX arrays here (ONE transfer to device)
+    # ============================================================================
+    # All preprocessing is done in NumPy (CPU). Now we send the final data
+    # to the device (GPU/CPU as configured) for use in JIT-compiled forward model.
+    # Mixed precision strategy:
+    #   - float64 for grids (pressures, temperatures, wavelengths, g_points, g_weights) → better interpolation accuracy
+    #   - float32 for cross sections → halves memory usage
+    # ============================================================================
+
+    print(f"[c-k] Transferring {len(_CK_ENTRIES)} species to device...")
+
+    # Stack cross sections: (n_species, nT, nP, nwl, ng) - already float32 from preprocessing
+    sigma_stacked = np.stack([entry.cross_sections for entry in _CK_ENTRIES], axis=0)
+    _CK_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float32)
+
+    # Stack temperature grids: (n_species, nT) - keep as float64 for accuracy
+    temp_stacked = np.stack([entry.temperatures for entry in _CK_ENTRIES], axis=0)
+    _CK_TEMPERATURE_CACHE = jnp.asarray(temp_stacked, dtype=jnp.float64)
+
+    # Stack g-points: (n_species, ng) - keep as float64 for accuracy
+    g_points_stacked = np.stack([entry.g_points for entry in _CK_ENTRIES], axis=0)
+    _CK_G_POINTS_CACHE = jnp.asarray(g_points_stacked, dtype=jnp.float64)
+
+    # Stack g-weights: (n_species, ng) - keep as float64 for accuracy
+    g_weights_stacked = np.stack([entry.g_weights for entry in _CK_ENTRIES], axis=0)
+    _CK_G_WEIGHTS_CACHE = jnp.asarray(g_weights_stacked, dtype=jnp.float64)
+
+    print(f"[c-k] Cross section cache: {_CK_SIGMA_CACHE.shape} (dtype: {_CK_SIGMA_CACHE.dtype})")
+    print(f"[c-k] Temperature cache: {_CK_TEMPERATURE_CACHE.shape} (dtype: {_CK_TEMPERATURE_CACHE.dtype})")
+    print(f"[c-k] G-points cache: {_CK_G_POINTS_CACHE.shape} (dtype: {_CK_G_POINTS_CACHE.dtype})")
+    print(f"[c-k] G-weights cache: {_CK_G_WEIGHTS_CACHE.shape} (dtype: {_CK_G_WEIGHTS_CACHE.dtype})")
+
+    # Estimate memory usage
+    sigma_mb = _CK_SIGMA_CACHE.size * _CK_SIGMA_CACHE.itemsize / 1024**2
+    temp_mb = _CK_TEMPERATURE_CACHE.size * _CK_TEMPERATURE_CACHE.itemsize / 1024**2
+    g_points_mb = _CK_G_POINTS_CACHE.size * _CK_G_POINTS_CACHE.itemsize / 1024**2
+    g_weights_mb = _CK_G_WEIGHTS_CACHE.size * _CK_G_WEIGHTS_CACHE.itemsize / 1024**2
+    total_mb = sigma_mb + temp_mb + g_points_mb + g_weights_mb
+    print(f"[c-k] Estimated device memory: {total_mb:.1f} MB (σ: {sigma_mb:.1f} MB, T: {temp_mb:.2f} MB, g: {g_points_mb:.2f} MB, w: {g_weights_mb:.2f} MB)")
 
     _clear_cache()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import jax
+from jax import jit
 import jax.numpy as jnp
 
 # Adjust the import path/module name to wherever you placed instru_bandpass.py
@@ -11,6 +12,33 @@ from registry_bandpass import (
     bandpass_indices_padded,
     bandpass_norms,
 )
+
+@jit
+def _convolve_spectrum_core(
+    spec: jnp.ndarray,
+    wl_pad: jnp.ndarray,
+    w_pad: jnp.ndarray,
+    idx_pad: jnp.ndarray,
+    norms: jnp.ndarray,
+) -> jnp.ndarray:
+    """
+    JIT-compiled core for convolving a single spectrum.
+
+    All inputs are explicit JAX arrays, making this a pure function.
+    """
+    n_bins = norms.shape[0]
+
+    def convolve_bin(carry, i):
+        idx_row = idx_pad[i]
+        wl_row = wl_pad[i]
+        w_row = w_pad[i]
+        spec_slice = spec[idx_row]
+        numerator = jnp.trapezoid(spec_slice * w_row, x=wl_row)
+        value = numerator / jnp.maximum(norms[i], 1e-99)
+        return carry, value
+
+    _, binned = jax.lax.scan(convolve_bin, None, jnp.arange(n_bins))
+    return binned
 
 
 def apply_response_functions(
@@ -33,23 +61,10 @@ def apply_response_functions(
     idx_pad = bandpass_indices_padded()      # (n_bins, max_len)
     norms = bandpass_norms()                 # (n_bins,)
 
-    def _convolve_one_spectrum(spec: jnp.ndarray) -> jnp.ndarray:
-        """
-        Jitted core that assumes bandpass_* arrays are fixed and already built.
-        """
-
-        def convolve_bin(carry, i):
-            # i is a JAX scalar; indexing along axis 0 is JAX-friendly
-            idx_row = idx_pad[i]          # (max_len,)
-            wl_row = wl_pad[i]            # (max_len,)
-            w_row = w_pad[i]              # (max_len,)
-
-            spec_slice = spec[idx_row]    # (max_len,)
-            numerator = jnp.trapezoid(spec_slice * w_row, x=wl_row)
-            value = numerator / jnp.maximum(norms[i], 1e-99)
-            return carry, value
-
-        _, binned = jax.lax.scan(convolve_bin, None, jnp.arange(n_bins))
-        return binned
-
-    return _convolve_one_spectrum(spectrum)
+    return _convolve_spectrum_core(
+        spec=spectrum,
+        wl_pad=wl_pad,
+        w_pad=w_pad,
+        idx_pad=idx_pad,
+        norms=norms,
+    )

@@ -89,6 +89,9 @@ def read_stellar_spectrum(
     path = _resolve_stellar_path(cfg, base_dir)
     if path is None:
         return None
+    if not path.exists():
+        print(f"[read_stellar] Stellar spectrum not found at {path}; skipping.")
+        return None
     wl_native, flux_native = _load_native_spectrum(path)
     lam_master = np.asarray(lam_master, dtype=float)
 

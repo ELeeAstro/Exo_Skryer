@@ -21,12 +21,15 @@ import numpy as np
 import jax.numpy as jnp
 
 # Dataclass for the Rayleigh cross section data
+# Note: During preprocessing, all arrays are NumPy (CPU)
+# They get converted to JAX (device) only at the final cache creation step
+# Mixed precision: float64 for wavelengths (better accuracy), float32 for cross sections (memory savings)
 @dataclass(frozen=True)
 class RayRegistryEntry:
     name: str
     idx: int
-    wavelengths: jnp.ndarray
-    cross_sections: jnp.ndarray
+    wavelengths: np.ndarray     # NumPy during preprocessing (float64)
+    cross_sections: np.ndarray  # NumPy during preprocessing (float32 to save memory)
 
 # Global Rayleigh cross section caches
 _RAY_ENTRIES: Tuple[RayRegistryEntry, ...] = ()
@@ -218,26 +221,53 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
     if not config:
         reset_registry()
         return
+
     wavelengths = np.asarray(obs["wl"], dtype=float) if lam_master is None else np.asarray(lam_master, dtype=float)
+
     for index, spec in enumerate(cfg.opac.ray):
         name = getattr(spec, "species", str(spec))
-        print("[info] computing Rayleigh xs for", name)
+        print("[Ray] Computing Rayleigh xs for", name)
         xs = _compute_species_sigma(name, wavelengths)
         log_xs = np.log10(xs)
+
+        # Create entry with NumPy arrays (will be converted to JAX later)
+        # Mixed precision: float64 for wavelengths (better accuracy), float32 for cross sections
         entries.append(
             RayRegistryEntry(
                 name=name,
                 idx=index,
-                wavelengths=jnp.asarray(wavelengths),
-                cross_sections=jnp.asarray(log_xs),
+                wavelengths=wavelengths.astype(np.float64),
+                cross_sections=log_xs.astype(np.float32),
             )
         )
+
     _RAY_ENTRIES = tuple(entries)
     if not _RAY_ENTRIES:
         reset_registry()
         return
-    # Cast to float32 at the end to save GPU memory (even with jax_enable_x64=True)
-    _RAY_SIGMA_CACHE = jnp.stack([entry.cross_sections for entry in _RAY_ENTRIES], axis=0)
+
+    # ============================================================================
+    # CRITICAL: Convert NumPy arrays to JAX arrays here (ONE transfer to device)
+    # ============================================================================
+    # All preprocessing is done in NumPy (CPU). Now we send the final data
+    # to the device (GPU/CPU as configured) for use in JIT-compiled forward model.
+    # Mixed precision strategy:
+    #   - float64 for wavelengths → better interpolation accuracy
+    #   - float32 for cross sections → halves memory usage
+    # ============================================================================
+
+    print(f"[Ray] Transferring {len(_RAY_ENTRIES)} species to device...")
+
+    # Stack cross sections: (n_species, nwl) - already float32 from preprocessing
+    sigma_stacked = np.stack([entry.cross_sections for entry in _RAY_ENTRIES], axis=0)
+    _RAY_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float32)
+
+    print(f"[Ray] Cross section cache: {_RAY_SIGMA_CACHE.shape} (dtype: {_RAY_SIGMA_CACHE.dtype})")
+
+    # Estimate memory usage
+    sigma_mb = _RAY_SIGMA_CACHE.size * _RAY_SIGMA_CACHE.itemsize / 1024**2
+    print(f"[Ray] Estimated device memory: {sigma_mb:.1f} MB")
+
     _clear_cache()
 
 

@@ -1,0 +1,12 @@
+
+#log_10_g: {label: "$\\log_{10} g$ [cm\\,s$^{-2}$]", order: 4}
+R_p: {label: "$R_p$ [$R_{\\mathrm{Jup}}$]", order: 2}
+T_iso: {label: "$T_{\\mathrm{strat}}$ [K]", order: 3}
+log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 1}
+#log_10_f_Na: {label: "$\\log_{10} f_{\\mathrm{Na}}$", order: 8}
+#log_10_f_K: {label: "$\\log_{10} f_{\\mathrm{K}}$", order: 9}
+f_cloud: {label: "$f_{\\mathrm{cld}}$", order: 8}
+log_10_q_c: {label: "$\\log_{10} q_c$", order: 4}
+log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{cld}}$ [$\\mu$m]", order: 5}
+cld_Q0: {label: "$Q_0$", order: 6}
+cld_a: {label: "$a_{\\mathrm{cld}}$", order: 7}

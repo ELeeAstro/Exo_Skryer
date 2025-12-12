@@ -244,6 +244,9 @@ def compute_emission_spectrum_1d(
         lw_up, _ = _solve_alpha_eaa(be_levels, dtau_lbl, ssa_lbl, g_lbl, be_internal)
 
     top_flux = lw_up[0]
+    emission_mode = str(state.get("emission_mode", "planet")).lower().replace(" ", "_")
+    if emission_mode in ("brown_dwarf", "browndwarf", "bd"):
+        return top_flux
     flux_ratio = _scale_flux_ratio(top_flux, state, params)
     return flux_ratio
 

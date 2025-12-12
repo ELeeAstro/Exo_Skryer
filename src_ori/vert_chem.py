@@ -176,3 +176,44 @@ def CE_rate_jax(
     vmr_lay = rate.solve_profile(T_lay, p_lay/1e6)
 
     return vmr_lay
+
+
+def quench_approx(
+    p_lay: jnp.ndarray,
+    T_lay: jnp.ndarray,
+    params: Dict[str, jnp.ndarray],
+    nlay: int,
+) -> Dict[str, jnp.ndarray]:
+    
+    # Get cached Gibbs tables (will raise RuntimeError if not loaded)
+    gibbs = get_gibbs_cache()
+
+    # Extract metallicity and C/O ratio from params (keep as JAX arrays for JIT compatibility)
+    metallicity = params.get('M/H', 0.0)  # [dex]
+    CO_ratio = params.get('C/O', solar_C/solar_O)  # dimensionless
+
+    # Convert M/H and C/O to elemental abundances
+    # Scale oxygen and nitrogen by metallicity
+    O = solar_O * (10.0 ** metallicity)
+    N = solar_N * (10.0 ** metallicity)
+
+    # Carbon set by C/O ratio
+    C = CO_ratio * O
+
+    # Create RateJAX solver
+    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_he)
+
+    # Solve chemical equilibrium profile
+    vmr_lay = rate.solve_profile(T_lay, p_lay/1e6)
+
+    # Now solve the quench level for each quenched species - first calculate the chemical timescale of each species
+    # For vectorisation reasons, just do the full profile
+
+
+    Species = [
+            "H2O", "CH4", "CO", "CO2", "NH3",
+            "C2H2", "C2H4", "HCN", "N2",
+            "H2", "H", "He",
+    ]
+
+    return vmr_lay

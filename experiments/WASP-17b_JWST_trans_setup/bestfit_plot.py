@@ -27,7 +27,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -90,6 +90,68 @@ def _fixed_value_param(p):
     if init is not None:
         return float(init)
     return None
+
+
+# ---------------- smoothing helpers ----------------
+
+SmoothingSegment = Tuple[int, int, np.ndarray]
+
+
+def _build_resolution_smoother(
+    wavelengths: Sequence[float],
+    resolving_power: float | None,
+    *,
+    window_sigma: float = 5.0,
+) -> List[SmoothingSegment]:
+    """
+    Build Gaussian weights in log-wavelength space to approximate a constant
+    resolving power (R = lambda / delta_lambda).
+    """
+    if resolving_power is None or resolving_power <= 0:
+        return []
+    wl = np.asarray(wavelengths, dtype=float)
+    if wl.ndim != 1 or wl.size == 0:
+        raise ValueError("Wavelength grid for smoothing must be 1D and non-empty.")
+    if np.any(np.diff(wl) <= 0):
+        raise ValueError("Wavelength grid must be strictly increasing for smoothing.")
+
+    log_wl = np.log(wl)
+    sigma_log = 1.0 / (resolving_power * 2.0 * np.sqrt(2.0 * np.log(2.0)))
+    if sigma_log <= 0 or not np.isfinite(sigma_log):
+        return []
+    window = window_sigma * sigma_log
+    segments: List[SmoothingSegment] = []
+
+    for idx, center in enumerate(log_wl):
+        lo = np.searchsorted(log_wl, center - window)
+        hi = np.searchsorted(log_wl, center + window)
+        lo = max(0, lo)
+        hi = min(log_wl.size, max(hi, idx + 1))
+        local = log_wl[lo:hi]
+        weights = np.exp(-0.5 * ((local - center) / sigma_log) ** 2)
+        weight_sum = weights.sum()
+        if weight_sum <= 0:
+            weights = np.ones_like(weights) / max(len(weights), 1)
+        else:
+            weights /= weight_sum
+        segments.append((lo, hi, weights.astype(float, copy=True)))
+    return segments
+
+
+def _apply_resolution_smoother(values: np.ndarray, segments: Sequence[SmoothingSegment]) -> np.ndarray:
+    if not segments:
+        return values
+    arr = np.asarray(values, dtype=float)
+    smoothed = np.empty_like(arr)
+    if arr.ndim == 1:
+        for i, (lo, hi, weights) in enumerate(segments):
+            smoothed[i] = np.dot(arr[lo:hi], weights)
+    else:
+        for i, (lo, hi, weights) in enumerate(segments):
+            window = arr[..., lo:hi]
+            reshape_dims = (1,) * (arr.ndim - 1) + (weights.size,)
+            smoothed[..., i] = np.sum(window * weights.reshape(reshape_dims), axis=-1)
+    return smoothed
 
 
 # ---------------- observed data loading ----------------
@@ -343,6 +405,7 @@ def plot_model_band(
     show_data: bool = True,
     show_plot: bool = True,
     csv_path: str | None = None,
+    smooth_res: float | None = None,
 ):
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
@@ -387,6 +450,11 @@ def plot_model_band(
     hi_wl = np.asarray(master_wavelength_cut(), dtype=float)
     # full_grid is currently unused, so we can safely pass hi_wl for both full_grid and cut_grid
     load_bandpass_registry(obs, hi_wl, hi_wl)
+    smoother_segments: List[SmoothingSegment] = []
+    if smooth_res is not None and smooth_res > 0:
+        smoother_segments = _build_resolution_smoother(hi_wl, smooth_res)
+        if smoother_segments:
+            print(f"[model_band] Smoothing hi-res spectra to R≈{smooth_res:g}")
 
     # Build the *same* forward model used in the retrieval; we want hi-res + binned
     predict_fn = build_forward_model(cfg, obs, return_highres=True)
@@ -436,83 +504,167 @@ def plot_model_band(
         hires_samples[k, :] = np.asarray(result["hires"], dtype=float)
         depth_samples[k, :] = np.asarray(result["binned"], dtype=float)
 
-    # Pointwise quantiles (binned + hi-res)
-    q02_5 = np.quantile(depth_samples, 0.025, axis=0)
-    q50   = np.quantile(depth_samples, 0.50,  axis=0)
-    q97_5 = np.quantile(depth_samples, 0.975, axis=0)
-    hq02_5 = np.quantile(hires_samples, 0.025, axis=0)
-    hq50   = np.quantile(hires_samples, 0.50,  axis=0)
-    hq97_5 = np.quantile(hires_samples, 0.975, axis=0)
+    # Work in percent for plotting/exports
+    depth_samples *= 100.0
+    hires_samples *= 100.0
+    if smoother_segments:
+        hires_samples = _apply_resolution_smoother(hires_samples, smoother_segments)
+
+    # Pointwise quantiles (binned + hi-res) — 1σ ≈ 68%
+    q16 = np.quantile(depth_samples, 0.16, axis=0)
+    q50 = np.quantile(depth_samples, 0.50, axis=0)
+    q84 = np.quantile(depth_samples, 0.84, axis=0)
+    hq16 = np.quantile(hires_samples, 0.16, axis=0)
+    hq50 = np.quantile(hires_samples, 0.50, axis=0)
+    hq84 = np.quantile(hires_samples, 0.84, axis=0)
 
     # Save quantiles
     np.savez_compressed(
         exp_dir / f"{outname}_quantiles.npz",
         lam=lam_arr,
         dlam=dlam_arr,
-        depth_p02_5=q02_5,
+        depth_p16=q16,
         depth_p50=q50,
-        depth_p97_5=q97_5,
+        depth_p84=q84,
         draw_idx=idx,
         lam_hires=hi_wl,
-        depth_hi_p02_5=hq02_5,
+        depth_hi_p16=hq16,
         depth_hi_p50=hq50,
-        depth_hi_p97_5=hq97_5,
+        depth_hi_p84=hq84,
     )
 
     # Plot
-    sns.set_theme(style="whitegrid")
-    palette = sns.color_palette("colorblind", 4)
+    #sns.set_theme(style="white", rc={"axes.grid": False})
+    palette = sns.color_palette("colorblind")
     fig, ax = plt.subplots(figsize=(8, 4.5))
 
     # hi-res median (optional overlay)
-    ax.plot(hi_wl, hq50, lw=1.0, alpha=0.6, label="Median (hi-res)", color=palette[0])
+    ax.plot(hi_wl, hq50, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
     # credible band (binned)
-    ax.fill_between(lam_arr, q02_5, q97_5, alpha=0.3, label="95% credible band", color=palette[1])
+    ax.fill_between(lam_arr, q16, q84, alpha=0.3, color=palette[1])
     # median binned model
-    ax.plot(lam_arr, q50, lw=2, label="Median model", color=palette[2])
+    ax.plot(lam_arr, q50, lw=2, label="Median", color=palette[1])
 
     # observations (if available)
+    y_plot = y_obs * 100.0 if y_obs is not None else None
+    dy_plot = dy_obs * 100.0 if dy_obs is not None else None
     if show_data and y_obs is not None:
-        if dy_obs is not None:
+        if dy_plot is not None:
             ax.errorbar(
                 lam_arr,
-                y_obs,
+                y_plot,
                 xerr=dlam_arr,
-                yerr=dy_obs,
+                yerr=dy_plot,
                 fmt="o",
                 ms=3,
                 lw=1,
                 alpha=0.9,
                 label="Observed",
-                color=palette[3],
-                ecolor=palette[3],
+                color=palette[0],
+                ecolor=palette[0],
                 capsize=2,
             )
         else:
             ax.errorbar(
                 lam_arr,
-                y_obs,
+                y_plot,
                 xerr=dlam_arr,
                 fmt="o",
                 ms=3,
-                alpha=0.9,
+                alpha=1.0,
                 label="Observed",
-                color=palette[3],
-                ecolor=palette[3],
+                color=palette[0],
+                ecolor=palette[0],
                 capsize=2,
             )
 
-    ax.set_xlabel("Wavelength [µm]")
-    ax.set_ylabel("Transit depth")
+    ax.set_xlabel("Wavelength [µm]", fontsize=14)
+    ax.set_ylabel("Transit Depth [%]", fontsize=14)
     ax.set_xscale("log")
+    tick_locs = np.array([0.2, 0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 5.0, 7.0, 10.0, 15.0])
+    ax.set_xticks(tick_locs)
+    ax.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
+    ax.tick_params(axis="y", labelsize=12)
+    ax.set_xlim(0.2, 15.0)
+    ax.grid(False)
+    #ax.tick_params(axis="both", which="both", direction="out")
     ax.legend()
     fig.tight_layout()
 
     png = exp_dir / f"{outname}.png"
     pdf = exp_dir / f"{outname}.pdf"
-    fig.savefig(png, dpi=200)
+    fig.savefig(png, dpi=300)
     fig.savefig(pdf)
-    print(f"[model_band] saved:\n  {png}\n  {pdf}")
+
+    # Zoomed-in linear-scale view on 7–12 µm
+    zoom_min, zoom_max = 7.0, 12.0
+    hi_mask = (hi_wl >= zoom_min) & (hi_wl <= zoom_max)
+    bin_mask = (lam_arr >= zoom_min) & (lam_arr <= zoom_max)
+    fig_zoom, ax_zoom = plt.subplots(figsize=(5, 5))
+    if np.any(hi_mask):
+        ax_zoom.plot(
+            hi_wl[hi_mask],
+            hq50[hi_mask],
+            lw=1.0,
+            alpha=0.7,
+            label="Median (hi-res)",
+            color=palette[4],
+        )
+    if np.any(bin_mask):
+        ax_zoom.fill_between(
+            lam_arr[bin_mask],
+            q16[bin_mask],
+            q84[bin_mask],
+            alpha=0.3,
+            color=palette[1],
+        )
+        ax_zoom.plot(
+            lam_arr[bin_mask],
+            q50[bin_mask],
+            lw=2,
+            label="Median",
+            color=palette[1],
+        )
+        if show_data and y_obs is not None:
+            if dy_plot is not None:
+                ax_zoom.errorbar(
+                    lam_arr[bin_mask],
+                    y_plot[bin_mask],
+                    xerr=dlam_arr[bin_mask],
+                    yerr=dy_plot[bin_mask],
+                    fmt="o",
+                    ms=3,
+                    lw=1,
+                    alpha=0.9,
+                    label="Observed",
+                    color=palette[0],
+                    ecolor=palette[0],
+                    capsize=2,
+                )
+            else:
+                ax_zoom.errorbar(
+                    lam_arr[bin_mask],
+                    y_plot[bin_mask],
+                    xerr=dlam_arr[bin_mask],
+                    fmt="o",
+                    ms=3,
+                    alpha=1.0,
+                    label="Observed",
+                    color=palette[0],
+                    ecolor=palette[0],
+                    capsize=2,
+                )
+    ax_zoom.set_xlabel("Wavelength [µm]", fontsize=14)
+    ax_zoom.set_ylabel("Transit Depth [%]", fontsize=14)
+    ax_zoom.set_xlim(zoom_min, zoom_max)
+    ax_zoom.tick_params(axis="x", labelsize=12)
+    ax_zoom.tick_params(axis="y", labelsize=12)
+    ax_zoom.legend()
+    fig_zoom.tight_layout()
+    zoom_pdf = exp_dir / f"{outname}_zoom.pdf"
+    fig_zoom.savefig(zoom_pdf)
+
+    print(f"[model_band] saved:\n  {png}\n  {pdf}\n  {zoom_pdf}")
 
     if show_plot:
         plt.show()
@@ -551,6 +703,10 @@ def main():
         "--csv", type=str, default=None,
         help="Path to nested_samples.csv file (alternative to posterior.nc).",
     )
+    ap.add_argument(
+        "--smooth-res", type=float, default=None,
+        help="If set (>0), smooth the high-res spectrum to this resolving power before plotting.",
+    )
     args = ap.parse_args()
 
     max_samples = None if args.max_samples <= 0 else args.max_samples
@@ -563,6 +719,7 @@ def main():
         show_data=not args.no_data,
         show_plot=not args.no_show,
         csv_path=args.csv,
+        smooth_res=args.smooth_res,
     )
 
 

@@ -10,11 +10,11 @@ physics:
 
   vert_Tp: Guillot
   vert_alt: p_ref
-  vert_chem: rate_CE
+  vert_chem: constant_vmr
   vert_mu: dynamic
 
   opac_line: lbl
-  opac_ray: lbl
+  opac_ray: None
   opac_cia: lbl
   opac_cloud: None
 
@@ -32,9 +32,9 @@ opac:
     - {species: CO2, path: ../../opac_data/lbl/CO2_dnu_1.npz} 
     - {species: CH4, path: ../../opac_data/lbl/CH4_dnu_1.npz}
 
-  ray:
-    - {species: H2}
-    - {species: He}
+  ray: None
+    #- {species: H2}
+    #- {species: He}
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
@@ -43,27 +43,25 @@ opac:
 params:
 
 
+
   - { name: R_s,   dist: delta,   value: 0.765, transform: identity, init: 0.765}
   - { name: p_bot, dist: delta,   value: 100.0,  transform: identity, init: 100.0 }
   - { name: p_top, dist: delta,   value: 1e-6, transform: identity, init: 1e-6}
-  - { name: M_p, dist: delta,   value: 1.166, transform: identity, init: 1.166}
+  - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
   - { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
 
-
-  - { name: log_10_p_ref, dist: uniform, low: -5,   high: 1.9,  transform: logit, init: 10.0}    
+  - { name: log_10_g,  dist: uniform, low: 2.7,   high: 3.3,  transform: logit, init: 3.0}
   - { name: R_p, dist: uniform, low: 1.0,   high: 1.2,  transform: logit, init: 1.119}
-  - { name: T_int, dist: uniform, low: 250.0,   high: 600.0, transform: logit, init: 250.0 }
-  - { name: T_eq, dist: uniform, low: 500.0,   high: 2000.0, transform: logit, init: 1500.0 }
-  - { name: log_10_k_ir, dist: uniform, low: -9,   high: 9, transform: logit, init: 0 }
-  - { name: log_10_gam_v, dist: uniform, low: -6,   high: 2, transform: logit, init: 0 }
 
-  - { name: C/O, dist: uniform, low: 0,   high: 2,  transform: logit, init: 0}
-  - { name: M/H, dist: uniform, low: -1,   high: 3,  transform: logit, init: 0}
+  - { name: T_eq, dist: uniform, low: 500.0,   high: 2000.0, transform: logit, init: 800.0 }
+  - { name: T_int, dist: uniform, low: 100.0,   high: 600.0, transform: logit, init: 600.0 }
+  - { name: log_10_k_ir, dist: uniform, low: -6,   high: 6,  transform: logit, init: -6}
+  - { name: log_10_gam_v, dist: uniform, low: -3,   high: 2,  transform: logit, init: -6}
 
-  # - { name: log_10_f_H2O, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
-  # - { name: log_10_f_CO, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
-  # - { name: log_10_f_CO2, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
-  # - { name: log_10_f_CH4, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
+  - { name: log_10_f_H2O, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
+  - { name: log_10_f_CO, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
+  - { name: log_10_f_CO2, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
+  - { name: log_10_f_CH4, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
 
 
 sampling:

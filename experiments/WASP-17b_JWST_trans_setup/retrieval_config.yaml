@@ -1,7 +1,7 @@
 data:
 
-  path: ../obs_data/WASP-17b_JWST.txt
-  stellar: ./
+  obs: ../../obs_data/WASP-17b_JWST.txt
+  stellar: None
 
 physics:
 
@@ -15,38 +15,29 @@ physics:
   opac_line: lbl
   opac_ray: lbl
   opac_cia: lbl
-  opac_cloud: None
+  opac_cloud: nk
 
   rt_scheme: transit_1d
 
 opac:
 
   wl_master: wl_dnu_1.txt
-  #wl_master: wl_petitradtrans_R1000.txt
-  #wl_master: wl_taurex_R15000.txt 
-  full_grid: False
+  full_grid: True
   ck: False
 
   line:
-    - {species: H2O, path: ../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: CO2, path: ../opac_data/lbl/CO2_dnu_1.npz}
-    - {species: CO, path: ../opac_data/lbl/CO_dnu_1.npz}
-    - {species: CH4, path: ../opac_data/lbl/CH4_dnu_1.npz}      
-    - {species: Na, path: ../opac_data/lbl/Na_dnu_1.npz}  
-    - {species: K, path: ../opac_data/lbl/K_dnu_1.npz}
-       #- {species: H2O, path: ../opac_data/ck/1H2-16O__POKAZATEL__R1000_0.3-50mu.ktable.petitRADTRANS.h5}
-       # - {species: Na, path: ../opac_data/ck/23Na__Kurucz-Na.R1000_0.3-50mu.ktable.petitRADTRANS.h5}
-       #- {species: K, path: ../opac_data/ck/39K__Kurucz-K.R1000_0.3-50mu.ktable.petitRADTRANS.h5}
-      #- {species: H2O, path: ../opac_data/lbl/1H2-16O__POKAZATEL__R15000_0.3-50mu.xsec.TauREx.h5}
-      #- {species: Na, path: ../opac_data/lbl/23Na__Kurucz-Na.R15000_0.3-50mu.xsec.TauREx.h5}
-      #- {species: K, path: ../opac_data/lbl/39K__Kurucz-K.R15000_0.3-50mu.xsec.TauREx.h5}        
-
+    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
+    - {species: CO2, path: ../../opac_data/lbl/CO2_dnu_1.npz}
+    - {species: CO, path: ../../opac_data/lbl/CO_dnu_1.npz}
+    - {species: CH4, path: ../../opac_data/lbl/CH4_dnu_1.npz}      
+    - {species: Na, path: ../../opac_data/lbl/Na_dnu_1.npz}  
+    - {species: K, path: ../../opac_data/lbl/K_dnu_1.npz}
   ray:
     - {species: H2}
     - {species: He}
   cia:
-    - {species: H2-H2, path: ../opac_data/cia/H2-H2_2011.npz}
-    - {species: H2-He, path: ../opac_data/cia/H2-He_2011.npz}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
     - {species: H-, path: ./}
   cloud: None
 
@@ -56,12 +47,9 @@ params:
   - { name: R_s, dist: delta,   value: 1.583,  transform: identity, init: 1.583 }
   - { name: p_bot, dist: delta,   value: 100.0,  transform: identity, init: 100.0 }
   - { name: p_top, dist: delta,   value: 1e-8, transform: identity, init: 1e-8}
-  - { name: M_p, dist: delta,   value: 0.477, transform: identity, init: 0.477}
+  - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
 
-  #- { name: rho_d, dist: delta,   value: 1.0, transform: identity, init: 1.}
-  #- { name: log_g,  dist: normal, mu: 3.0, sigma: 0.3, init: 3.0}
-
-  - { name: log_10_p_ref, dist: uniform, low: -7,   high: 1.9,  transform: logit, init: 10.0}
+  - { name: log_10_g,  dist: uniform, low: 2.2,   high: 3.0,  transform: logit, init: 3.0}
   - { name: R_p, dist: uniform, low: 1.5895,   high: 2.1505,  transform: logit, init: 1.4}
   - { name: T_iso, dist: uniform, low: 400.0,   high: 2300.0, transform: logit, init: 1500.0 }
 
@@ -74,9 +62,45 @@ params:
   - { name: log_10_f_H-, dist: uniform, low: -12,   high: -0.3,  transform: logit, init: -6}
 
 
+  - { name: log_10_q_c_0, dist: uniform, low: -9,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_p_base, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+
+  - { name: log_10_cld_r, dist: uniform, low: -3,   high: 2,  transform: logit, init: 0}
+  - { name: log_10_H_cld, dist: uniform, low: -1,   high: 1,  transform: logit, init: 0}
+  - { name: sigma, dist: uniform, low: 1.001,   high: 2.0,  transform: logit, init: 1}
+
+  - { name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 0.335}
+  - { name: wl_node_1, dist: delta, value: 8.0, transform: identity, init: 11.875}
+  - { name: wl_node_2, dist: delta, value: 8.5, transform: identity, init: 11.875}
+  - { name: wl_node_3, dist: delta, value: 8.75, transform: identity, init: 11.875}
+  - { name: wl_node_4, dist: delta, value: 9.0, transform: identity, init: 11.875}
+  - { name: wl_node_5, dist: delta, value: 10.0, transform: identity, init: 11.875}
+  - { name: wl_node_6, dist: delta, value: 11.0, transform: identity, init: 11.875}
+  - { name: wl_node_7, dist: delta, value: 12.0, transform: identity, init: 12.0}
+
+
+  - { name: n_0, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_1, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_2, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_3, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_4, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_5, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_6, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+  - { name: n_7, dist: uniform, low: 0.4,   high: 3.0,  transform: logit, init: 0}
+
+
+  - { name: log_10_k_0, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_1, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_2, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_3, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_4, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_5, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_6, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_7, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+
 sampling:
 
-  engine: jaxns
+  engine: blackjax_ns
 
   nuts:
     backend: numpyro
@@ -88,10 +112,10 @@ sampling:
   jaxns:
     # ---- core NS config ----
     max_samples: 100000          # hard cap on nested-sampling iterations
-    num_live_points: 100         # live points (posterior resolution)
+    num_live_points: 1000         # live points (posterior resolution)
 
     # Slice sampler hyperparameters
-    s: 6                         # slices per dimension (default ~4)
+    s: 4                         # slices per dimension (default ~4)
     k: 0                         # phantom samples (0 = off, >0 for hard posteriors)
     c: null                       # parallel chains (null -> jaxns default, ~20*D)
     shell_fraction: 0.5          # fraction of shell explored per step (0<sf<=1)
@@ -107,7 +131,7 @@ sampling:
     termination:
       ess: 10000                        # target effective sample size
       evidence_uncert: null            # stop when σ_logZ < 0.3
-      dlogZ: 1.0                     # stop when remaining evidence small
+      dlogZ: 0.01                     # stop when remaining evidence small
       max_samples: 100000             # safety cap for samples
       max_num_likelihood_evaluations: null
       rtol: null
@@ -118,13 +142,15 @@ sampling:
     seed: 42                          # RNG seed for JAX
 
   blackjax_ns:
-    num_live_points: 200
-    num_inner_steps: 50
+    num_live_points: 250
+    num_inner_steps: 45
     num_delete: 100
-    dlogz_stop: 0
+    dlogz_stop: -2
     seed: 42
+    posterior_samples: 10000      
 
 runtime:
-  platform: gpu           # cpu | gpu | cuda | metal
+  platform: cpu           # cpu | gpu | cuda | metal
   cuda_visible_devices: 1  # or "0,1"
   threads: 1
+

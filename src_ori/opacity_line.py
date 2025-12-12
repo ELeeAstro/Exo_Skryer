@@ -19,15 +19,6 @@ import jax.numpy as jnp
 import build_opacities as XS
 from data_constants import amu
 
-_SIGMA_CACHE: jnp.ndarray | None = None
-
-
-def _load_sigma_cube() -> jnp.ndarray:
-    global _SIGMA_CACHE
-    if _SIGMA_CACHE is None:
-        _SIGMA_CACHE = XS.line_sigma_cube()
-    return _SIGMA_CACHE
-
 
 def _interpolate_sigma(layer_pressures_bar: jnp.ndarray, layer_temperatures: jnp.ndarray) -> jnp.ndarray:
     """
@@ -36,7 +27,8 @@ def _interpolate_sigma(layer_pressures_bar: jnp.ndarray, layer_temperatures: jnp
     sigma_cube shape: (n_species, n_temp, n_pressure, n_wavelength)
     Returns: (n_species, n_layers, n_wavelength)
     """
-    sigma_cube = _load_sigma_cube()
+    # Direct access to cached registry data (no redundant caching needed)
+    sigma_cube = XS.line_sigma_cube()
     pressure_grid = XS.line_pressure_grid()
     temperature_grids = XS.line_temperature_grids()
 

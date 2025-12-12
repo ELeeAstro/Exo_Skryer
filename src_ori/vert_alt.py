@@ -22,8 +22,7 @@ from data_constants import amu, kb, R_jup, bar
 
 
 def hypsometric(p_lev, T_lay, mu_lay, params):
-    log_g = jnp.asarray(params["log_g"])
-    g = 10.0 ** log_g 
+    g = jnp.asarray(params["log_10_g"])
     H = (kb * T_lay) / (mu_lay * amu * g)
     dlnp = jnp.log(p_lev[:-1] / p_lev[1:])
     dz = H * dlnp
@@ -42,9 +41,8 @@ def hypsometric_variable_g(p_lev, T_lay, mu_lay, params):
 
     nlev = p_lev.shape[0]
 
-    log_g = jnp.asarray(params["log_g"])
+    g_ref = 10.0**jnp.asarray(params["log_10_g"])
     R0 = jnp.asarray(params["R_p"]) * R_jup
-    g_ref = 10.0 ** log_g
 
     dlnp = jnp.log(p_lev[:-1] / p_lev[1:])
 
@@ -79,10 +77,9 @@ def hypsometric_variable_g_pref(p_lev, T_lay, mu_lay, params):
     Hypsometric integration that anchors R0 and g_ref at an arbitrary
     reference pressure p_ref (between p_bot and p_top).
     """
-    log_g = jnp.asarray(params["log_g"])
+    g_ref = 10.0**jnp.asarray(params["log_10_g"])
     R0 = jnp.asarray(params["R_p"]) * R_jup
-    g_ref = 10.0 ** log_g
-    p_ref = jnp.asarray(params["log_10_p_ref"]) * bar
+    p_ref = 10.0**jnp.asarray(params["log_10_p_ref"]) * bar
 
     nlev = p_lev.shape[0]
     dlnp = jnp.log(p_lev[:-1] / p_lev[1:])

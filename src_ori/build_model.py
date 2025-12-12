@@ -16,7 +16,7 @@ import numpy as np
 from data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-from vert_Tp import isothermal, Milne, Guillot, Line, Barstow
+from vert_Tp import isothermal, Milne, Guillot, Barstow, MandS09, picket_fence
 from vert_chem import constant_vmr, chemical_equilibrium, CE_rate_jax
 from vert_mu import constant_mu, compute_mu
 
@@ -24,7 +24,7 @@ from opacity_line import zero_line_opacity, compute_line_opacity
 from opacity_ck import zero_ck_opacity, compute_ck_opacity
 from opacity_ray import zero_ray_opacity, compute_ray_opacity
 from opacity_cia import zero_cia_opacity, compute_cia_opacity
-from opacity_cloud import zero_cloud_opacity, grey_cloud, F18_cloud
+from opacity_cloud import zero_cloud_opacity, grey_cloud, F18_cloud, direct_nk
 
 import build_opacities as XS
 
@@ -33,7 +33,7 @@ from RT_em_1D import compute_emission_spectrum_1d
 
 from instru_convolve import apply_response_functions
 
-def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = False):
+def build_forward_model(cfg, obs, stellar_flux=None, kk_cache=None, return_highres: bool = False):
 
     # Extract fixed (delta) parameters from cfg.params
     fixed_params = {}
@@ -62,14 +62,16 @@ def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = Fals
     vert_tp_name = str(vert_tp_raw).lower()
     if vert_tp_name in ("isothermal", "constant"):
         Tp_kernel = isothermal
+    elif vert_tp_name == "barstow":
+        Tp_kernel = Barstow
     elif vert_tp_name == "milne":
         Tp_kernel = Milne
     elif vert_tp_name == "guillot":
         Tp_kernel = Guillot
-    elif vert_tp_name == "line":
-        Tp_kernel = Line
-    elif vert_tp_name == "barstow":
-        Tp_kernel = Barstow
+    elif vert_tp_name == "picket_fence":
+        Tp_kernel = picket_fence
+    elif vert_tp_name == "ms09":
+        Tp_kernel = MandS09
     else:
         raise NotImplementedError(f"Unknown vert_Tp='{vert_tp_name}'")
 
@@ -170,6 +172,8 @@ def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = Fals
         cld_opac_kernel = grey_cloud
     elif cld_opac_scheme_str.lower() == "f18":
         cld_opac_kernel = F18_cloud
+    elif cld_opac_scheme_str.lower() == "nk":
+        cld_opac_kernel = direct_nk
     else:
         raise NotImplementedError(f"Unknown cld_opac_scheme='{cld_opac_scheme}'")
 
@@ -191,6 +195,11 @@ def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = Fals
     if stellar_flux is not None:
         stellar_flux_arr = jnp.asarray(stellar_flux, dtype=jnp.float64)
 
+    emission_mode = getattr(phys, "emission_mode", "planet")
+    if emission_mode is None:
+        emission_mode = "planet"
+    emission_mode = str(emission_mode).lower().replace(" ", "_")
+
     @jax.jit
     def forward_model(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
 
@@ -204,11 +213,6 @@ def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = Fals
 
         # Planet and star radii (R0 is radius at p_bot)
         R0 = jnp.asarray(full_params["R_p"]) * R_jup
-        if "M_p" in full_params:
-            Mp_val = jnp.asarray(full_params["M_p"]) * M_jup
-            g_val = (G * Mp_val) / (R0 ** 2)
-            log_g_val = jnp.log10(jnp.clip(g_val, a_min=1e-30))
-            full_params = {**full_params, "log_g": log_g_val}
         R_s = jnp.asarray(full_params["R_s"]) * R_sun
 
         # Atmospheric pressure grid
@@ -246,6 +250,7 @@ def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = Fals
             "nwl": nwl,
             "nlay": nlay,
             "wl": wl,
+            "emission_mode": emission_mode,
             "R0": R0,
             "R_s": R_s,
             "p_lev": p_lev,
@@ -262,8 +267,8 @@ def build_forward_model(cfg, obs, stellar_flux=None, return_highres: bool = Fals
         }
         if stellar_flux_arr is not None:
             state["stellar_flux"] = stellar_flux_arr
-        if "F_star" in params or "F_star" in full_params:
-            state["F_star"] = jnp.asarray(full_params.get("F_star", params.get("F_star")))
+        if kk_cache is not None:
+            state["kk_cache"] = kk_cache
         if g_weights is not None:
             state["g_weights"] = g_weights
 

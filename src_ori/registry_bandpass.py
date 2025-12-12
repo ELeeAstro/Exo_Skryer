@@ -32,10 +32,15 @@ import jax.numpy as jnp
 
 @dataclass(frozen=True)
 class BinConvolutionEntry:
-    """Holds information needed to convolve a single observational bin at runtime."""
+    """
+    Holds information needed to convolve a single observational bin at runtime.
+    Note: During preprocessing, all arrays are NumPy (CPU)
+    They get converted to JAX (device) only at the final cache creation step
+    All arrays kept as float64 for maximum accuracy in bandpass convolution
+    """
     method: str
-    wavelengths: jnp.ndarray        # Slice of the high-res wavelength grid for this bin
-    weights: jnp.ndarray            # Corresponding weights for the wavelength slice
+    wavelengths: np.ndarray         # NumPy during preprocessing (float64) - Slice of the high-res wavelength grid
+    weights: np.ndarray             # NumPy during preprocessing (float64) - Corresponding weights for the slice
     norm: float                     # Pre-calculated normalization constant for the bin
     indices: Tuple[int, int]        # (start, end) index into the CUT wavelength grid
     bin_edges: Tuple[float, float]  # Intended left and right edges of the bin
@@ -234,8 +239,8 @@ def load_bandpass_registry(
 
         entry = BinConvolutionEntry(
             method=final_method,
-            wavelengths=jnp.asarray(wl_slice),
-            weights=jnp.asarray(weights_slice),
+            wavelengths=wl_slice.astype(np.float64),     # NumPy (float64)
+            weights=weights_slice.astype(np.float64),    # NumPy (float64)
             norm=norm,
             indices=(int(start_idx), int(end_idx)),
             bin_edges=(float(low), float(high)),
@@ -280,10 +285,33 @@ def load_bandpass_registry(
 
         norms_np[i] = float(e.norm)
 
-    _BAND_WL_PAD_CACHE = jnp.asarray(padded_wl)
-    _BAND_W_PAD_CACHE = jnp.asarray(padded_w)
-    _BAND_IDX_PAD_CACHE = jnp.asarray(padded_idx)
-    _BAND_NORM_CACHE = jnp.asarray(norms_np)
+    # ============================================================================
+    # CRITICAL: Convert NumPy arrays to JAX arrays here (ONE transfer to device)
+    # ============================================================================
+    # All preprocessing is done in NumPy (CPU). Now we send the final data
+    # to the device (GPU/CPU as configured) for use in JIT-compiled forward model.
+    # All arrays kept as float64 for maximum accuracy in bandpass convolution.
+    # ============================================================================
+
+    print(f"[Bandpass] Transferring {n_bins} bins to device...")
+
+    _BAND_WL_PAD_CACHE = jnp.asarray(padded_wl, dtype=jnp.float64)
+    _BAND_W_PAD_CACHE = jnp.asarray(padded_w, dtype=jnp.float64)
+    _BAND_IDX_PAD_CACHE = jnp.asarray(padded_idx, dtype=jnp.int32)
+    _BAND_NORM_CACHE = jnp.asarray(norms_np, dtype=jnp.float64)
+
+    print(f"[Bandpass] Wavelength cache: {_BAND_WL_PAD_CACHE.shape} (dtype: {_BAND_WL_PAD_CACHE.dtype})")
+    print(f"[Bandpass] Weights cache: {_BAND_W_PAD_CACHE.shape} (dtype: {_BAND_W_PAD_CACHE.dtype})")
+    print(f"[Bandpass] Index cache: {_BAND_IDX_PAD_CACHE.shape} (dtype: {_BAND_IDX_PAD_CACHE.dtype})")
+    print(f"[Bandpass] Norm cache: {_BAND_NORM_CACHE.shape} (dtype: {_BAND_NORM_CACHE.dtype})")
+
+    # Estimate memory usage
+    wl_mb = _BAND_WL_PAD_CACHE.size * _BAND_WL_PAD_CACHE.itemsize / 1024**2
+    w_mb = _BAND_W_PAD_CACHE.size * _BAND_W_PAD_CACHE.itemsize / 1024**2
+    idx_mb = _BAND_IDX_PAD_CACHE.size * _BAND_IDX_PAD_CACHE.itemsize / 1024**2
+    norm_mb = _BAND_NORM_CACHE.size * _BAND_NORM_CACHE.itemsize / 1024**2
+    total_mb = wl_mb + w_mb + idx_mb + norm_mb
+    print(f"[Bandpass] Estimated device memory: {total_mb:.3f} MB (wl: {wl_mb:.3f}, w: {w_mb:.3f}, idx: {idx_mb:.3f}, norm: {norm_mb:.3f})")
 
     _clear_cache()
 
