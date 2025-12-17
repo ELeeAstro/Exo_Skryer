@@ -7,7 +7,7 @@ Expected layout (experiment directory):
   - posterior.nc          (ArviZ InferenceData with posterior group)
 
 Source layout:
-  - ../../src_ori/vert_Tp.py
+  - ../../exo_skryer/vert_Tp.py
 
 with functions like:
     isothermal(p_lev, params_dict)
@@ -235,8 +235,8 @@ def plot_Tp_band(
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
 
-    # Add ../../src_ori to sys.path so we can import vertical structure code
-    src_root = (exp_dir / "../../src_ori").resolve()
+    # Add ../../exo_skryer to sys.path so we can import vertical structure code
+    src_root = (exp_dir / "../../exo_skryer").resolve()
     if src_root.is_dir() and str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
 
@@ -256,10 +256,10 @@ def plot_Tp_band(
         ) from last_err
 
     try:
-        from data_constants import G, M_jup, R_jup
+        from exo_skryer.data_constants import G, M_jup, R_jup
     except ImportError as e:
         raise ImportError(
-            f"Could not import data_constants from {src_root}; ensure src_ori is accessible."
+            f"Could not import data_constants from {src_root}; ensure exo_skryer is accessible."
         ) from e
 
     # Load cfg as SimpleNamespace

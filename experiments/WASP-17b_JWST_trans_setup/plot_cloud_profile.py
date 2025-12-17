@@ -7,7 +7,7 @@ Overview:
     Plot the retrieved vertical cloud mass mixing ratio profile (q_c) for the
     WASP-17b JWST transmission setup. The script reads posterior samples from
     posterior.nc (ArviZ format), reconstructs the analytic cloud profile for
-    each draw using the same equations as src_ori.opacity_cloud.direct_nk,
+    each draw using the same equations as exo_skryer.opacity_cloud.direct_nk,
     and summarizes the median plus ±1σ (16th/84th) and ±2σ (2.5th/97.5th)
     envelopes versus pressure.
 
@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src_ori.data_constants import bar  # noqa: E402
+from exo_skryer.data_constants import bar  # noqa: E402
 
 
 def _parse_args() -> argparse.Namespace:

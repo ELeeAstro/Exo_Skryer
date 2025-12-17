@@ -28,7 +28,7 @@ _CONST_CACHE = {}
 def _ensure_constants():
     global _CONST_CACHE
     if not _CONST_CACHE:
-        from data_constants import R_jup, R_sun, h, c_light, kb
+        from exo_skryer.data_constants import R_jup, R_sun, h, c_light, kb
 
         _CONST_CACHE = {
             "R_jup": R_jup,
@@ -182,13 +182,13 @@ def _recover_planet_flux(
 def plot_emission_band(config_path, outname="model_emission", max_samples=2000, seed=123, show_plot=True):
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
-    src_root = (exp_dir / "../../src_ori").resolve()
+    src_root = (exp_dir / "../../exo_skryer").resolve()
     if src_root.is_dir() and str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
-    from build_model import build_forward_model
-    from build_opacities import build_opacities, master_wavelength_cut
-    from registry_bandpass import load_bandpass_registry
-    from read_stellar import read_stellar_spectrum
+    from exo_skryer.build_model import build_forward_model
+    from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
+    from exo_skryer.egistry_bandpass import load_bandpass_registry
+    from exo_skryer.read_stellar import read_stellar_spectrum
 
     cfg = _read_cfg(cfg_path)
     lam_obs, dlam_obs, y_obs, dy_obs, resp_obs = _load_observed(exp_dir, cfg)

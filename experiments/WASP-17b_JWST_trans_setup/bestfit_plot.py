@@ -9,12 +9,12 @@ Expected layout (experiment directory):
   - observed_data.csv     (optional; lam_um,dlam_um,depth,depth_sigma)
 
 Source layout:
-  - ../../src_ori/build_model.py with:
+  - ../../exo_skryer/build_model.py with:
         def build_forward_model(cfg, obs, return_highres=False) -> predict_fn
-  - ../../src_ori/build_opacities.py with:
+  - ../../exo_skryer/build_opacities.py with:
         def build_opacities(cfg, obs, exp_dir)
         def master_wavelength_cut()
-  - ../../src_ori/instru_bandpass.py with:
+  - ../../exo_skryer/instru_bandpass.py with:
         def load_bandpass_registry(obs, full_grid, cut_grid)
 
 Outputs (in experiment directory):
@@ -410,8 +410,8 @@ def plot_model_band(
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
 
-    # Add ../../src_ori to sys.path so we can import build_forward_model etc.
-    src_root = (exp_dir / "../../src_ori").resolve()
+    # Add ../../exo_skryer to sys.path so we can import build_forward_model etc.
+    src_root = (exp_dir / "../../exo_skryer").resolve()
     if src_root.is_dir() and str(src_root) not in sys.path:
         sys.path.insert(0, str(src_root))
 

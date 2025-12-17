@@ -14,7 +14,7 @@ Overview:
       * The master wavelength grid specified via opac.wl_master
     It then:
       1. Converts log_10(k) samples to k
-      2. Uses src_ori.aux_funtions.pchip_1d to interpolate each sampled k
+      2. Uses exo_skryer.aux_funtions.pchip_1d to interpolate each sampled k
          profile (and n profile when node-based `n_i` are present) onto the
          master wavelength grid
       3. Builds median/±1σ (16th/84th percentile) summaries at both the node
@@ -49,14 +49,14 @@ import seaborn as sns
 import numpy as np
 import yaml
 
-# Ensure repository root is importable for src_ori modules.
+# Ensure repository root is importable for exo_skryer modules.
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from src_ori.aux_funtions import pchip_1d
+from exo_skryer.aux_funtions import pchip_1d
 
 jax.config.update("jax_enable_x64", True)
 
