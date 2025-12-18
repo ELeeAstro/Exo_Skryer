@@ -6,7 +6,7 @@ ck_mix_PRAS.py
 import jax
 import jax.numpy as jnp
 
-from .aux_funtions import latin_hypercube, pchip_1d
+from .aux_functions import latin_hypercube, pchip_1d
 
 __all__ = [
     "mix_k_tables_pras",

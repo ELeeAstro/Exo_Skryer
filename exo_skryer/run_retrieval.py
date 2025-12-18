@@ -11,9 +11,12 @@ from typing import Any, Dict
 
 import numpy as np
 
+from .help_print import format_duration
+
 
 __all__ = [
-    "main"
+    "main",
+    "format_duration",
 ]
 
 
@@ -47,11 +50,11 @@ def main() -> None:
     exp_dir = config_path.parent
 
     # Load YAML parameters - make into a dot namespace
-    from read_yaml import read_yaml
+    from .read_yaml import read_yaml
     cfg = read_yaml(config_path)
-    
+
     # Print main yaml parameters to command line
-    from help_print import print_cfg, format_duration
+    from .help_print import print_cfg
     print_cfg(cfg)
 
     # Set runtime environment to use cpus or gpus (for JAX)
@@ -79,13 +82,13 @@ def main() -> None:
     print(f"[info] JAX devices: {jax.local_device_count()} {jax.devices()}")
 
     # Load the observational data - return a dictionary obs
-    from read_obs import resolve_obs_path, read_obs_data
-    from read_stellar import read_stellar_spectrum
+    from .read_obs import resolve_obs_path, read_obs_data
+    from .read_stellar import read_stellar_spectrum
     rel_obs_path = resolve_obs_path(cfg)
     obs = read_obs_data(rel_obs_path, base_dir=exp_dir)
 
     # Load the opacities (if present in YAML file)
-    from build_opacities import build_opacities, master_wavelength, master_wavelength_cut
+    from .build_opacities import build_opacities, master_wavelength, master_wavelength_cut
     build_opacities(cfg, obs, exp_dir)
     full_grid = np.asarray(master_wavelength(), dtype=float)
     cut_grid = np.asarray(master_wavelength_cut(), dtype=float)
@@ -97,21 +100,21 @@ def main() -> None:
     )
 
     # Read and prepare any response functions and bandpasses for each observational band
-    from registry_bandpass import load_bandpass_registry
+    from .registry_bandpass import load_bandpass_registry
     load_bandpass_registry(obs, full_grid, cut_grid)
 
     # Load Gibbs free energy tables for chemical equilibrium (if using rate_jax)
-    from build_chem import load_gibbs_if_needed
+    from .build_chem import load_gibbs_if_needed
     load_gibbs_if_needed(cfg, exp_dir)
 
     # Build the forward model from the YAML options - return a function that samplers can use
-    from build_model import build_forward_model
+    from .build_model import build_forward_model
     stellar_flux = read_stellar_spectrum(cfg, cut_grid, bool(cfg.opac.ck), base_dir=exp_dir)
 
     fm_fnc = build_forward_model(cfg, obs, stellar_flux=stellar_flux)
 
     # Prepare the main dataclass required for all samplers and forward model
-    from build_prepared import build_prepared
+    from .build_prepared import build_prepared
     prep = build_prepared(cfg, obs, fm=fm_fnc)
 
     t_start_2 = time.perf_counter()
@@ -131,23 +134,23 @@ def main() -> None:
         backend = cfg.sampling.nuts.backend
         if backend == "blackjax":
             # Blackjax MCMC driver
-            from sampler_blackjax_MCMC import run_nuts_blackjax
+            from .sampler_blackjax_MCMC import run_nuts_blackjax
             samples_dict = run_nuts_blackjax(cfg, prep, exp_dir)
         elif backend == "numpyro":
             # Numpyro MCMC driver
-            from sampler_numpyro_MCMC import run_nuts_numpyro
+            from .sampler_numpyro_MCMC import run_nuts_numpyro
             samples_dict = run_nuts_numpyro(cfg, prep, exp_dir)
         else:
             raise ValueError(f"Unknown backend for NUTS: {backend!r}")
 
     elif engine == "jaxns":
         # jaxns nested-sampling driver
-        from sampler_jaxns_NS import run_nested_jaxns
+        from .sampler_jaxns_NS import run_nested_jaxns
         samples_dict, evidence_info = run_nested_jaxns(cfg, prep, exp_dir)
 
     elif engine == "blackjax_ns":
         # BlackJAX nested-sampling driver
-        from sampler_blackjax_NS import run_nested_blackjax
+        from .sampler_blackjax_NS import run_nested_blackjax
         samples_dict, evidence_info = run_nested_blackjax(cfg, prep, exp_dir)
     else:
         raise ValueError(f"Unknown sampling.engine: {engine!r}")
@@ -157,8 +160,8 @@ def main() -> None:
     t_end_2 = time.perf_counter()
     print(f"[info] Sampling took:", format_duration(t_end_2 - t_start_2))
 
-    # Output 
-    from help_io import to_inferencedata, save_inferencedata, save_observed_data_csv
+    # Output
+    from .help_io import to_inferencedata, save_inferencedata, save_observed_data_csv
     samples_np = {k: np.asarray(v) for k, v in samples_dict.items()}
     idata = to_inferencedata(samples_np, cfg, include_fixed=False)
     out_nc = save_inferencedata(idata, exp_dir)

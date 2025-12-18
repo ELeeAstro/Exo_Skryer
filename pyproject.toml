@@ -36,7 +36,7 @@ docs = [
     "sphinx-automodapi",
     "tomli; python_version <\"3.11\"",
     "sphinx-astropy[confv2]",
-    "sphinx-rtd-theme",
+    "sphinx-book-theme",
     "sphinx-toolbox",
     "matplotlib",
     "tox"

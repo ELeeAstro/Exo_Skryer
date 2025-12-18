@@ -101,12 +101,15 @@ def run_nuts_numpyro(cfg, prep: Prepared, exp_dir) -> Dict[str, jnp.ndarray]:
     """
     NUTS sampler using NumPyro; returns constrained samples per parameter.
 
-    Arguments
-    ---------
-    cfg      : SimpleNamespace from your YAML (must have cfg.sampling.nuts.*)
-    prep     : Prepared object from build_prepared(...)
-    exp_dir  : Path-like for the experiment directory (unused here, but
-               kept in the signature for future saving / diagnostics).
+    Parameters
+    ----------
+    cfg : SimpleNamespace
+        Configuration namespace (must provide `cfg.sampling.nuts.*`).
+    prep : `~exo_skryer.build_prepared.Prepared`
+        Prepared model bundle from `build_prepared(...)`.
+    exp_dir : path-like
+        Experiment directory (unused here; kept for API compatibility and future
+        diagnostics/output).
     """
     nuts_cfg = cfg.sampling.nuts
 

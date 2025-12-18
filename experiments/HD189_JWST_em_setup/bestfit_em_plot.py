@@ -182,9 +182,9 @@ def _recover_planet_flux(
 def plot_emission_band(config_path, outname="model_emission", max_samples=2000, seed=123, show_plot=True):
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
-    src_root = (exp_dir / "../../exo_skryer").resolve()
-    if src_root.is_dir() and str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
+    repo_root = (exp_dir / "../..").resolve()
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
     from exo_skryer.build_model import build_forward_model
     from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
     from exo_skryer.registry_bandpass import load_bandpass_registry

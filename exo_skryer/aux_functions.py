@@ -1,6 +1,6 @@
 '''
 aux_functions.py
-==============
+================
 '''
 
 import jax
@@ -38,8 +38,6 @@ def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     y = jnp.asarray(y)
 
     N = x.shape[0]
-    # Require at least 2 nodes; endpoint formulas need >=3
-    # For N==2, linear interpolation: slopes are secant
     h = jnp.diff(x)
     delta = jnp.diff(y) / h
 
@@ -48,7 +46,6 @@ def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
         return m
 
     def slopes_Nge3():
-        # interior
         h0 = h[:-1]
         h1 = h[1:]
         d0 = delta[:-1]
@@ -59,13 +56,11 @@ def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
 
         same_sign = (d0 * d1) > 0.0
 
-        # safe harmonic mean only where same_sign
         denom = (w1 / jnp.where(jnp.abs(d0) > 0.0, d0, 1.0)
               + w2 / jnp.where(jnp.abs(d1) > 0.0, d1, 1.0))
         m_inner = (w1 + w2) / denom
         m_inner = jnp.where(same_sign, m_inner, 0.0)
 
-        # endpoints (SciPy-style)
         m0 = ((2.0*h[0] + h[1]) * delta[0] - h[0] * delta[1]) / (h[0] + h[1])
         m0 = jnp.where(jnp.sign(m0) != jnp.sign(delta[0]), 0.0, m0)
         m0 = jnp.where(
@@ -89,6 +84,7 @@ def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
         return m
 
     return jnp.where(N == 2, slopes_N2(), slopes_Nge3())
+
 
 def pchip_1d(x: jnp.ndarray,
              x_nodes: jnp.ndarray,
@@ -127,7 +123,6 @@ def pchip_1d(x: jnp.ndarray,
 
     m_nodes = _pchip_slopes(x_nodes, y_nodes)  # (N,)
 
-    # Find interval index i so that x in [x_i, x_{i+1}]
     idx = jnp.searchsorted(x_nodes, x_eval, side="right") - 1
     nseg = x_nodes.shape[0] - 1
     idx = jnp.clip(idx, 0, nseg - 1)
@@ -142,7 +137,6 @@ def pchip_1d(x: jnp.ndarray,
     h = x1 - x0
     t = (x_eval - x0) / jnp.maximum(h, 1e-30)
 
-    # Cubic Hermite basis (same as before, but slopes are PCHIP slopes)
     h00 = 2.0 * t**3 - 3.0 * t**2 + 1.0
     h10 = t**3 - 2.0 * t**2 + t
     h01 = -2.0 * t**3 + 3.0 * t**2
@@ -210,3 +204,4 @@ def latin_hypercube(
 
     cols = jax.vmap(_permute_one, in_axes=(0, 0))(base.T, perm_keys)  # (n_dim, n_samples)
     return cols.T, key
+

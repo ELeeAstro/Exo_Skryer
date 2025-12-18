@@ -347,18 +347,18 @@ def plot_model_band(
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
 
-    # Add ../../exo_skryer to sys.path so we can import build_forward_model etc.
-    src_root = (exp_dir / "../../exo_skryer").resolve()
-    if src_root.is_dir() and str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
+    # Add repository root to sys.path so we can import exo_skryer package
+    repo_root = (exp_dir / "../..").resolve()
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
     try:
-        from build_model import build_forward_model
-        from build_opacities import build_opacities, master_wavelength_cut
-        from registry_bandpass import load_bandpass_registry
+        from exo_skryer.build_model import build_forward_model
+        from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
+        from exo_skryer.registry_bandpass import load_bandpass_registry
     except ImportError as e:
         raise ImportError(
-            f"Could not import modeling helpers from {src_root}."
+            f"Could not import modeling helpers from exo_skryer package at {repo_root}."
         ) from e
 
     # Load cfg as SimpleNamespace

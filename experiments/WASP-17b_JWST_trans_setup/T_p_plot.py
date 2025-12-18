@@ -235,31 +235,31 @@ def plot_Tp_band(
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
 
-    # Add ../../exo_skryer to sys.path so we can import vertical structure code
-    src_root = (exp_dir / "../../exo_skryer").resolve()
-    if src_root.is_dir() and str(src_root) not in sys.path:
-        sys.path.insert(0, str(src_root))
+    # Add repository root to sys.path so we can import exo_skryer package
+    repo_root = (exp_dir / "../..").resolve()
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
 
     # Prefer vert_Tp (current home) but allow legacy module names
     vs_mod = None
     last_err = None
-    for mod_name in ("vert_Tp", "vert_struct", "phys_vert_struct"):
+    for mod_name in ("exo_skryer.vert_Tp", "exo_skryer.vert_struct", "exo_skryer.phys_vert_struct"):
         try:
-            vs_mod = __import__(mod_name)
+            vs_mod = __import__(mod_name, fromlist=[''])
             break
         except ImportError as exc:
             last_err = exc
     if vs_mod is None:
         raise ImportError(
             f"Could not import any vertical structure module (tried vert_Tp, "
-            f"vert_struct, phys_vert_struct) from {src_root}."
+            f"vert_struct, phys_vert_struct) from exo_skryer package at {repo_root}."
         ) from last_err
 
     try:
         from exo_skryer.data_constants import G, M_jup, R_jup
     except ImportError as e:
         raise ImportError(
-            f"Could not import data_constants from {src_root}; ensure exo_skryer is accessible."
+            f"Could not import data_constants from exo_skryer package at {repo_root}."
         ) from e
 
     # Load cfg as SimpleNamespace

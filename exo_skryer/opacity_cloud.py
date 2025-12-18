@@ -7,7 +7,7 @@ from typing import Dict, Tuple, Optional
 import jax
 import jax.numpy as jnp
 
-from .aux_funtions import pchip_1d
+from .aux_functions import pchip_1d
 from .registry_cloud import get_or_create_kk_cache, KKGridCache
 
 __all__ = [
@@ -467,7 +467,7 @@ def direct_nk(
 
     Notes
     -----
-    The retrieved node curves are interpolated using `aux_funtions.pchip_1d`.
+    The retrieved node curves are interpolated using `aux_functions.pchip_1d`.
     To avoid extrapolation artifacts, the contribution is limited to the
     wavelength span covered by the nodes, with a small floor outside the node
     support.

@@ -4,7 +4,7 @@ except ImportError:
     __version__ = ''
 
 
-from . import aux_funtions
+from . import aux_functions
 from . import build_chem
 from . import build_model
 from . import build_opacities
@@ -42,4 +42,3 @@ from . import vert_alt
 from . import vert_chem
 from . import vert_mu
 from . import vert_Tp
-

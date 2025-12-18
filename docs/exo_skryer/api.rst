@@ -7,7 +7,7 @@ This is the full API documentation for Exo_Skryer.
 Reference/API
 =============
 
-.. automodapi:: exo_skryer.aux_funtions
+.. automodapi:: exo_skryer.aux_functions
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.build_chem

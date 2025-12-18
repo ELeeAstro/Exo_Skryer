@@ -23,6 +23,7 @@ solar_N = 10.0**(7.83-12.0)
 
 __all__ = [
     "constant_vmr",
+    "build_constant_vmr_kernel",
     "CE_fastchem_jax",
     "CE_rate_jax",
     "quench_approx"
@@ -82,6 +83,25 @@ def constant_vmr(species_order: tuple[str, ...]):
         return vmr
 
     return _constant_vmr_kernel
+
+
+def build_constant_vmr_kernel(species_order: tuple[str, ...]):
+    """Build a constant-VMR chemistry kernel for an explicit species ordering.
+
+    This is a thin wrapper around `constant_vmr` kept for backwards compatibility
+    with older documentation and configs.
+
+    Parameters
+    ----------
+    species_order : tuple[str, ...]
+        Ordered tuple of trace species names.
+
+    Returns
+    -------
+    kernel : callable
+        Chemistry kernel function returning VMR profiles.
+    """
+    return constant_vmr(species_order)
 
 
 def CE_fastchem_jax(
@@ -330,6 +350,7 @@ def quench_approx(
     Notes
     -----
     This routine:
+
     1. Computes equilibrium VMRs using `RateJAX`.
     2. Estimates a single mixing timescale profile `tau_mix`.
     3. For selected species, computes `tau_chem` and freezes the abundance above
