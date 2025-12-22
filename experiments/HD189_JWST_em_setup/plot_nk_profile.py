@@ -41,6 +41,10 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
+
+from jax import config as jax_config
+jax_config.update("jax_enable_x64", True)
+
 import arviz as az
 import jax
 import jax.numpy as jnp

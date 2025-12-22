@@ -19,6 +19,7 @@ physics:
   opac_cloud: nk
 
   rt_scheme: emission_1d
+  contri_func: False
 
 opac:
 

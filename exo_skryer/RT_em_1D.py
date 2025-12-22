@@ -5,7 +5,7 @@ RT_em_1D.py
 
 from __future__ import annotations
 
-from typing import Dict, Mapping, Tuple
+from typing import Dict, Mapping, Tuple, Union
 
 import jax
 import jax.numpy as jnp
@@ -104,30 +104,29 @@ def _solve_alpha_eaa(
     ssa: jnp.ndarray,
     g_phase: jnp.ndarray,
     be_internal: jnp.ndarray,
-) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    return_layer_contrib: bool = False,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     nlev, nwl = be_levels.shape
     nlay = nlev - 1
-    # Convert to float64 and reverse in one operation per array
+
     be_levels = be_levels.astype(jnp.float64)[::-1]
     dtau_layers = dtau_layers.astype(jnp.float64)[::-1]
     ssa = ssa.astype(jnp.float64)[::-1]
     g_phase = g_phase.astype(jnp.float64)[::-1]
+
     al = be_levels[1:] - be_levels[:-1]
     lw_up_sum = jnp.zeros((nlev, nwl))
     lw_down_sum = jnp.zeros((nlev, nwl))
-    # be_internal is already a JAX array
 
+    # --- your EAA machinery (unchanged) ---
     mask = g_phase >= 1.0e-4
     fc = jnp.where(mask, g_phase**nstreams, 0.0)
     pmom2 = jnp.where(mask, g_phase**(nstreams + 1), 0.0)
     ratio = jnp.maximum((fc**2) / jnp.maximum(pmom2**2, 1.0e-30), 1.0e-30)
-    sigma_sq = jnp.where(
-        mask,
-        ((nstreams + 1) ** 2 - nstreams**2) / jnp.log(ratio),
-        1.0,
-    )
+    sigma_sq = jnp.where(mask, ((nstreams + 1) ** 2 - nstreams**2) / jnp.log(ratio), 1.0)
     c = jnp.exp((nstreams**2) / (2.0 * sigma_sq))
     fc_scaled = c * fc
+
     w_in = jnp.clip(ssa, 0.0, 0.99)
     denom = jnp.maximum(1.0 - fc_scaled * w_in, 1.0e-12)
     w0 = jnp.where(mask, w_in * ((1.0 - fc_scaled) / denom), w_in)
@@ -135,6 +134,15 @@ def _solve_alpha_eaa(
     hg = g_phase
     eps = jnp.sqrt((1.0 - w0) * (1.0 - hg * w0))
     dtau_a = eps * dtau
+    # --------------------------------------
+
+    # Optical depth above each layer top (per wavelength), using the transported dtau_a
+    tau_interface = jnp.concatenate([jnp.zeros((1, nwl), dtype=dtau_a.dtype),
+                                     jnp.cumsum(dtau_a, axis=0)], axis=0)
+    tau_top_layer = tau_interface[:-1]  # shape (nlay, nwl)
+
+    if return_layer_contrib:
+        layer_contrib_sum = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
 
     for mu, weight in zip(_MU_NODES, _MU_WEIGHTS):
         T_trans = jnp.exp(-dtau_a / mu)
@@ -151,49 +159,90 @@ def _solve_alpha_eaa(
                 lw[k] * T_trans[k]
                 + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
             )
-            mask_dt = dtau_a[k] > _DT_THRESHOLD
-            next_val = jnp.where(mask_dt, linear, iso)
+            next_val = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
             return lw.at[k + 1].set(next_val)
 
         lw_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype)
         lw_down = lax.fori_loop(0, nlay, down_body, lw_init)
 
-        def up_body(idx, lw):
-            k = nlay - 1 - idx
-            linear = (
-                lw[k + 1] * T_trans[k]
-                + be_levels[k]
-                + al[k] * mu_over_dtau[k]
-                - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
-            )
-            iso = (
-                lw[k + 1] * T_trans[k]
-                + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
-            )
-            mask_dt = dtau_a[k] > _DT_THRESHOLD
-            next_val = jnp.where(mask_dt, linear, iso)
-            return lw.at[k].set(next_val)
-
         lw_up_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype).at[-1].set(
             lw_down[-1] + be_internal
         )
-        lw_up = lax.fori_loop(0, nlay, up_body, lw_up_init)
+
+        if return_layer_contrib:
+            # Transmission from each layer-top interface to space for this stream
+            T_toa = jnp.exp(-tau_top_layer / mu)  # (nlay, nwl)
+
+            def up_body(idx, carry):
+                lw, layer_acc = carry
+                k = nlay - 1 - idx
+
+                linear = (
+                    lw[k + 1] * T_trans[k]
+                    + be_levels[k]
+                    + al[k] * mu_over_dtau[k]
+                    - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
+                )
+                iso = (
+                    lw[k + 1] * T_trans[k]
+                    + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
+                )
+                I_top = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
+
+                # source-created intensity at the layer top for this stream
+                source = I_top - lw[k + 1] * T_trans[k]  # (nwl,)
+
+                # accumulate TOA-attributed contribution
+                layer_acc = layer_acc.at[k].add(weight * source * T_toa[k])
+                lw = lw.at[k].set(I_top)
+                return (lw, layer_acc)
+
+            lw_up, layer_contrib_sum = lax.fori_loop(
+                0, nlay, up_body, (lw_up_init, layer_contrib_sum)
+            )
+        else:
+            def up_body(idx, lw):
+                k = nlay - 1 - idx
+                linear = (
+                    lw[k + 1] * T_trans[k]
+                    + be_levels[k]
+                    + al[k] * mu_over_dtau[k]
+                    - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
+                )
+                iso = (
+                    lw[k + 1] * T_trans[k]
+                    + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
+                )
+                I_top = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
+                return lw.at[k].set(I_top)
+
+            lw_up = lax.fori_loop(0, nlay, up_body, lw_up_init)
 
         lw_down_sum = lw_down_sum + lw_down * weight
         lw_up_sum = lw_up_sum + lw_up * weight
 
+    # Flux outputs (your convention)
     lw_up_flux = jnp.pi * lw_up_sum
     lw_down_flux = jnp.pi * lw_down_sum
-    return lw_up_flux, lw_down_flux
+
+    if return_layer_contrib:
+        # Reverse back to match original pressure grid (bottom to top)
+        layer_contrib_flux = jnp.pi * layer_contrib_sum[::-1]
+    else:
+        layer_contrib_flux = jnp.zeros((nlay, nwl), dtype=lw_up_flux.dtype)
+
+    return lw_up_flux, lw_down_flux, layer_contrib_flux
+
 
 
 def compute_emission_spectrum_1d(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
-) -> jnp.ndarray:
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     # Use direct comparison instead of bool() for JIT compatibility
     ck_mode = state.get("ck", False)
+    contri_func = state.get("contri_func", False)
     wl_cm = state["wl"].astype(jnp.float64) * 1.0e-4
     T_lev = state["T_lev"].astype(jnp.float64)
     rho_lay = state["rho_lay"].astype(jnp.float64)
@@ -206,32 +255,74 @@ def compute_emission_spectrum_1d(
         be_internal = jnp.zeros_like(be_levels[-1])
 
     if ck_mode:
-        def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> jnp.ndarray:
-            ssa_ck, g_ck = _compute_scattering_properties(
-                components,
-                state,
-                k_tot_local,
-                ck_mode=True,
-            )
-            dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
-            g_weights = _get_ck_weights(state)
-            dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
-            ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
-            g_by_g = jnp.moveaxis(g_ck, -1, 0)
-            g_weights = g_weights[: dtau_by_g.shape[0]]
+        if contri_func:
+            def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                ssa_ck, g_ck = _compute_scattering_properties(
+                    components,
+                    state,
+                    k_tot_local,
+                    ck_mode=True,
+                )
+                dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
+                g_weights = _get_ck_weights(state)
+                dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
+                ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
+                g_by_g = jnp.moveaxis(g_ck, -1, 0)
+                g_weights = g_weights[: dtau_by_g.shape[0]]
 
-            def _scan_body(lw_up_accum, inputs):
-                dtau_slice, ssa_slice, g_slice, weight = inputs
-                lw_up_g, _ = _solve_alpha_eaa(be_levels, dtau_slice, ssa_slice, g_slice, be_internal)
-                lw_up_accum = lw_up_accum + weight.astype(lw_up_accum.dtype) * lw_up_g
-                return lw_up_accum, None
+                def _scan_body(carry, inputs):
+                    lw_up_accum, contrib_accum = carry
+                    dtau_slice, ssa_slice, g_slice, weight = inputs
+                    lw_up_g, _, layer_contrib_g = _solve_alpha_eaa(
+                        be_levels, dtau_slice, ssa_slice, g_slice, be_internal,
+                        return_layer_contrib=True
+                    )
+                    weight_lw = weight.astype(lw_up_accum.dtype)
+                    weight_cf = weight.astype(contrib_accum.dtype)
+                    lw_up_accum = lw_up_accum + weight_lw * lw_up_g
+                    contrib_accum = contrib_accum + weight_cf * layer_contrib_g
+                    return (lw_up_accum, contrib_accum), None
 
-            lw_up_init = jnp.zeros_like(be_levels)
-            lw_up_out, _ = lax.scan(_scan_body, lw_up_init, (dtau_by_g, ssa_by_g, g_by_g, g_weights))
-            return lw_up_out
+                lw_up_init = jnp.zeros_like(be_levels)
+                nlay = state["nlay"]
+                nwl = state["nwl"]
+                contrib_init = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
+                (lw_up_out, contrib_out), _ = lax.scan(
+                    _scan_body, (lw_up_init, contrib_init), (dtau_by_g, ssa_by_g, g_by_g, g_weights)
+                )
+                return lw_up_out, contrib_out
+        else:
+            def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+                ssa_ck, g_ck = _compute_scattering_properties(
+                    components,
+                    state,
+                    k_tot_local,
+                    ck_mode=True,
+                )
+                dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
+                g_weights = _get_ck_weights(state)
+                dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
+                ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
+                g_by_g = jnp.moveaxis(g_ck, -1, 0)
+                g_weights = g_weights[: dtau_by_g.shape[0]]
+
+                def _scan_body(lw_up_accum, inputs):
+                    dtau_slice, ssa_slice, g_slice, weight = inputs
+                    lw_up_g, _, _ = _solve_alpha_eaa(
+                        be_levels, dtau_slice, ssa_slice, g_slice, be_internal,
+                        return_layer_contrib=False
+                    )
+                    return lw_up_accum + weight.astype(lw_up_accum.dtype) * lw_up_g, None
+
+                lw_up_init = jnp.zeros_like(be_levels)
+                lw_up_out, _ = lax.scan(_scan_body, lw_up_init, (dtau_by_g, ssa_by_g, g_by_g, g_weights))
+                nlay = state["nlay"]
+                nwl = state["nwl"]
+                contrib_out = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
+                return lw_up_out, contrib_out
 
         k_tot_cloud = _sum_opacity_components_ck(state, opacity_components)
-        lw_up_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
+        lw_up_cloud, layer_contrib_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
 
         if "f_cloud" in params and "cloud" in opacity_components:
             f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
@@ -244,12 +335,14 @@ def compute_emission_spectrum_1d(
             opacity_clear["cloud_ssa"] = zeros
             opacity_clear["cloud_g"] = zeros
 
-            lw_up_clear = _lw_up_for_components(opacity_clear, k_tot_clear)
+            lw_up_clear, layer_contrib_clear = _lw_up_for_components(opacity_clear, k_tot_clear)
             lw_up = f_cloud * lw_up_cloud + (1.0 - f_cloud) * lw_up_clear
+            layer_contrib_flux = f_cloud * layer_contrib_cloud + (1.0 - f_cloud) * layer_contrib_clear
         else:
             lw_up = lw_up_cloud
+            layer_contrib_flux = layer_contrib_cloud
     else:
-        def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> jnp.ndarray:
+        def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
             ssa_lbl, g_lbl = _compute_scattering_properties(
                 components,
                 state,
@@ -257,11 +350,14 @@ def compute_emission_spectrum_1d(
                 ck_mode=False,
             )
             dtau_lbl = _layer_optical_depth_lbl(k_tot_local, rho_lay, dz)
-            lw_up_out, _ = _solve_alpha_eaa(be_levels, dtau_lbl, ssa_lbl, g_lbl, be_internal)
-            return lw_up_out
+            lw_up_out, _, layer_contrib_out = _solve_alpha_eaa(
+                be_levels, dtau_lbl, ssa_lbl, g_lbl, be_internal,
+                return_layer_contrib=contri_func
+            )
+            return lw_up_out, layer_contrib_out
 
         k_tot_cloud = _sum_opacity_components_lbl(state, opacity_components)
-        lw_up_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
+        lw_up_cloud, layer_contrib_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
 
         if "f_cloud" in params and "cloud" in opacity_components:
             f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
@@ -274,16 +370,31 @@ def compute_emission_spectrum_1d(
             opacity_clear["cloud_ssa"] = zeros
             opacity_clear["cloud_g"] = zeros
 
-            lw_up_clear = _lw_up_for_components(opacity_clear, k_tot_clear)
+            lw_up_clear, layer_contrib_clear = _lw_up_for_components(opacity_clear, k_tot_clear)
             lw_up = f_cloud * lw_up_cloud + (1.0 - f_cloud) * lw_up_clear
+            layer_contrib_flux = f_cloud * layer_contrib_cloud + (1.0 - f_cloud) * layer_contrib_clear
         else:
             lw_up = lw_up_cloud
+            layer_contrib_flux = layer_contrib_cloud
 
     top_flux = lw_up[0]
     # Use direct comparison instead of bool() for JIT compatibility
     if state.get("is_brown_dwarf", False):
-        return top_flux
-    return _scale_flux_ratio(top_flux, state, params)
+        final_spectrum = top_flux
+    else:
+        final_spectrum = _scale_flux_ratio(top_flux, state, params)
+
+    # Compute contribution function if requested, otherwise return zeros
+    if contri_func:
+        layer_contrib = jnp.clip(layer_contrib_flux, 0.0)  # (nlay, nwl)
+        contrib_func_norm = layer_contrib / jnp.maximum(layer_contrib.sum(axis=0, keepdims=True), 1e-30)
+    else:
+        # Return zeros with correct shape (nlay, nwl)
+        nlay = state["nlay"]
+        nwl = state["nwl"]
+        contrib_func_norm = jnp.zeros((nlay, nwl), dtype=final_spectrum.dtype)
+
+    return final_spectrum, contrib_func_norm
 
 
 def _compute_scattering_properties(
@@ -313,7 +424,8 @@ def _compute_scattering_properties(
 
     if ck_mode:
         k_tot_scat = k_tot_scat[:, :, None]
-        cloud_g = cloud_g[:, :, None]
+        # Asymmetry parameter does not depend on g-point; broadcast to match c-k k_tot shape.
+        cloud_g = jnp.broadcast_to(cloud_g[:, :, None], k_tot.shape)
 
     ssa = jnp.clip(k_tot_scat / k_tot_safe, a_min=0.0, a_max=0.95)
     g = cloud_g

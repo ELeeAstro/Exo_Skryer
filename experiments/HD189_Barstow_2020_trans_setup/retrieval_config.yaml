@@ -8,7 +8,6 @@ physics:
 
   nlay: 99
 
-
   vert_Tp: Barstow
   vert_alt: variable_g
   vert_chem: constant_vmr
@@ -20,13 +19,14 @@ physics:
   opac_cloud: powerlaw_cloud
 
   rt_scheme: transit_1d
+  contri_func: True
 
 opac:
 
   wl_master: wl_dnu_1.txt
   #wl_master: wl_petitradtrans_R1000.txt
   #wl_master: wl_taurex_R15000.txt
-  full_grid: False
+  full_grid: True
   ck: False
   ck_mix: RORR
 

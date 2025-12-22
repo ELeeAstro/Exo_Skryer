@@ -13,7 +13,7 @@ import numpy as np
 from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS09, picket_fence
+from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS09, picket_fence, Milne_modified
 from .vert_chem import constant_vmr, CE_fastchem_jax, CE_rate_jax
 from .vert_mu import constant_mu, compute_mu
 
@@ -104,7 +104,7 @@ def build_forward_model(
        to produce the final binned spectrum matching observational resolution.
 
     Configuration schemes are selected from `cfg.physics`:
-    - **vert_Tp**: isothermal, guillot, barstow, milne, picket_fence, ms09
+    - **vert_Tp**: isothermal, guillot, barstow, milne, picket_fence, ms09, piecewise_polynomial
     - **vert_alt**: constant_g, variable_g, p_ref
     - **vert_chem**: constant_vmr, ce (FastChem placeholder), ce_rate_jax
     - **vert_mu**: auto, constant, dynamic
@@ -155,6 +155,8 @@ def build_forward_model(
         Tp_kernel = picket_fence
     elif vert_tp_name == "ms09":
         Tp_kernel = MandS09
+    elif vert_tp_name == "milne_2":
+        Tp_kernel = Milne_modified
     else:
         raise NotImplementedError(f"Unknown vert_Tp='{vert_tp_name}'")
 
@@ -379,6 +381,7 @@ def build_forward_model(
             "rho_lay": rho_lay,
             "nd_lay": nd_lay,
             "vmr_lay": vmr_lay,
+            "contri_func": bool(getattr(phys, "contri_func", False)),
         }
         if stellar_flux_arr is not None:
             state["stellar_flux"] = stellar_flux_arr
@@ -405,13 +408,19 @@ def build_forward_model(
         }
 
         # Radiative transfer
-        D_hires = rt_kernel(state, full_params, opacity_components)
+        # RT kernels always return (spectrum, contrib_func)
+        # contrib_func is zeros if state["contri_func"] is False
+        D_hires, contrib_func = rt_kernel(state, full_params, opacity_components)
 
         # Instrumental convolution → binned spectrum
         D_bin = apply_response_functions(D_hires)
 
         if return_highres:
-            return {"hires": D_hires, "binned": D_bin}
+            result_dict = {"hires": D_hires, "binned": D_bin}
+            if state["contri_func"]:
+                result_dict["contrib_func"] = contrib_func
+                result_dict["p_lay"] = p_lay
+            return result_dict
 
         return D_bin
 

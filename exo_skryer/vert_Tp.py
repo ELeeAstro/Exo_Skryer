@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 
 from .data_constants import bar
+from .aux_functions import pchip_1d
 
 # ---------------- Hopf function ----------------
 FIT_P = jnp.asarray([0.6162, -0.3799, 2.395, -2.041, 2.578])
@@ -21,9 +22,11 @@ __all__ = [
     "isothermal",
     "Barstow",
     "Milne",
+    "Milne_modified",
     "Guillot",
     "MandS09",
     "picket_fence",
+    "Milne_modified",
     "dry_convective_adjustment"
 ]
 
@@ -131,6 +134,63 @@ def Barstow(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
 
+def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Generate a modified Milne temperature profile with sigmoid transition.
+
+    This profile uses a modified Milne approximation where the Hopf function
+    is replaced by a pressure-dependent parameter q(p) that transitions
+    smoothly from a skin temperature regime to the standard Milne value
+    using a sigmoid function.
+
+    Parameters
+    ----------
+    p_lev : `~jax.numpy.ndarray`, shape (nlev,)
+        Pressure at atmospheric levels.
+    params : dict[str, `~jax.numpy.ndarray`]
+        Parameter dictionary containing:
+
+        - `log_10_g` : float
+            Log₁₀ surface gravity in cm s⁻².
+        - `T_int` : float
+            Internal temperature in Kelvin.
+        - `log_10_k_ir` : float
+            Log₁₀ infrared opacity in cm² g⁻¹.
+        - `T_skin` : float
+            Skin temperature in Kelvin.
+        - `log_10_p_trans` : float
+            Log₁₀ transition pressure in bar.
+        - `log_10_w_trans` : float
+            Log₁₀ transition width parameter (dimensionless).
+
+    Returns
+    -------
+    T_lev : `~jax.numpy.ndarray`, shape (nlev,)
+        Temperature at levels in Kelvin.
+    T_lay : `~jax.numpy.ndarray`, shape (nlev-1,)
+        Temperature at layer midpoints in Kelvin.
+    """
+    g = 10.0**params["log_10_g"]
+    T_int = params["T_int"]
+    k_ir = 10.0**params["log_10_k_ir"]
+    T_skin = params["T_skin"]
+    log_10_p_trans = params["log_10_p_trans"]
+    w_trans = 10.0**params["log_10_w_trans"]
+
+    tau_ir = k_ir / g * p_lev
+
+    q_inf = 2.0/3.0
+    q0 = (4.0/3.0) * (T_skin / T_int)**4
+
+    dq = q0 - q_inf
+    x = (log_10_p_trans - jnp.log10(p_lev/bar))/w_trans
+    sig = 1.0/(1.0 + jnp.exp(-x))
+    q = q_inf + dq * sig
+
+    T_lev = ((0.75 * T_int**4) * (q + tau_ir))**0.25
+
+    T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
+    return T_lev, T_lay
+
 
 def Milne(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a Milne temperature profile for an internally heated atmosphere.
@@ -159,7 +219,7 @@ def Milne(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarr
     # Parameter values are already JAX arrays, no need to wrap
     g = 10.0**params["log_10_g"]
     T_int = params["T_int"]
-    k_ir = params["k_ir"]
+    k_ir = 10.0**params["log_10_k_ir"]
     tau_ir = k_ir / g * p_lev
     T_lev = (0.75 * T_int**4 * (hopf_function(tau_ir) + tau_ir)) ** 0.25
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])

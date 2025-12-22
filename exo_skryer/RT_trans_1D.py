@@ -5,7 +5,7 @@ RT_trans_1D.py
 
 from __future__ import annotations
 
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Tuple, Union
 
 import jax
 import jax.numpy as jnp
@@ -116,59 +116,77 @@ def _build_transit_geometry(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray,
     return P1D, area_weight
 
 
-def _transit_depth_from_opacity(
+def _transit_depth_and_contrib_from_opacity(
     state: Dict[str, jnp.ndarray],
-    k_tot: jnp.ndarray,
-    geometry: tuple[jnp.ndarray, jnp.ndarray] | None = None,
-) -> jnp.ndarray:
-    """Compute a transit spectrum for a provided total opacity grid."""
-
-    # State values are already JAX arrays, no need to wrap
+    k_tot: jnp.ndarray,  # (nlay, nwl)
+    geometry: tuple[jnp.ndarray, jnp.ndarray],
+    want_contrib: bool,
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """
+    Returns
+    -------
+    D : (nwl,) transit depth
+    dR2 : (nwl,) effective area increment
+    layer_dR2 : (nlay, nwl) layer contributions to dR2 (unnormalised)
+    """
     R0 = state["R0"]
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
+    P1D, area_weight = geometry  # P1D: (nlay, nlay), area_weight: (nlay,)
 
-    k_floor = 1.0e-99
-    k_eff = jnp.maximum(k_tot, k_floor)
-    dtau_v = k_eff * rho[:, None] * dz[:, None]
+    k_eff = jnp.maximum(k_tot, 1.0e-99)
+    dtau_v = k_eff * rho[:, None] * dz[:, None]          # (nlay, nwl)
+    tau_path = jnp.matmul(P1D, dtau_v)                   # (nlay, nwl)
 
-    if geometry is None:
-        P1D, area_weight = _build_transit_geometry(state)
-    else:
-        P1D, area_weight = geometry
-    tau_path = jnp.matmul(P1D, dtau_v)
+    one_minus_trans = 1.0 - jnp.exp(-tau_path)           # (nlay, nwl)
+    dR2_i = area_weight[:, None] * one_minus_trans       # (nlay, nwl)
+    dR2 = jnp.sum(dR2_i, axis=0)                         # (nwl,)
 
-    one_minus_trans = 1.0 - jnp.exp(-tau_path)
-    dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)
+    D = (R0**2 + dR2) / (R_s**2)
 
-    R_eff2 = R0**2 + dR2
-    return R_eff2 / (R_s**2)
+    if not want_contrib:
+        layer_dR2 = jnp.zeros_like(dtau_v)
+        return D, dR2, layer_dR2
+
+    # W_i = A_i * (1 - exp(-tau_i)) / tau_i, with safe tau->0 limit
+    tau_eps = 1.0e-30
+    ratio = jnp.where(tau_path > tau_eps, one_minus_trans / tau_path, 1.0)  # (nlay, nwl)
+    W = area_weight[:, None] * ratio                                        # (nlay, nwl)
+
+    # sum_i P_ij * W_i  ==  (P^T @ W)_j
+    geom_weighted = jnp.matmul(P1D.T, W)                 # (nlay, nwl)
+
+    layer_dR2 = dtau_v * geom_weighted                   # (nlay, nwl)
+    return D, dR2, layer_dR2
 
 
-def _transit_depth_ck(
+def _transit_depth_from_opacity(
     state: Dict[str, jnp.ndarray],
-    k_tot: jnp.ndarray,
-    geometry: tuple[jnp.ndarray, jnp.ndarray] | None = None,
+    k_tot: jnp.ndarray,  # (nlay, nwl)
+    geometry: tuple[jnp.ndarray, jnp.ndarray],
 ) -> jnp.ndarray:
-    """Integrate correlated-k opacities over g-points to obtain transit depth."""
-    g_weights = _get_ck_weights(state)
-    ng = k_tot.shape[-1]
-    g_weights = g_weights[:ng]
+    """Compute transit depth without allocating contribution-function intermediates."""
+    R0 = state["R0"]
+    R_s = state["R_s"]
+    rho = state["rho_lay"]
+    dz = state["dz"]
+    P1D, area_weight = geometry  # P1D: (nlay, nlay), area_weight: (nlay,)
 
-    def _depth_for_g(k_slice: jnp.ndarray) -> jnp.ndarray:
-        return _transit_depth_from_opacity(state, k_slice, geometry=geometry)
+    k_eff = jnp.maximum(k_tot, 1.0e-99)
+    dtau_v = k_eff * rho[:, None] * dz[:, None]          # (nlay, nwl)
+    tau_path = jnp.matmul(P1D, dtau_v)                   # (nlay, nwl)
 
-    k_tot_g = jnp.moveaxis(k_tot, -1, 0)  # (ng, nlay, nwl)
-    g_depths = jax.vmap(_depth_for_g)(k_tot_g)  # (ng, nwl)
-    return jnp.sum(g_weights[:, None] * g_depths, axis=0)
+    one_minus_trans = 1.0 - jnp.exp(-tau_path)           # (nlay, nwl)
+    dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)  # (nwl,)
+    return (R0**2 + dR2) / (R_s**2)
 
 
 def compute_transit_depth_1d(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
-) -> jnp.ndarray:
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """
     Compute the wavelength-dependent transit depth using a 1D path-length formalism.
 
@@ -176,6 +194,7 @@ def compute_transit_depth_1d(
     ----------
     state : Dict[str, jnp.ndarray]
         Atmospheric state dictionary containing at least R0, R_s, z_lev, z_lay, rho, and dz.
+        If state["contri_func"] is True, also returns normalized contribution function.
     params : Dict[str, jnp.ndarray]
         Retrieval parameters used for flexible RT options (e.g., cloud coverage weighting).
     opacity_components : Mapping[str, jnp.ndarray]
@@ -183,11 +202,14 @@ def compute_transit_depth_1d(
 
     Returns
     -------
-    `~jax.numpy.ndarray`
-        Transit depth spectrum (dimensionless) at the native wavelength grid.
+    Tuple[jnp.ndarray, jnp.ndarray]
+        Tuple of (transit depth spectrum, normalized contribution function).
+        If contri_func is False, contribution function is filled with zeros.
     """
 
-    D_net: jnp.ndarray
+    contri_func = state.get("contri_func", False)
+    nlay = state["nlay"]
+    nwl = state["nwl"]
 
     geometry = _build_transit_geometry(state)
 
@@ -195,30 +217,103 @@ def compute_transit_depth_1d(
     if state["ck"]:
         # Corr-k mode: build total opacity then integrate over g-points
         k_tot = _sum_opacity_components_ck(state, opacity_components)  # (nlay, nwl, ng)
+
+        if contri_func:
+            def _depth_and_layerdR2_for_g(k_slice: jnp.ndarray):
+                # k_slice: (nlay, nwl)
+                return _transit_depth_and_contrib_from_opacity(
+                    state, k_slice, geometry=geometry, want_contrib=True
+                )
+        else:
+            def _depth_for_g(k_slice: jnp.ndarray):
+                # k_slice: (nlay, nwl)
+                return _transit_depth_from_opacity(state, k_slice, geometry=geometry)
+
         if "f_cloud" in params and "cloud" in opacity_components:
-            # Parameter is already a JAX array, no need to wrap
             f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
             cloud_component = opacity_components["cloud"]
             if cloud_component.ndim == 2:
                 cloud_component = cloud_component[:, :, None]
             k_no_cloud = k_tot - cloud_component
-            D_cloud = _transit_depth_ck(state, k_tot, geometry=geometry)
-            D_clear = _transit_depth_ck(state, k_no_cloud, geometry=geometry)
-            D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
+
+            # Compute for cloudy and clear atmospheres
+            k_cloud_g = jnp.moveaxis(k_tot, -1, 0)           # (ng, nlay, nwl)
+            k_clear_g = jnp.moveaxis(k_no_cloud, -1, 0)      # (ng, nlay, nwl)
+
+            g_weights = _get_ck_weights(state)[:k_cloud_g.shape[0]]
+
+            if contri_func:
+                D_cloud_g, dR2_cloud_g, layer_dR2_cloud_g = jax.vmap(_depth_and_layerdR2_for_g)(k_cloud_g)
+                D_clear_g, dR2_clear_g, layer_dR2_clear_g = jax.vmap(_depth_and_layerdR2_for_g)(k_clear_g)
+
+                D_cloud = jnp.sum(g_weights[:, None] * D_cloud_g, axis=0)
+                D_clear = jnp.sum(g_weights[:, None] * D_clear_g, axis=0)
+                D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
+
+                dR2_cloud = jnp.sum(g_weights[:, None] * dR2_cloud_g, axis=0)
+                dR2_clear = jnp.sum(g_weights[:, None] * dR2_clear_g, axis=0)
+                layer_dR2_cloud = jnp.sum(g_weights[:, None, None] * layer_dR2_cloud_g, axis=0)
+                layer_dR2_clear = jnp.sum(g_weights[:, None, None] * layer_dR2_clear_g, axis=0)
+
+                dR2 = f_cloud * dR2_cloud + (1.0 - f_cloud) * dR2_clear
+                layer_dR2 = f_cloud * layer_dR2_cloud + (1.0 - f_cloud) * layer_dR2_clear
+                contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
+            else:
+                D_cloud_g = jax.vmap(_depth_for_g)(k_cloud_g)  # (ng, nwl)
+                D_clear_g = jax.vmap(_depth_for_g)(k_clear_g)  # (ng, nwl)
+                D_cloud = jnp.sum(g_weights[:, None] * D_cloud_g, axis=0)
+                D_clear = jnp.sum(g_weights[:, None] * D_clear_g, axis=0)
+                D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
+                contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
         else:
-            D_net = _transit_depth_ck(state, k_tot, geometry=geometry)
+            k_tot_g = jnp.moveaxis(k_tot, -1, 0)               # (ng, nlay, nwl)
+            g_weights = _get_ck_weights(state)[:k_tot_g.shape[0]]
+
+            if contri_func:
+                D_g, dR2_g, layer_dR2_g = jax.vmap(_depth_and_layerdR2_for_g)(k_tot_g)
+                # D_g: (ng, nwl), dR2_g: (ng, nwl), layer_dR2_g: (ng, nlay, nwl)
+
+                D_net = jnp.sum(g_weights[:, None] * D_g, axis=0)                       # (nwl,)
+                dR2 = jnp.sum(g_weights[:, None] * dR2_g, axis=0)                   # (nwl,)
+                layer_dR2 = jnp.sum(g_weights[:, None, None] * layer_dR2_g, axis=0) # (nlay, nwl)
+                contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
+            else:
+                D_g = jax.vmap(_depth_for_g)(k_tot_g)  # (ng, nwl)
+                D_net = jnp.sum(g_weights[:, None] * D_g, axis=0)  # (nwl,)
+                contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
     else:
-        # Lbl mode
-        k_tot = _sum_opacity_components_lbl(state, opacity_components) # Return (nlay, nwl)
+        # LBL mode
+        k_tot = _sum_opacity_components_lbl(state, opacity_components)  # (nlay, nwl)
 
         if "f_cloud" in params and "cloud" in opacity_components:
-            # Parameter is already a JAX array, no need to wrap
             f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
             k_no_cloud = k_tot - opacity_components["cloud"]
-            D_cloud = _transit_depth_from_opacity(state, k_tot, geometry=geometry)
-            D_clear = _transit_depth_from_opacity(state, k_no_cloud, geometry=geometry)
-            D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
-        else:
-            D_net = _transit_depth_from_opacity(state, k_tot, geometry=geometry)
 
-    return D_net
+            if contri_func:
+                D_cloud, dR2_cloud, layer_dR2_cloud = _transit_depth_and_contrib_from_opacity(
+                    state, k_tot, geometry=geometry, want_contrib=True
+                )
+                D_clear, dR2_clear, layer_dR2_clear = _transit_depth_and_contrib_from_opacity(
+                    state, k_no_cloud, geometry=geometry, want_contrib=True
+                )
+
+                D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
+                dR2 = f_cloud * dR2_cloud + (1.0 - f_cloud) * dR2_clear
+                layer_dR2 = f_cloud * layer_dR2_cloud + (1.0 - f_cloud) * layer_dR2_clear
+                contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
+            else:
+                D_cloud = _transit_depth_from_opacity(state, k_tot, geometry=geometry)
+                D_clear = _transit_depth_from_opacity(state, k_no_cloud, geometry=geometry)
+                D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
+                contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+        else:
+            if contri_func:
+                D_net, dR2, layer_dR2 = _transit_depth_and_contrib_from_opacity(
+                    state, k_tot, geometry=geometry, want_contrib=True
+                )
+                contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
+            else:
+                D_net = _transit_depth_from_opacity(state, k_tot, geometry=geometry)
+                contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+
+    return D_net, contrib_func_norm

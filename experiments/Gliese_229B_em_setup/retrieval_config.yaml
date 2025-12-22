@@ -1,14 +1,14 @@
 data:
 
-  obs: ../../obs_data/HD189733b_emission_JWST.txt
-  stellar: ./HD189_stellar.txt
+  obs: ../../obs_data/Gliese_229B_emission.txt
+  stellar: None
   janaf: ../../JANAF_data/
 
 physics:
 
   nlay: 99
 
-  vert_Tp: Guillot
+  vert_Tp: Milne_2
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic
@@ -19,6 +19,8 @@ physics:
   opac_cloud: None
 
   rt_scheme: emission_1d
+  emission_mode: brown_dwarf
+  contri_func: False
 
 opac:
 
@@ -46,18 +48,18 @@ params:
 
 
   - { name: R_s,   dist: delta,   value: 0.765, transform: identity, init: 0.765}
-  - { name: p_bot, dist: delta,   value: 100.0,  transform: identity, init: 100.0 }
-  - { name: p_top, dist: delta,   value: 1e-6, transform: identity, init: 1e-6}
+  - { name: p_bot, dist: delta,   value: 1000.0,  transform: identity, init: 1000.0 }
+  - { name: p_top, dist: delta,   value: 1e-4, transform: identity, init: 1e-4}
   - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
-  - { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
 
-  - { name: log_10_g,  dist: uniform, low: 2.7,   high: 3.3,  transform: logit, init: 3.0}
-  - { name: R_p, dist: uniform, low: 1.0,   high: 1.2,  transform: logit, init: 1.119}
+  - { name: log_10_g,  dist: uniform, low: 4.5,   high: 5.5,  transform: logit, init: 3.0}
+  - { name: R_p, dist: uniform, low: 0.8,   high: 1.2,  transform: logit, init: 1.119}
 
-  - { name: T_eq, dist: uniform, low: 500.0,   high: 2000.0, transform: logit, init: 800.0 }
-  - { name: T_int, dist: uniform, low: 100.0,   high: 600.0, transform: logit, init: 600.0 }
+  - { name: T_skin, dist: uniform, low: 100.0,   high: 500.0, transform: logit, init: 800.0 }
+  - { name: T_int, dist: uniform, low: 500.0,   high: 1200.0, transform: logit, init: 600.0 }
   - { name: log_10_k_ir, dist: uniform, low: -6,   high: 6,  transform: logit, init: -6}
-  - { name: log_10_gam_v, dist: uniform, low: -3,   high: 2,  transform: logit, init: -6}
+  - { name: log_10_p_trans, dist: uniform, low: -3,   high: 2,  transform: logit, init: -6}
+  - { name: log_10_w_trans, dist: uniform, low: -2,   high: 2,  transform: logit, init: -6}
 
   - { name: log_10_f_H2O, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
   - { name: log_10_f_CO, dist: uniform, low: -9,   high: -1,  transform: logit, init: -5}
@@ -82,7 +84,7 @@ sampling:
     num_live_points: 100        # live points (posterior resolution)
 
     # Slice sampler hyperparameters
-    s: 6                         # slices per dimension (default ~4)
+    s: 4                        # slices per dimension (default ~4)
     k: 0                         # phantom samples (0 = off, >0 for hard posteriors)
     c: null                       # parallel chains (null -> jaxns default, ~20*D)
     shell_fraction: 0.5          # fraction of shell explored per step (0<sf<=1)
