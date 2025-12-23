@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
-from .data_constants import kb, h, c_light
+from .data_constants import kb, h, c_light, pc
 
 
 _MU_NODES = (0.0454586727, 0.2322334416, 0.5740198775, 0.9030775973)
@@ -380,7 +380,10 @@ def compute_emission_spectrum_1d(
     top_flux = lw_up[0]
     # Use direct comparison instead of bool() for JIT compatibility
     if state.get("is_brown_dwarf", False):
-        final_spectrum = top_flux
+        R0 = state["R0"].astype(jnp.float64) 
+        D = params["D"]
+        distance = D * pc
+        final_spectrum = top_flux * (R0/distance)**2
     else:
         final_spectrum = _scale_flux_ratio(top_flux, state, params)
 

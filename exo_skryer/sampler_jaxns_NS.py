@@ -91,20 +91,28 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
 
     # ----- Split-normal (asymmetric Gaussian) log-likelihood -----
     @jax.jit
-    def log_likelihood(theta_map: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        mu = prep.fm(theta_map)  # (N_obs,)
+    def log_likelihood(theta_map):
+        mu = prep.fm(theta_map)     # (N,)
+        r  = y_obs - mu             # (N,)
 
-        res = y_obs - mu
+        c = theta_map.get("c", -99.0)          # scalar: log10(sigma_jit)
+        sig_jit = 10.0**c      # = 10^c
+        sig_jit2 = sig_jit * sig_jit      # = 10^(2c)
 
-        # choose sigma depending on which side y_obs lies relative to mu
-        sig = jnp.where(res >= 0.0, dy_obs_p, dy_obs_m)
+        # inflate BOTH sides in quadrature
+        sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
+        sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
 
-        # split-normal normalization: sqrt(2/pi) / (dy_minus + dy_plus)
-        sig = jnp.clip(sig, 1e-300, jnp.inf)
-        norm = jnp.clip(dy_obs_m + dy_obs_p, 1e-300, jnp.inf)
+        # choose side for exponent
+        sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
+
+        # normalisation must use the SAME effective scales
+        norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
+        sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
+
         logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
 
-        return jnp.sum(logC - 0.5 * (res / sig) ** 2)
+        return jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
     return Model(prior_model=prior_model, log_likelihood=log_likelihood)
 

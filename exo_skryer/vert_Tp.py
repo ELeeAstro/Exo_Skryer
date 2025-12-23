@@ -26,7 +26,7 @@ __all__ = [
     "Guillot",
     "MandS09",
     "picket_fence",
-    "Milne_modified",
+    "piecewise_polynomial",
     "dry_convective_adjustment"
 ]
 
@@ -135,12 +135,12 @@ def Barstow(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     return T_lev, T_lay
 
 def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Generate a modified Milne temperature profile with sigmoid transition.
+    """Generate a modified Milne temperature profile with stretched exponential transition.
 
     This profile uses a modified Milne approximation where the Hopf function
     is replaced by a pressure-dependent parameter q(p) that transitions
     smoothly from a skin temperature regime to the standard Milne value
-    using a sigmoid function.
+    using a stretched exponential function: exp(-((p/p_0)^beta)).
 
     Parameters
     ----------
@@ -157,10 +157,10 @@ def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[
             Log₁₀ infrared opacity in cm² g⁻¹.
         - `T_skin` : float
             Skin temperature in Kelvin.
-        - `log_10_p_trans` : float
-            Log₁₀ transition pressure in bar.
-        - `log_10_w_trans` : float
-            Log₁₀ transition width parameter (dimensionless).
+        - `log_10_p_0` : float
+            Log₁₀ reference pressure in bar for the stretched exponential.
+        - `beta` : float
+            Stretching exponent (0 < beta <= 1; beta=1 is pure exponential, beta=0.55 typical).
 
     Returns
     -------
@@ -173,17 +173,17 @@ def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[
     T_int = params["T_int"]
     k_ir = 10.0**params["log_10_k_ir"]
     T_skin = params["T_skin"]
-    log_10_p_trans = params["log_10_p_trans"]
-    w_trans = 10.0**params["log_10_w_trans"]
+    p_t = 10.0**params["log_10_p_t"]
+    beta = params["beta"]
 
     tau_ir = k_ir / g * p_lev
 
-    q_inf = 2.0/3.0
+    q_inf = 0.710446
     q0 = (4.0/3.0) * (T_skin / T_int)**4
 
     dq = q0 - q_inf
-    x = (log_10_p_trans - jnp.log10(p_lev/bar))/w_trans
-    sig = 1.0/(1.0 + jnp.exp(-x))
+    # Stretched exponential: sig = exp(-((p/p_0)^beta))
+    sig = jnp.exp(-(((p_lev/bar) / p_t)**beta))
     q = q_inf + dq * sig
 
     T_lev = ((0.75 * T_int**4) * (q + tau_ir))**0.25

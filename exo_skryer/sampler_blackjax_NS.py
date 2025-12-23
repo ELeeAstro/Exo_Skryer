@@ -126,17 +126,28 @@ def run_nested_blackjax(cfg, prep: Prepared, exp_dir: Path) -> Tuple[Dict[str, n
 
     @jax.jit
     def loglikelihood_fn(params):
-        mu = prep.fm(params)  # (N_obs,)
-        mu = jnp.asarray(mu)  # Ensure float64
-        res = y_obs - mu
-        sig = jnp.where(res >= 0.0, dy_obs_p, dy_obs_m)
-        sig = jnp.clip(sig, 1e-300, jnp.inf)
-        norm = jnp.clip(dy_obs_p + dy_obs_m, 1e-300, jnp.inf)
-        r = res / sig
-        logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
-        loglike = jnp.sum(logC - 0.5 * (r * r))
-        return jnp.asarray(loglike)
+        mu = prep.fm(params)     # (N,)
+        r  = y_obs - mu             # (N,)
 
+        c = params.get("c", -99.0)          # scalar: log10(sigma_jit)
+        sig_jit = 10.0**c      # = 10^c
+        sig_jit2 = sig_jit * sig_jit      # = 10^(2c)
+
+        # inflate BOTH sides in quadrature
+        sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
+        sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
+
+        # choose side for exponent
+        sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
+
+        # normalisation must use the SAME effective scales
+        norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
+        sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
+
+        logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
+
+        return jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
+    
     nested_sampler = blackjax.nss(
         logprior_fn=prior.log_prob,
         loglikelihood_fn=loglikelihood_fn,

@@ -186,11 +186,11 @@ def print_cfg(cfg: SimpleNamespace) -> None:
     print("CONFIGURATION SUMMARY")
     print("=" * 60)
 
-    # -------- OBS --------
-    obs = getattr(cfg, "obs", SimpleNamespace())
+    # -------- DATA (observations) --------
+    data = getattr(cfg, "data", SimpleNamespace())
     _print_kv_table(
-        "OBSERVATIONS",
-        {k: v for k, v in vars(obs).items()},
+        "DATA",
+        {k: v for k, v in vars(data).items()},
     )
 
     # -------- PHYSICS --------

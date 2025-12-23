@@ -53,13 +53,15 @@ def main() -> None:
     from .read_yaml import read_yaml
     cfg = read_yaml(config_path)
 
-    # Print main yaml parameters to command line
-    from .help_print import print_cfg
-    print_cfg(cfg)
-
-    # Set runtime environment to use cpus or gpus (for JAX)
+    # Set runtime environment FIRST, before any other imports or function calls
+    # This MUST happen before JAX/CUDA initialization
     os.environ["CUDA_VISIBLE_DEVICES"] = str(cfg.runtime.cuda_visible_devices)
     platform = str(cfg.runtime.platform)  # "cpu" or "gpu"
+    print(f"[info] Setting CUDA_VISIBLE_DEVICES={os.environ['CUDA_VISIBLE_DEVICES']}")
+
+    # Print main yaml parameters to command line (after setting environment)
+    from .help_print import print_cfg
+    print_cfg(cfg)
     #os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
     #os.environ["TF_GPU_ALLOCATOR=cuda_malloc_async"] = "cuda_malloc_async"
 

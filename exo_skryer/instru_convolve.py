@@ -61,13 +61,29 @@ def _convolve_spectrum_core(
     The convolution is computed as:
     1. Extract spectrum values at sampled wavelengths using `idx_pad`
     2. Multiply by response weights: F(λ) × w(λ)
-    3. Integrate using trapezoidal rule
+    3. Integrate using trapezoidal rule (or simple weighted value for single-point bins)
     4. Normalize by integrated throughput
+
+    For bins with only one wavelength point, trapezoidal integration is not applicable.
+    Instead, we use F(λ) × w(λ) directly. Single-point bins are detected when the
+    first two wavelengths in a row are identical (indicating padding).
 
     The normalization denominator is clamped to 1e-99 to prevent division by zero.
     """
     spec_pad = jnp.take(spec, idx_pad, axis=0)  # (nbin, max_len)
-    numerator = jnp.trapezoid(spec_pad * w_pad, x=wl_pad, axis=1)  # (nbin,)
+
+    # Detect single-point bins: if first two wavelengths are equal, it's a padded single point
+    is_single_point = (wl_pad[:, 0] == wl_pad[:, 1])  # (nbin,) boolean array
+
+    # Single-point bins: use first spectrum value times first weight
+    single_point_result = spec_pad[:, 0] * w_pad[:, 0]  # (nbin,)
+
+    # Multi-point bins: use trapezoidal integration
+    multi_point_result = jnp.trapezoid(spec_pad * w_pad, x=wl_pad, axis=1)  # (nbin,)
+
+    # Combine results based on bin type
+    numerator = jnp.where(is_single_point, single_point_result, multi_point_result)
+
     return numerator / jnp.maximum(norms, 1e-99)
 
 

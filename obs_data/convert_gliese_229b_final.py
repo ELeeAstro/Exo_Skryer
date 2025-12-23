@@ -1,13 +1,7 @@
 #!/usr/bin/env python3
-"""Convert Gliese 229B emission data to retrieval format with proper flux scaling."""
+"""Convert Gliese 229B emission data to retrieval format."""
 
 import numpy as np
-
-# Constants
-pc_to_cm = 3.086e18  # 1 parsec in cm
-R_jupiter_cm = 7.1492e9  # Jupiter radius in cm
-distance_pc = 10.0  # Data calibrated to 10 pc
-R_gliese = 0.94 * R_jupiter_cm  # 0.94 Jupiter radii
 
 # Read the original file, skipping header (first 36 lines)
 data = np.loadtxt('Gliese_229B_emission_original.txt', skiprows=36)
@@ -17,18 +11,11 @@ wavelength_um = data[:, 0]  # Already in microns
 flux_erg_s_cm2_A_10pc = data[:, 1]  # In erg/s/cm^2/Å at 10 pc
 error_erg_s_cm2_A_10pc = data[:, 2]  # In erg/s/cm^2/Å at 10 pc
 
-# Convert from 10 pc to surface flux
-# F_surface = F_observed * (d/R)^2
-distance_cm = distance_pc * pc_to_cm
-flux_scaling = (distance_cm / R_gliese)**2
-
-flux_erg_s_cm2_A_surf = flux_erg_s_cm2_A_10pc * flux_scaling
-error_erg_s_cm2_A_surf = error_erg_s_cm2_A_10pc * flux_scaling
-
 # Convert flux from erg/s/cm^2/Å to erg/s/cm^2/cm
 # 1 cm = 10^8 Å, so multiply by 10^8
-flux_erg_s_cm2_cm = flux_erg_s_cm2_A_surf * 1e8
-error_erg_s_cm2_cm = error_erg_s_cm2_A_surf * 1e8
+# Keep data at 10 pc (no distance scaling to surface)
+flux_erg_s_cm2_cm = flux_erg_s_cm2_A_10pc * 1e8
+error_erg_s_cm2_cm = error_erg_s_cm2_A_10pc * 1e8
 
 # Define instrument boundaries from header information
 # 1. HST STIS optical: 0.52 - 1.02 µm
@@ -102,13 +89,12 @@ for i in range(len(segment_starts)-1):
 with open('Gliese_229B_emission.txt', 'w') as f:
     for i in range(len(wavelength_um)):
         f.write(f"{wavelength_um[i]:.6e}  {half_bandwidth[i]:.6e}  "
-                f"{flux_erg_s_cm2_cm[i]:.6e}  {error_erg_s_cm2_cm[i]:.6e}  None\n")
+                f"{flux_erg_s_cm2_cm[i]:.6e}  {error_erg_s_cm2_cm[i]:.6e}  boxcar\n")
 
 print(f"\nConversion complete:")
 print(f"  Total data points: {len(wavelength_um)}")
-print(f"  Flux scaling factor (d/R)^2: {flux_scaling:.6e}")
-print(f"  Distance: {distance_pc} pc = {distance_cm:.6e} cm")
-print(f"  Radius: {0.94} R_Jup = {R_gliese:.6e} cm")
+print(f"  Flux units: erg/s/cm²/cm at 10 pc")
+print(f"  Unit conversion: Å → cm (×10⁸)")
 print(f"\nHalf-bandwidth statistics by instrument:")
 for i in range(len(segment_starts)-1):
     start = segment_starts[i]
