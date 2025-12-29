@@ -22,7 +22,7 @@ from .opacity_ck import zero_ck_opacity, compute_ck_opacity
 from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
-from .opacity_cloud import zero_cloud_opacity, grey_cloud, powerlaw_cloud, F18_cloud, F18_cloud_2, direct_nk
+from .opacity_cloud import zero_cloud_opacity, grey_cloud, powerlaw_cloud, F18_cloud, F18_cloud_2, direct_nk, direct_nk_slab
 
 from . import build_opacities as XS
 from .build_chem import prepare_chemistry_kernel
@@ -271,6 +271,8 @@ def build_forward_model(
         cld_opac_kernel = F18_cloud_2
     elif cld_opac_scheme_str.lower() == "nk":
         cld_opac_kernel = direct_nk
+    elif cld_opac_scheme_str.lower() == "nk_slab":
+        cld_opac_kernel = direct_nk_slab        
     else:
         raise NotImplementedError(f"Unknown cld_opac_scheme='{cld_opac_scheme}'")
 

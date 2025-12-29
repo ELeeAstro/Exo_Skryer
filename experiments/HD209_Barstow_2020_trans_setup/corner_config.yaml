@@ -1,7 +1,7 @@
 
 #log_10_g: {label: "$\\log_{10} g$ [cm\\,s$^{-2}$]", order: 4}
 R_p: {label: "$R_p$ [$R_{\\mathrm{Jup}}$]", order: 2}
-T_iso: {label: "$T_{\\mathrm{strat}}$ [K]", order: 3}
+T_strat: {label: "$T_{\\mathrm{strat}}$ [K]", order: 3}
 log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 1}
 #log_10_f_Na: {label: "$\\log_{10} f_{\\mathrm{Na}}$", order: 8}
 #log_10_f_K: {label: "$\\log_{10} f_{\\mathrm{K}}$", order: 9}

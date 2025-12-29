@@ -39,16 +39,16 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_dnu_1.txt
-  full_grid: false
+  wl_master: wl_R10000.txt
+  full_grid: true
   ck: false
   ck_mix: RORR
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: Na, path: ../../opac_data/lbl/Na_dnu_1.npz}
-    - {species: K, path: ../../opac_data/lbl/K_dnu_1.npz}
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
+    - {species: Na, path: ../../opac_data/lbl/Na_R10000.npz}
+    - {species: K, path: ../../opac_data/lbl/K_R10000.npz}
 
   # Rayleigh scattering species
   ray:

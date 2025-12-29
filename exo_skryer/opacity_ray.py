@@ -119,5 +119,6 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
         axis=0,
     )
 
-    sigma_weighted = jnp.sum(sigma_values[:, :, None] * mixing_ratios[:, None, :], axis=0)  # (nwl, nlay)
-    return (number_density[:, None] * sigma_weighted.T) / density[:, None]
+    # Use einsum to avoid transpose: (n_species, nwl) x (n_species, nlay) -> (nlay, nwl)
+    sigma_weighted = jnp.einsum('sw,sl->lw', sigma_values, mixing_ratios)
+    return (number_density[:, None] * sigma_weighted) / density[:, None]

@@ -78,15 +78,15 @@ def _convolve_spectrum_core(
     """
     spec_pad = jnp.take(spec, idx_pad, axis=0)  # (nbin, max_len)
 
-    # Integrate using Simpson's rule with vmap over bins
-    numerator = jax.vmap(simpson_padded, in_axes=(0, 0, 0))(
-        spec_pad * w_pad,  # y: (nbin, max_len)
-        wl_pad,            # x: (nbin, max_len)
-        valid_lens,        # n_valid: (nbin,)
-    )
+    # # Integrate using Simpson's rule with vmap over bins
+    # numerator = jax.vmap(simpson_padded, in_axes=(0, 0, 0))(
+    #     spec_pad * w_pad,  # y: (nbin, max_len)
+    #     wl_pad,            # x: (nbin, max_len)
+    #     valid_lens,        # n_valid: (nbin,)
+    # )
 
     # Alternative: use trapezoidal integration (commented out)
-    # numerator = jnp.trapezoid(spec_pad * w_pad, x=wl_pad, axis=1)  # (nbin,)
+    numerator = jnp.trapezoid(spec_pad * w_pad, x=wl_pad, axis=1)  # (nbin,)
 
     return numerator / jnp.maximum(norms, 1e-99)
 

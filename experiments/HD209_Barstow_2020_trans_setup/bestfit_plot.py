@@ -468,10 +468,10 @@ def plot_model_band(
     palette = sns.color_palette("colorblind")
     fig, ax = plt.subplots(figsize=(8, 4.5))
 
-    # hi-res median (optional overlay)
-    ax.plot(hi_wl, hq50, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-    # credible band (binned)
-    ax.fill_between(lam_arr, q16, q84, alpha=0.3, color=palette[1])
+    # hi-res median (optional overlay) - rasterize to avoid PDF artifacts with many points
+    ax.plot(hi_wl, hq50, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4], rasterized=True)
+    # credible band (binned) - rasterize to avoid PDF artifacts with transparency
+    ax.fill_between(lam_arr, q16, q84, alpha=0.3, color=palette[1], rasterized=True)
     # median binned model
     ax.plot(lam_arr, q50, lw=2, label="Median", color=palette[1])
 
@@ -524,7 +524,7 @@ def plot_model_band(
     png = exp_dir / f"{outname}.png"
     pdf = exp_dir / f"{outname}.pdf"
     fig.savefig(png, dpi=300)
-    fig.savefig(pdf)
+    fig.savefig(pdf, dpi=300)  # Higher DPI for rasterized elements in PDF
     print(f"[model_band] saved:\n  {png}\n  {pdf}")
 
     if show_plot:

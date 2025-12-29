@@ -1,19 +1,26 @@
 """
 sampler_dynesty_NS.py
 =====================
+Dynesty nested sampling driver for a JAX forward model, aligned with your JAXNS/blackjax
+split-normal likelihood and YAML priors.
+
+Key points:
+- prior_transform maps [0,1]^D -> physical parameters (no redundant "logit" handling).
+- loglikelihood is JAX-jitted on-device and returns a scalar; only one host sync per call.
+- delta parameters are injected consistently.
 """
 
 from __future__ import annotations
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, Callable
 from pathlib import Path
 import pickle
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from .build_prepared import Prepared
 
-# Try to import Dynesty
 try:
     import dynesty
     from dynesty import NestedSampler, DynamicNestedSampler
@@ -25,55 +32,40 @@ except ImportError:
     NestedSampler = None
     DynamicNestedSampler = None
 
+
 __all__ = [
     "build_prior_transform_dynesty",
     "build_loglikelihood_dynesty",
-    "run_nested_dynesty"
+    "run_nested_dynesty",
 ]
 
 
-def build_prior_transform_dynesty(cfg) -> Tuple[callable, List[str]]:
+LOG_FLOOR = -1e100  # finite "invalid" logL for dynesty stability
+
+
+def build_prior_transform_dynesty(cfg) -> Tuple[Callable[[np.ndarray], np.ndarray], List[str]]:
     """
     Build Dynesty prior transform from cfg.params.
 
-    Parameters
-    ----------
-    cfg : object
-        Configuration object with cfg.params list
+    Supports:
+      - uniform(low, high)
+      - normal(mu, sigma)
+      - lognormal(mu, sigma) where underlying normal is N(mu, sigma)
+      - delta parameters are excluded (handled separately)
 
-    Returns
-    -------
-    prior_transform : callable
-        Function with signature (u) -> theta that returns transformed array
-    param_names : List[str]
-        Ordered list of non-delta parameter names
+    Returns:
+      prior_transform(u)->theta, param_names
     """
-    from scipy.stats import norm, lognorm
+    from scipy.special import ndtri  # inverse standard normal CDF
 
-    # Extract non-delta parameters
     params_cfg = [p for p in cfg.params if str(getattr(p, "dist", "")).lower() != "delta"]
     param_names = [p.name for p in params_cfg]
 
     def prior_transform(u: np.ndarray) -> np.ndarray:
-        """
-        Dynesty prior transform: maps unit cube to physical parameters.
+        theta = np.empty_like(u, dtype=np.float64)
 
-        Returns new array (cleaner than PyMultiNest's in-place modification).
-
-        Parameters
-        ----------
-        u : np.ndarray
-            Unit cube values [0, 1]^n
-
-        Returns
-        -------
-        theta : np.ndarray
-            Physical parameter values
-        """
-        theta = np.empty_like(u)
-
-        # Clip to avoid edge cases in inverse CDF
-        eps = 1e-10
+        # Avoid ndtri(0/1) -> +/- inf
+        eps = 1e-12
         u = np.clip(u, eps, 1.0 - eps)
 
         for i, p in enumerate(params_cfg):
@@ -82,23 +74,18 @@ def build_prior_transform_dynesty(cfg) -> Tuple[callable, List[str]]:
             if dist_name == "uniform":
                 low = float(getattr(p, "low"))
                 high = float(getattr(p, "high"))
-                transform = str(getattr(p, "transform", "identity")).lower()
-                if transform == "logit":
-                    z = np.log(u[i] / (1.0 - u[i]))
-                    t = 1.0 / (1.0 + np.exp(-z))
-                    theta[i] = low + (high - low) * t
-                else:
-                    theta[i] = low + u[i] * (high - low)
+                # NOTE: dynesty already samples u ~ Uniform(0,1). Any "logit" field is irrelevant here.
+                theta[i] = low + u[i] * (high - low)
 
             elif dist_name in ("gaussian", "normal"):
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
-                theta[i] = norm.ppf(u[i], loc=mu, scale=sigma)
+                theta[i] = mu + sigma * ndtri(u[i])
 
             elif dist_name == "lognormal":
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
-                theta[i] = lognorm.ppf(u[i], s=sigma, scale=np.exp(mu))
+                theta[i] = np.exp(mu + sigma * ndtri(u[i]))
 
             else:
                 raise ValueError(f"Unsupported distribution '{dist_name}' for parameter '{p.name}'")
@@ -108,90 +95,90 @@ def build_prior_transform_dynesty(cfg) -> Tuple[callable, List[str]]:
     return prior_transform, param_names
 
 
-def build_loglikelihood_dynesty(cfg, prep: Prepared, param_names: List[str]) -> callable:
+def build_loglikelihood_dynesty(cfg, prep: Prepared, param_names: List[str]) -> Callable[[np.ndarray], float]:
     """
-    Build Dynesty log-likelihood function.
+    Build Dynesty log-likelihood function that wraps a JAX-jitted loglike.
 
-    Implements the same split-normal likelihood as JAXNS and BlackJAX NS,
-    but uses NumPy operations (except for the JAX forward model).
-
-    Parameters
-    ----------
-    cfg : object
-        Configuration object
-    prep : Prepared
-        Prepared model bundle with forward model and observed data
-    param_names : List[str]
-        Ordered list of parameter names
-
-    Returns
-    -------
-    loglikelihood : callable
-        Function with signature (theta) -> logL returning log-likelihood
+    Uses the same split-normal + jitter model you use elsewhere:
+      - residual r = y_obs - mu
+      - choose dy_p/dy_m depending on sign(r)
+      - inflate via sigma_jit^2 = 10^(2c) (c in log10 space)
+      - reject NaNs/Infs via -inf on device, and return LOG_FLOOR on host
     """
-    # Observed data - keep in JAX for single-scalar output conversion
-    y_obs = jnp.asarray(prep.y)
+    # Observations to device (closed over)
+    y_obs    = jnp.asarray(prep.y)
     dy_obs_p = jnp.asarray(prep.dy_p)
     dy_obs_m = jnp.asarray(prep.dy_m)
 
-    def loglikelihood(theta: np.ndarray) -> float:
-        """
-        Dynesty log-likelihood: split-normal likelihood.
+    # Collect delta params once (if your prep.fm already injects them, this is harmless)
+    delta_dict: Dict[str, float] = {}
+    for p in cfg.params:
+        if str(getattr(p, "dist", "")).lower() == "delta":
+            val = getattr(p, "value", getattr(p, "init", None))
+            if val is not None:
+                delta_dict[p.name] = float(val)
 
-        Parameters
-        ----------
-        theta : np.ndarray
-            Parameter values in constrained space
+    # Silent defaults that only apply if the parameter is NOT present in YAML at all
+    OPTIONAL_DEFAULTS: Dict[str, float] = {
+        "c": -99.0,  # log10(sigma_jit): "effectively zero jitter"
+    }
+    cfg_names = {p.name for p in cfg.params}
+    optional_defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
 
-        Returns
-        -------
-        logL : float
-            Log-likelihood value
-        """
-        def invalid_ll() -> float:
-            return -1e100
+    # Make static-key dict builder for JIT: keys are fixed at trace time.
+    # theta_vec is (D,) JAX array.
+    def _vec_to_theta_dict(theta_vec: jnp.ndarray) -> Dict[str, jnp.ndarray]:
+        d = {name: theta_vec[i] for i, name in enumerate(param_names)}
+        # Inject deltas as JAX scalars (static values)
+        for k, v in delta_dict.items():
+            d[k] = jnp.asarray(v, dtype=theta_vec.dtype)
+        # Inject optional defaults only if not explicitly configured in YAML
+        for k, v in optional_defaults_active.items():
+            if k not in d:
+                d[k] = jnp.asarray(v, dtype=theta_vec.dtype)
+        return d
 
-        try:
-            # Build parameter dictionary
-            theta_dict = {param_names[i]: float(theta[i]) for i in range(len(theta))}
+    @jax.jit
+    def loglike_jax(theta_vec: jnp.ndarray) -> jnp.ndarray:
+        params = _vec_to_theta_dict(theta_vec)
 
-            # Call forward model (JAX) and convert to NumPy
-            mu = prep.fm(theta_dict)  # (N,)
-            if not bool(jnp.all(jnp.isfinite(mu))):
-                return invalid_ll()
-            r = y_obs - mu  # residuals
+        mu = prep.fm(params)  # (N,)
+        valid_mu = jnp.all(jnp.isfinite(mu))
 
-            # Split-normal likelihood using NumPy operations
-            c = theta_dict.get("c", -99.0)  # log10(sigma_jit)
-            sig_jit = 10.0**c
-            sig_jit2 = sig_jit * sig_jit
+        def valid_ll(_):
+            r = y_obs - mu
 
-            # Inflate BOTH sides in quadrature
+            # 'c' is guaranteed present: either in YAML (sampled/delta) or injected default
+            c = params["c"]  # log10(sigma_jit)
+            sig_jit2 = 10.0 ** (2.0 * c)  # 10^(2c)
+
             sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
             sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
 
-            # Choose side for exponent
             sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
 
-            # Normalisation must use the SAME effective scales
             norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
             sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
 
             logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
-            logL = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
+            ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
-            # Convert to Python float
-            result = float(logL)
+            return jnp.where(jnp.isfinite(ll), ll, -jnp.inf)
 
-            # Handle non-finite values
-            if not np.isfinite(result):
-                return invalid_ll()
+        return jax.lax.cond(valid_mu, valid_ll, lambda _: -jnp.inf, operand=None)
 
-            return result
+    # Warm up compilation once (important for dynesty)
+    theta0 = np.zeros((len(param_names),), dtype=np.float64)
+    _ = float(loglike_jax(jnp.asarray(theta0)))
 
-        except Exception as e:
-            print(f"[Dynesty] Likelihood evaluation error: {e}")
-            return invalid_ll()
+    def loglikelihood(theta: np.ndarray) -> float:
+        # dynesty passes numpy float array
+        theta_vec = jnp.asarray(theta, dtype=jnp.float64)
+        ll = loglike_jax(theta_vec)
+        val = float(ll)  # single device sync per call
+        if not np.isfinite(val):
+            return LOG_FLOOR
+        return val
 
     return loglikelihood
 
@@ -202,33 +189,13 @@ def run_nested_dynesty(
     exp_dir: Path,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """
-    Run Dynesty nested sampling.
-
-    Parameters
-    ----------
-    cfg : object
-        Configuration with cfg.sampling.dynesty settings
-    prep : Prepared
-        Prepared model bundle
-    exp_dir : Path
-        Output directory
-
-    Returns
-    -------
-    samples_dict : Dict[str, np.ndarray]
-        Posterior samples for each parameter
-    evidence_info : Dict[str, Any]
-        Evidence and diagnostic information
+    Run Dynesty nested sampling and return (samples_dict, evidence_info).
     """
     if not DYNESTY_AVAILABLE:
-        raise ImportError(
-            "Dynesty is not installed. Install with:\n"
-            "  pip install dynesty"
-        )
+        raise ImportError("Dynesty is not installed. Install with: pip install dynesty")
 
     dy_cfg = cfg.sampling.dynesty
 
-    # Extract configuration with defaults
     nlive = int(getattr(dy_cfg, "nlive", 500))
     bound = str(getattr(dy_cfg, "bound", "multi"))
     sample = str(getattr(dy_cfg, "sample", "auto"))
@@ -242,25 +209,21 @@ def run_nested_dynesty(
     print_progress = bool(getattr(dy_cfg, "print_progress", True))
     seed = int(getattr(dy_cfg, "seed", 42))
 
-    # Setup output directory
     exp_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build prior and likelihood from cfg (not prep!)
     prior_fn, param_names = build_prior_transform_dynesty(cfg)
     loglike_fn = build_loglikelihood_dynesty(cfg, prep, param_names)
-
     ndim = len(param_names)
 
-    print(f"[Dynesty] Running nested sampling...")
     print(f"[Dynesty] Free parameters: {ndim}")
-    print(f"[Dynesty] Parameter names: {param_names}")
     print(f"[Dynesty] Live points: {nlive}")
     print(f"[Dynesty] Bound: {bound}, Sample: {sample}")
     print(f"[Dynesty] dlogZ stopping criterion: {dlogz}")
+    print(f"[Dynesty] dynamic: {dynamic}")
 
-    # Choose sampler type
+    rstate = np.random.default_rng(seed)
+
     if dynamic:
-        print(f"[Dynesty] Using dynamic nested sampling")
         sampler = DynamicNestedSampler(
             loglike_fn,
             prior_fn,
@@ -271,12 +234,10 @@ def run_nested_dynesty(
             bootstrap=bootstrap,
             enlarge=enlarge,
             update_interval=update_interval,
-            rstate=np.random.default_rng(seed),
+            rstate=rstate,
         )
-        # Run dynamic nested sampling
         sampler.run_nested(dlogz_init=dlogz, print_progress=print_progress)
     else:
-        print(f"[Dynesty] Using static nested sampling")
         sampler = NestedSampler(
             loglike_fn,
             prior_fn,
@@ -287,9 +248,8 @@ def run_nested_dynesty(
             bootstrap=bootstrap,
             enlarge=enlarge,
             update_interval=update_interval,
-            rstate=np.random.default_rng(seed),
+            rstate=rstate,
         )
-        # Run static nested sampling
         sampler.run_nested(
             dlogz=dlogz,
             maxiter=maxiter,
@@ -297,25 +257,26 @@ def run_nested_dynesty(
             print_progress=print_progress,
         )
 
-    print(f"[Dynesty] Sampling complete. Extracting results...")
-
-    # Get results
     results = sampler.results
 
-    # Extract evidence information
+    # Dynesty stores ncall per iteration; sum it for total likelihood calls.
+    n_like = int(np.sum(results.ncall)) if hasattr(results, "ncall") else None
+
     evidence_info: Dict[str, Any] = {
         "logZ": float(results.logz[-1]),
         "logZ_err": float(results.logzerr[-1]),
-        "ESS": int(results.ess),
-        "n_like": int(results.ncall),
-        "H": float(results.h[-1]),
+        "ESS": float(getattr(results, "ess", np.nan)),
+        "H": float(results.h[-1]) if hasattr(results, "h") else np.nan,
+        "n_like": n_like,
         "sampler": "dynesty",
         "n_live": nlive,
+        "dynamic": dynamic,
     }
 
-    print(f"[Dynesty] Evidence: {evidence_info['logZ']:.2f} ± {evidence_info['logZ_err']:.2f}")
+    print(f"[Dynesty] Evidence: {evidence_info['logZ']:.3f} ± {evidence_info['logZ_err']:.3f}")
+    if n_like is not None:
+        print(f"[Dynesty] Likelihood evaluations: {n_like}")
     print(f"[Dynesty] ESS: {evidence_info['ESS']}")
-    print(f"[Dynesty] Likelihood evaluations: {evidence_info['n_like']}")
 
     # Save full results object
     results_path = exp_dir / "dynesty_results.pkl"
@@ -323,34 +284,30 @@ def run_nested_dynesty(
         pickle.dump(results, f)
     evidence_info["results_file"] = str(results_path)
 
-    print(f"[Dynesty] Saved full results to {results_path}")
-
-    # Extract equal-weighted posterior samples
-    weights = np.exp(results.logwt - results.logz[-1])
-    samples = dyutils.resample_equal(results.samples, weights)
+    # Equal-weight posterior samples (numerically stable weights)
+    logw = results.logwt - results.logz[-1]
+    logw = logw - np.max(logw)
+    w = np.exp(logw)
+    w = w / np.sum(w)
+    samples = dyutils.resample_equal(results.samples, w)
     n_samples = samples.shape[0]
 
-    print(f"[Dynesty] Posterior samples: {n_samples}")
+    # Add n_samples to evidence_info
+    evidence_info["n_samples"] = n_samples
 
-    # Build samples_dict (same as JAXNS/BlackJAX)
     samples_dict: Dict[str, np.ndarray] = {}
 
-    # Add free parameters
+    # Free parameters
     for i, name in enumerate(param_names):
         samples_dict[name] = samples[:, i]
 
-    # Add fixed/delta parameters (same as JAXNS/BlackJAX)
-    for param in cfg.params:
-        name = param.name
+    # Delta parameters
+    for p in cfg.params:
+        name = p.name
         if name not in samples_dict:
-            dist_name = str(getattr(param, "dist", "")).lower()
-            if dist_name == "delta":
-                val = getattr(param, "value", getattr(param, "init", None))
+            if str(getattr(p, "dist", "")).lower() == "delta":
+                val = getattr(p, "value", getattr(p, "init", None))
                 if val is not None:
-                    samples_dict[name] = np.full(
-                        (n_samples,),
-                        float(val),
-                        dtype=np.float64,
-                    )
+                    samples_dict[name] = np.full((n_samples,), float(val), dtype=np.float64)
 
     return samples_dict, evidence_info

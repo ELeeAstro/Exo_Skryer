@@ -144,7 +144,7 @@ sampling:
     num_live_points: 150
     num_inner_steps: 50
     num_delete: 75
-    dlogz_stop: 0
+    dlogz_stop: 0.1
     seed: 42
 
   # Dynesty settings

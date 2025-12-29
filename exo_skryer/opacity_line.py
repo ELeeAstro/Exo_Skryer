@@ -257,17 +257,13 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
         s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
         return 10.0 ** s_interp
 
-    def _scan_body(carry, inputs):
-        sigma_3d, temp_grid, vmr = inputs
-        sigma_interp = _interp_one_species(sigma_3d, temp_grid)
-        carry = carry + sigma_interp * vmr[:, None]
-        return carry, None
+    # Vectorize over all species: (n_species, nlay, nwl)
+    sigma_interp_all = jax.vmap(_interp_one_species)(sigma_cube, temperature_grids)
 
-    nwl = sigma_cube.shape[-1]
-    weighted_sigma_init = jnp.zeros((layer_count, nwl), dtype=jnp.float64)
-    weighted_sigma, _ = jax.lax.scan(
-        _scan_body,
-        weighted_sigma_init,
-        (sigma_cube, temperature_grids, mixing_ratios),
-    )
+    # Weight by volume mixing ratios: (n_species, nlay, 1) * (n_species, nlay, nwl)
+    weighted_sigma_all = sigma_interp_all * mixing_ratios[:, :, None]
+
+    # Sum over species dimension
+    weighted_sigma = jnp.sum(weighted_sigma_all, axis=0)
+
     return weighted_sigma / (layer_mu[:, None] * amu)

@@ -1,144 +1,127 @@
-# ==================================================================================
-# WASP-17b Transmission Spectrum - JWST Setup
-# ==================================================================================
-
-# ----------------------------------------------------------------------------------
-# Data Section
-# ----------------------------------------------------------------------------------
 data:
+
   obs: ../../obs_data/WASP-17b_JWST.txt
   stellar: None
   janaf: ../../JANAF_data/
 
-# ----------------------------------------------------------------------------------
-# Physics Section
-# ----------------------------------------------------------------------------------
 physics:
+
   nlay: 99
 
-  # Vertical structure schemes
   vert_Tp: isothermal
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic
 
-  # Opacity sources
   opac_line: lbl
   opac_ray: lbl
   opac_cia: lbl
   opac_cloud: nk
   opac_special: lbl
 
-  # Radiative transfer
   rt_scheme: transit_1d
-  em_scheme: eaa
+  contri_func: False
+  em_scheme: None
   emission_mode: planet
-  contri_func: false
+  contri_func: False
 
-# ----------------------------------------------------------------------------------
-# Opacity Section
-# ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_dnu_1.txt
-  full_grid: true
-  ck: false
+
+  wl_master: wl_R10000.txt
+  full_grid: False
+  ck: False
   ck_mix: RORR
 
-  # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_dnu_1.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_dnu_1.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_dnu_1.npz}
-    - {species: Na, path: ../../opac_data/lbl/Na_dnu_1.npz}
-    - {species: K, path: ../../opac_data/lbl/K_dnu_1.npz}
-
-  # Rayleigh scattering species
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
+    - {species: CO2, path: ../../opac_data/lbl/CO2_R10000.npz}
+    - {species: CO, path: ../../opac_data/lbl/CO_R10000.npz}
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R10000.npz}      
+    - {species: Na, path: ../../opac_data/lbl/Na_R10000.npz}  
+    - {species: K, path: ../../opac_data/lbl/K_R10000.npz}
   ray:
     - {species: H2}
     - {species: He}
-
-  # CIA opacity files
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
     - {species: H-, path: ./}
-
-  # Cloud opacity
   cloud: None
 
-# ----------------------------------------------------------------------------------
-# Parameters Section
-# ----------------------------------------------------------------------------------
 params:
-  # Stellar parameters
-  - {name: R_s, dist: delta, value: 1.583, transform: identity, init: 1.583}
 
-  # Atmospheric boundaries
-  - {name: p_bot, dist: delta, value: 100.0, transform: identity, init: 100.0}
-  - {name: p_top, dist: delta, value: 1e-8, transform: identity, init: 1e-8}
-  - {name: log_10_p_ref, dist: delta, value: 1.0, transform: identity, init: 1.0}
 
-  # Planetary parameters
-  - {name: log_10_g, dist: uniform, low: 2.2, high: 3.0, transform: logit, init: 3.0}
-  - {name: R_p, dist: uniform, low: 1.5895, high: 2.1505, transform: logit, init: 1.4}
+  - { name: R_s, dist: delta,   value: 1.583,  transform: identity, init: 1.583 }
+  - { name: p_bot, dist: delta,   value: 100.0,  transform: identity, init: 100.0 }
+  - { name: p_top, dist: delta,   value: 1e-8, transform: identity, init: 1e-8}
+  - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
 
-  # T-p profile parameters
-  - {name: T_iso, dist: uniform, low: 400.0, high: 2300.0, transform: logit, init: 1500.0}
+  - { name: log_10_g,  dist: uniform, low: 2.2,   high: 3.3,  transform: logit, init: 3.0}
+  - { name: R_p, dist: uniform, low: 1.8,   high: 2.1,  transform: logit, init: 1.4}
+  - { name: T_iso, dist: uniform, low: 400.0,   high: 2300.0, transform: logit, init: 1500.0 }
 
-  # Chemistry parameters
-  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
-  - {name: log_10_f_CO2, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
-  - {name: log_10_f_CO, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
-  - {name: log_10_f_CH4, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
-  - {name: log_10_f_Na, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
-  - {name: log_10_f_K, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
-  - {name: log_10_f_H-, dist: uniform, low: -12, high: -0.3, transform: logit, init: -6}
+  - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CH4, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_Na, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_H-, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
 
-  # Cloud parameters
-  - {name: log_10_q_c_0, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
-  - {name: log_10_p_base, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
-  - {name: log_10_H_cld, dist: uniform, low: -1, high: 1, transform: logit, init: 0}
-  - {name: sigma, dist: uniform, low: 1.001, high: 2.0, transform: logit, init: 1}
+  - { name: log_10_q_c, dist: uniform, low: -12,   high: -2,  transform: logit, init: 0}
+  - { name: log_10_cld_r, dist: uniform, low: -3,   high: -1,  transform: logit, init: 0}
+  - { name: log_10_p_top_slab, dist: uniform, low: -7,   high: 2,  transform: logit, init: 0}
+  - { name: log_10_dp_slab, dist: uniform, low: 0,   high: 8,  transform: logit, init: 0}
 
-  # Wavelength nodes for nk cloud opacity
-  - {name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 0.335}
-  - {name: wl_node_1, dist: delta, value: 8.0, transform: identity, init: 11.875}
-  - {name: wl_node_2, dist: delta, value: 8.5, transform: identity, init: 11.875}
-  - {name: wl_node_3, dist: delta, value: 8.75, transform: identity, init: 11.875}
-  - {name: wl_node_4, dist: delta, value: 9.0, transform: identity, init: 11.875}
-  - {name: wl_node_5, dist: delta, value: 10.0, transform: identity, init: 11.875}
-  - {name: wl_node_6, dist: delta, value: 11.0, transform: identity, init: 11.875}
-  - {name: wl_node_7, dist: delta, value: 12.0, transform: identity, init: 12.0}
+  - { name: sigma, dist: uniform, low: 1.05,   high: 2.0,  transform: logit, init: 1}
 
-  # Refractive index (real part) at wavelength nodes
-  - {name: n_0, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_1, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_2, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_3, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_4, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_5, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_6, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_7, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
+  - { name: wl_node_0, dist: delta, value: 7.125, transform: identity, init: 0.335}
+  - { name: wl_node_1, dist: delta, value: 7.625, transform: identity, init: 0.335}
+  - { name: wl_node_2, dist: delta, value: 8.125, transform: identity, init: 11.875}
+  - { name: wl_node_3, dist: delta, value: 8.375, transform: identity, init: 11.875}
+  - { name: wl_node_4, dist: delta, value: 8.625, transform: identity, init: 11.875}
+  - { name: wl_node_5, dist: delta, value: 8.875, transform: identity, init: 11.875}
+  - { name: wl_node_6, dist: delta, value: 9.125, transform: identity, init: 11.875}
+  - { name: wl_node_7, dist: delta, value: 9.375, transform: identity, init: 11.875}
+  - { name: wl_node_8, dist: delta, value: 9.625, transform: identity, init: 11.875}
+  - { name: wl_node_9, dist: delta, value: 10.125, transform: identity, init: 11.875}
+  - { name: wl_node_10, dist: delta, value: 10.625, transform: identity, init: 11.875}
+  - { name: wl_node_11, dist: delta, value: 11.125, transform: identity, init: 11.875}
+  - { name: wl_node_12, dist: delta, value: 11.625, transform: identity, init: 12.0}
 
-  # Extinction coefficient (imaginary part) at wavelength nodes
-  - {name: log_10_k_0, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_1, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_2, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_3, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_4, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_5, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_6, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_7, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
 
-# ----------------------------------------------------------------------------------
-# Sampling Section
-# ----------------------------------------------------------------------------------
+  - { name: n_0, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_1, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_2, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_3, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_4, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_5, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_6, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_7, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_8, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_9, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_10, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_11, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_12, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+
+  - { name: log_10_k_0, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_1, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_2, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_3, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_4, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_5, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_6, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_7, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_8, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_9, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_10, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_11, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_12, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+
 sampling:
-  engine: nuts
 
-  # NUTS / HMC settings
+  engine: jaxns
+
   nuts:
     backend: numpyro
     warmup: 100
@@ -146,69 +129,48 @@ sampling:
     seed: 42
     chains: 1
 
-  # JAXNS settings
   jaxns:
-    max_samples: 100000
-    num_live_points: 1000
-    s: 4
-    k: 0
-    c: null
-    shell_fraction: 0.5
-    difficult_model: false
-    parameter_estimation: true
-    gradient_guided: false
-    init_efficiency_threshold: 0.05
-    verbose: true
+    # ---- core NS config ----
+    max_samples: 100000          # hard cap on nested-sampling iterations
+    num_live_points: 1000         # live points (posterior resolution)
 
+    # Slice sampler hyperparameters
+    s: 4                         # slices per dimension (default ~4)
+    k: 0                         # phantom samples (0 = off, >0 for hard posteriors)
+    c: null                       # parallel chains (null -> jaxns default, ~20*D)
+    shell_fraction: 0.5          # fraction of shell explored per step (0<sf<=1)
+
+    # Global behaviour flags
+    difficult_model: false       # robust defaults for gnarly posteriors
+    parameter_estimation: true   # tune for good posterior, not just evidence
+    gradient_guided: false       # use gradients for proposals (only if stable)
+    init_efficiency_threshold: 0.05  # >0: initial uniform sampling until eff>thr
+    verbose: true               # print textual progress to CLI
+
+    # ---- termination controls ----
     termination:
-      ess: 10000
-      evidence_uncert: null
-      dlogZ: 0.1
-      max_samples: 100000
+      ess: 10000                        # target effective sample size
+      evidence_uncert: null            # stop when σ_logZ < 0.3
+      dlogZ: 0.1                     # stop when remaining evidence small
+      max_samples: 100000             # safety cap for samples
       max_num_likelihood_evaluations: null
       rtol: null
       atol: null
 
-    posterior_samples: 10000
-    seed: 42
+    # ---- posterior handling ----
+    posterior_samples: 10000           # equal-weight posterior draws
+    seed: 42                          # RNG seed for JAX
 
-  # BlackJAX nested sampling settings
   blackjax_ns:
     num_live_points: 250
     num_inner_steps: 45
     num_delete: 100
     dlogz_stop: -2
     seed: 42
-    posterior_samples: 10000
+    posterior_samples: 10000      
 
-  # Dynesty settings
-  dynesty:
-    nlive: 100
-    bound: multi
-    sample: auto
-    dlogz: 1.0
-    maxiter: null
-    maxcall: null
-    bootstrap: 0
-    enlarge: null
-    update_interval: null
-    dynamic: false
-    print_progress: true
-    seed: 42
-
-  # UltraNest settings
-  ultranest:
-    num_live_points: 500
-    min_num_live_points: 500
-    dlogz: 0.5
-    max_iters: 0
-    verbose: true
-    show_status: true
-
-# ----------------------------------------------------------------------------------
-# Runtime Section
-# ----------------------------------------------------------------------------------
 runtime:
-  platform: cpu
-  cuda_visible_devices: 1
+  platform: gpu           # cpu | gpu | cuda | metal
+  cuda_visible_devices: 1  # or "0,1"
   threads: 1
+

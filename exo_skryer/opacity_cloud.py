@@ -20,6 +20,7 @@ __all__ = [
     "kk_n_from_k_wavenumber",
     "kk_n_from_k_wavelength_um",
     "direct_nk",
+    "direct_nk_slab",
     "F18_cloud_2"
 ]
 
@@ -489,15 +490,15 @@ def direct_nk(
     # Retrieve k(wl) from log-nodes
     # -----------------------------
     # Use jnp.stack instead of list comprehension for efficiency
-    wl_nodes = jnp.stack([params[f"wl_node_{i}"] for i in range(8)])
+    wl_nodes = jnp.stack([params[f"wl_node_{i}"] for i in range(13)])
     # Limit nk contribution to the wavelength span covered by the nodes
     wl_support_min = jnp.min(wl_nodes)
     wl_support_max = jnp.max(wl_nodes)
     wl_support_mask = jnp.logical_and(wl >= wl_support_min, wl <= wl_support_max)
 
     # Retrieve n(wl) / k(wl) node values using jnp.stack
-    n_nodes = jnp.stack([params[f"n_{i}"] for i in range(8)])
-    log10_k_nodes = jnp.stack([params[f"log_10_k_{i}"] for i in range(8)])
+    n_nodes = jnp.stack([params[f"n_{i}"] for i in range(13)])
+    log10_k_nodes = jnp.stack([params[f"log_10_k_{i}"] for i in range(13)])
 
     n_interp = pchip_1d(wl, wl_nodes, n_nodes)
     log10_k_interp = pchip_1d(wl, wl_nodes, log10_k_nodes)
@@ -617,6 +618,204 @@ def direct_nk(
     ssa_wl = jnp.clip(Q_sca_vals / jnp.maximum(Q_ext_vals, 1e-30), 0.0, 1.0)
     # Use implicit broadcasting instead of broadcast_to
     ssa = ssa_wl[None, :] + jnp.zeros_like(q_c_lay[:, None])
+    g = jnp.zeros_like(k_cld)
+
+    return k_cld, ssa, g
+
+
+def direct_nk_slab(
+    state: Dict[str, jnp.ndarray],
+    params: Dict[str, jnp.ndarray],
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute cloud optical properties from retrieved n-k nodes with a simple slab profile.
+
+    This is a simplified version of `direct_nk()` that uses a pressure-slab vertical
+    profile instead of a complex exponential + gate profile. The cloud is present
+    between `P_top_slab` and `P_top_slab * 10^(Delta_log_P)`, with hard cutoffs.
+
+    Parameters
+    ----------
+    state : dict[str, `~jax.numpy.ndarray`]
+        Atmospheric state dictionary containing:
+
+        - `wl` : `~jax.numpy.ndarray`, shape (nwl,)
+            Wavelength grid in microns.
+        - `p_lay` : `~jax.numpy.ndarray`, shape (nlay,)
+            Layer pressures (microbar convention used elsewhere in the forward model).
+
+    params : dict[str, `~jax.numpy.ndarray`]
+        Parameter dictionary containing:
+
+        - `wl_node_0`..`wl_node_7` : float
+            Wavelength nodes (microns).
+        - `n_0`..`n_7` : float
+            Real refractive-index nodes.
+        - `log_10_k_0`..`log_10_k_7` : float
+            Log₁₀ imaginary refractive-index nodes.
+        - `log_10_cld_r` : float
+            Log₁₀ particle radius.
+        - `sigma` : float
+            Log-normal width parameter (clipped to be ≥ 1).
+        - `log_10_q_c` : float
+            Log₁₀ cloud mass-mixing ratio inside the slab.
+        - `log_p_top_slab` : float
+            Log₁₀ pressure at the top of the slab (in bars).
+        - `dlog_p_slab` : float
+            Extent of the slab in log pressure space (positive downward).
+
+    Returns
+    -------
+    k_cld : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Cloud extinction coefficient in cm² g⁻¹.
+    ssa : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Single-scattering albedo derived from (Q_sca / Q_ext).
+    g : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Asymmetry parameter (zeros in this implementation).
+
+    Notes
+    -----
+    The slab extends from `P_top = 10^log_P_top_slab` to `P_bot = P_top * 10^Delta_log_P`.
+    Smooth edges are applied using tanh functions to avoid numerical discontinuities.
+    """
+    wl = state["wl"]          # (nwl,) in micron
+    p_lay = state["p_lay"]    # (nlay,) in microbar
+
+    # -----------------------------
+    # Retrieved / configured knobs
+    # -----------------------------
+    r = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
+    sig = params["sigma"]
+    sig = jnp.maximum(sig, 1.0 + 1e-8)  # log-normal width must be >= 1
+
+    # Keep n positive for scattering math sanity
+    n_floor = 1e-6
+
+    # -----------------------------
+    # Retrieve k(wl) from log-nodes
+    # -----------------------------
+    wl_nodes = jnp.stack([params[f"wl_node_{i}"] for i in range(13)])
+    wl_support_min = jnp.min(wl_nodes)
+    wl_support_max = jnp.max(wl_nodes)
+    wl_support_mask = jnp.logical_and(wl >= wl_support_min, wl <= wl_support_max)
+
+    n_nodes = jnp.stack([params[f"n_{i}"] for i in range(13)])
+    log10_k_nodes = jnp.stack([params[f"log_10_k_{i}"] for i in range(13)])
+
+    n_interp = pchip_1d(wl, wl_nodes, n_nodes)
+    log10_k_interp = pchip_1d(wl, wl_nodes, log10_k_nodes)
+    n = jnp.maximum(n_interp, n_floor)
+    k = jnp.maximum(10.0 ** log10_k_interp, 1e-12)
+    n = jnp.where(wl_support_mask, n, n_floor)
+    k = jnp.where(wl_support_mask, k, 1e-12)
+
+    # -----------------------------
+    # Cloud slab vertical profile
+    # -----------------------------
+    q_c_slab = 10.0 ** params["log_10_q_c"]
+
+    # Slab boundaries in pressure (bars)
+    log_P_top = params["log_10_p_top_slab"]
+    Delta_log_P = params["log_10_dp_slab"]
+
+    # Convert to microbar (state p_lay is in microbar)
+    P_top = 10.0 ** log_P_top * 1e6  # bars -> microbar
+    P_bot = 10.0 ** (log_P_top + Delta_log_P) * 1e6  # bars -> microbar
+
+    # Hard slab cutoff: 1 inside [P_top, P_bot], 0 outside
+    slab_mask = jnp.logical_and(p_lay >= P_top, p_lay <= P_bot)
+    q_c_lay = q_c_slab * slab_mask  # shape (nlay,)
+
+    # Precompute log(sig)^2 once to avoid redundant computation
+    log_sig_sq = jnp.log(sig) ** 2
+
+    # Effective radius for lognormal distribution
+    r_eff = r * jnp.exp(2.5 * log_sig_sq)
+
+    def _compute_active(args):
+        wl_val, n_val, k_val = args
+        x = 2.0 * jnp.pi * r_eff / jnp.maximum(wl_val, 1e-12)
+
+        m = n_val + 1j * k_val
+        m2 = m * m
+        alp = (m2 - 1.0) / (m2 + 2.0)
+
+        term = 1.0 + (x**2 / 15.0) * alp * ((m2 * m2 + 27.0 * m2 + 38.0) / (2.0 * m2 + 3.0))
+        Q_abs_ray = 4.0 * x * jnp.imag(alp * term)
+        Q_sca_ray = (8.0 / 3.0) * x**4 * jnp.real(alp**2)
+        Q_ext_ray = Q_abs_ray + Q_sca_ray
+
+        k_min = 1e-12
+        k_eff = jnp.maximum(k_val, k_min)
+
+        dn = n_val - 1.0
+        dn_safe = jnp.where(jnp.abs(dn) < 1e-12, jnp.sign(dn + 1e-30) * 1e-12, dn)
+
+        rho = 2.0 * x * dn_safe
+        rho_safe = jnp.where(jnp.abs(rho) < 1e-12, jnp.sign(rho + 1e-30) * 1e-12, rho)
+
+        beta = jnp.arctan2(k_eff, dn_safe)
+        tan_b = jnp.tan(beta)
+
+        exp_arg = -rho_safe * tan_b
+        exp_arg = jnp.clip(exp_arg, -80.0, 80.0)
+        exp_rho = jnp.exp(exp_arg)
+
+        cosb_over_rho = jnp.cos(beta) / rho_safe
+
+        Q_ext_madt = (
+            2.0
+            - 4.0 * exp_rho * cosb_over_rho * jnp.sin(rho - beta)
+            - 4.0 * exp_rho * (cosb_over_rho**2) * jnp.cos(rho - 2.0 * beta)
+            + 4.0 * (cosb_over_rho**2) * jnp.cos(2.0 * beta)
+        )
+
+        z = 4.0 * k_eff * x
+        z_safe = jnp.maximum(z, 1e-30)
+        exp_z = jnp.exp(jnp.clip(-z_safe, -80.0, 80.0))
+
+        Q_abs_madt = 1.0 + 2.0 * (exp_z / z_safe) + 2.0 * ((exp_z - 1.0) / (z_safe * z_safe))
+
+        C1 = 0.25 * (1.0 + jnp.exp(-1167.0 * k_eff)) * (1.0 - Q_abs_madt)
+
+        eps = 0.25 + 0.61 * (1.0 - jnp.exp(-(8.0 * jnp.pi / 3.0) * k_eff)) ** 2
+        C2 = (
+            jnp.sqrt(2.0 * eps * (x / jnp.pi))
+            * jnp.exp(0.5 - eps * (x / jnp.pi))
+            * (0.79393 * n_val - 0.6069)
+        )
+
+        Q_abs_madt = (1.0 + C1 + C2) * Q_abs_madt
+
+        Q_edge = (1.0 - jnp.exp(-0.06 * x)) * x ** (-2.0 / 3.0)
+        Q_ext_madt = (1.0 + 0.5 * C2) * Q_ext_madt + Q_edge
+        Q_sca_madt = Q_ext_madt - Q_abs_madt
+
+        t = jnp.clip((x - 1.0) / 2.0, 0.0, 1.0)
+        w = 6.0 * t**5 - 15.0 * t**4 + 10.0 * t**3
+
+        Q_ext = (1.0 - w) * Q_ext_ray + w * Q_ext_madt
+        Q_sca = (1.0 - w) * Q_sca_ray + w * Q_sca_madt
+        return Q_ext, Q_sca
+
+    def _skip_active(args):
+        del args
+        return 0.0, 0.0
+
+    def _per_wavelength(wl_val, n_val, k_val, active):
+        return jax.lax.cond(active, _compute_active, _skip_active, (wl_val, n_val, k_val))
+
+    Q_ext_vals, Q_sca_vals = jax.vmap(_per_wavelength)(wl, n, k, wl_support_mask)
+
+    # Extinction coefficient with slab profile
+    # q_c_lay: (nlay,), Q_ext_vals: (nwl,) -> k_cld: (nlay, nwl)
+    k_cld = (
+        (3.0 * q_c_lay[:, None] * Q_ext_vals[None, :])
+        / (4.0 * (r * 1e-4))
+        * jnp.exp(0.5 * log_sig_sq)
+    )
+
+    ssa_wl = jnp.clip(Q_sca_vals / jnp.maximum(Q_ext_vals, 1e-30), 0.0, 1.0)
+    ssa = ssa_wl[None, :] + jnp.zeros_like(k_cld)
     g = jnp.zeros_like(k_cld)
 
     return k_cld, ssa, g

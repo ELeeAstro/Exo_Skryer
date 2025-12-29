@@ -149,12 +149,14 @@ def mix_k_tables_rorr(
 
     def _mix_one_layer(layer_idx: jnp.ndarray) -> jnp.ndarray:
         vmr_layer = mixing_ratios[:, layer_idx]
-        def _scan_body(carry, wl_idx):
-            sigma_band = sigma_values[:, layer_idx, wl_idx, :]
-            mixed = _rom_mix_band(sigma_band, vmr_layer, g_points, base_weights, rom_weights)
-            return carry, mixed
 
-        _, mixed_by_wl = lax.scan(_scan_body, 0, wl_indices)
+        def _mix_one_wl(wl_idx):
+            sigma_band = sigma_values[:, layer_idx, wl_idx, :]
+            return _rom_mix_band(sigma_band, vmr_layer, g_points, base_weights, rom_weights)
+
+        # Parallelize over wavelengths (independent). Species mixing inside _rom_mix_band
+        # remains sequential (lax.scan) due to running mixture dependency.
+        mixed_by_wl = jax.vmap(_mix_one_wl)(wl_indices)  # (nwl, ng)
         return mixed_by_wl
 
     layer_indices = jnp.arange(n_layers)

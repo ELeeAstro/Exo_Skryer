@@ -411,7 +411,7 @@ def plot_corner(
 
     # Tighten layout a bit
     fig.subplots_adjust(
-        left=0.06, right=0.995, bottom=0.0525, top=0.985, wspace=0.04, hspace=0.04
+        left=0.06, right=0.995, bottom=0.085, top=0.97, wspace=0.04, hspace=0.04
     )
 
     # Example of per-parameter axis tweaks (optional)

@@ -65,13 +65,13 @@ def mix_k_tables_pras(
         vmr_layer = mixing_ratios[:, layer_index]
         key_layer = jax.random.fold_in(base_key, layer_index)
 
-        def _scan_body(carry, wl_index):
+        def _mix_one_wl(wl_index):
             sigma_band = sigma_values_log[:, layer_index, wl_index, :]
             key = jax.random.fold_in(key_layer, wl_index)
-            mixed = _pras_mix_band(sigma_band, vmr_layer, g_points, base_weights, key)
-            return carry, mixed
+            return _pras_mix_band(sigma_band, vmr_layer, g_points, base_weights, key)
 
-        _, mixed_by_wl = jax.lax.scan(_scan_body, 0, wl_indices)
+        # Parallelize over wavelengths: each bin is independent with unique PRNG key
+        mixed_by_wl = jax.vmap(_mix_one_wl)(wl_indices)  # (nwl, ng)
         return mixed_by_wl
 
     layer_indices = jnp.arange(n_layers)

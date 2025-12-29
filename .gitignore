@@ -92,6 +92,7 @@ ehthumbs_vista.db
 experiments/**/*.npz
 experiments/**/*.csv
 experiments/**/*.json
+experiments/**/*.pkl
 experiments/**/posterior*.nc
 experiments/**/posterior*.h5
 experiments/**/posterior*.hdf5

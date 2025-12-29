@@ -39,14 +39,14 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_dnu_1.txt
+  wl_master: wl_R10000.txt
   full_grid: false
   ck: false
   ck_mix: RORR
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
 
   # Rayleigh scattering species
   ray: None
@@ -88,7 +88,7 @@ params:
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  engine: ultranest
+  engine: blackjax_ns
 
   # NUTS / HMC settings
   nuts:
@@ -115,21 +115,21 @@ sampling:
     termination:
       ess: 10000
       evidence_uncert: null
-      dlogZ: 0.1
+      dlogZ: 1.0
       max_samples: 100000
       max_num_likelihood_evaluations: null
       rtol: null
       atol: null
 
-    posterior_samples: 10000
+    posterior_samples: 2500
     seed: 42
 
   # BlackJAX nested sampling settings
   blackjax_ns:
     num_live_points: 100
-    num_inner_steps: 18
-    num_delete: 50
-    dlogz_stop: 0
+    num_inner_steps: 24
+    num_delete: 10
+    dlogz_stop: 1
     seed: 42
 
   # Dynesty settings
@@ -151,7 +151,7 @@ sampling:
   ultranest:
     num_live_points: 100
     min_num_live_points: 100
-    dlogz: 0.1
+    dlogz: 1.0
     max_iters: 0
     verbose: true
     show_status: true
@@ -161,5 +161,5 @@ sampling:
 # ----------------------------------------------------------------------------------
 runtime:
   platform: cpu
-  cuda_visible_devices: 1
+  cuda_visible_devices: 0
   threads: 1
