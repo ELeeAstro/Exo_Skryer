@@ -1,2 +1,1 @@
-JAXNS: 0d 0h 49m 39.895s
-dynesty: 4h 9m 51.970s
+

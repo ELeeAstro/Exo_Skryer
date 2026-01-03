@@ -251,7 +251,7 @@ def load_bandpass_registry(
             method=final_method,
             wavelengths=wl_slice.astype(np.float64),     # NumPy (float64)
             weights=weights_slice.astype(np.float64),    # NumPy (float64)
-            norm=norm.astype(np.float64),
+            norm=np.asarray(norm, dtype=np.float64),     # Handle both scalar and array
             indices=(int(start_idx), int(end_idx)),
             bin_edges=(float(low), float(high)),
         )

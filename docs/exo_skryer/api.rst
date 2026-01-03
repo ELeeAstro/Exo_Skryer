@@ -40,6 +40,15 @@ Reference/API
 .. automodapi:: exo_skryer.instru_convolve
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.kk_schemes
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.lxmie_mod
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.mie_schemes
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.opacity_cia
     :no-inheritance-diagram:
 
@@ -88,10 +97,22 @@ Reference/API
 .. automodapi:: exo_skryer.registry_ray
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_1D
+.. automodapi:: exo_skryer.RT_alb_1D
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_trans_1D
+.. automodapi:: exo_skryer.RT_em_1D_ck
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.RT_em_1D_lbl
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.RT_em_schemes
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.RT_trans_1D_ck
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.RT_trans_1D_lbl
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.run_retrieval
@@ -119,6 +140,9 @@ Reference/API
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.vert_chem
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.vert_cloud
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.vert_mu

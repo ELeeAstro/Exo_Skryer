@@ -24,7 +24,7 @@ __all__ = [
     "Milne",
     "Milne_modified",
     "Guillot",
-    "MandS09",
+    "MandS",
     "picket_fence",
     "dry_convective_adjustment"
 ]
@@ -277,7 +277,7 @@ def Guillot(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
 
-def MandS09(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a Madhusudhan & Seager (2009) three-region T-P profile.
 
     This profile divides the atmosphere into three regions defined by
@@ -309,9 +309,9 @@ def MandS09(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     # Parameter values are already JAX arrays, no need to wrap
     a1 = params["a1"]
     a2 = params["a2"]
-    P1 = 10.0 ** params["log_10_P1"]
-    P2 = 10.0 ** params["log_10_P2"]
-    P3 = 10.0 ** params["log_10_P3"]
+    P1 = 10.0 ** params["log_10_P1"] * bar
+    P2 = 10.0 ** params["log_10_P2"] * bar
+    P3 = 10.0 ** params["log_10_P3"] * bar
     T0 = params["T_ref"]
 
     # TOA pressure (since your p_lev is bottom->top)
@@ -337,7 +337,6 @@ def MandS09(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     T_lev = jnp.where(in_reg1, T_reg1, jnp.where(in_reg2, T_reg2, T3))
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
-
 
 def picket_fence(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a Parmentier & Guillot (2014,2015) picket fence T-P profile.

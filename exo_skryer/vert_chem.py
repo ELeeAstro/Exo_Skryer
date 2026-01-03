@@ -189,7 +189,7 @@ def CE_rate_jax(
     C = CO_ratio * O
 
     # Create RateJAX solver
-    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_he)
+    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_He)
 
     # Solve chemical equilibrium profile
     vmr_lay = rate.solve_profile(T_lay, p_lay/1e6)
@@ -371,12 +371,13 @@ def quench_approx(
     N = solar_N * (10.0 ** metallicity)
     C = CO_ratio * O
 
+
     # Create RateJAX solver and compute chemical equilibrium
-    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_he)
+    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_He)
     vmr_eq = rate.solve_profile(T_lay, p_lay / 1e6)
 
     # Compute mean molecular weight (needed for mixing timescale)
-    from vert_mu import compute_mu
+    from .vert_mu import compute_mu
     mu_bar = compute_mu(vmr_eq)
 
     # Compute mixing timescale (same for all species)
@@ -391,7 +392,7 @@ def quench_approx(
     for species in vmr_eq.keys():
         if species in quenched_species:
             # Compute chemical timescale and apply quenching
-            tau_chem = _chemical_timescale(species, T_lay, p_lay)
+            tau_chem = _chemical_timescale(species, T_lay, p_lay/1e6)
             vmr_quenched[species] = _apply_quench_single(vmr_eq[species], tau_chem, tau_mix)
         else:
             # Non-quenched species: use equilibrium values

@@ -18,11 +18,13 @@ import seaborn as sns
 import yaml
 import arviz as az
 from types import SimpleNamespace
+from scipy.integrate import simpson
 
 from jax import config as jax_config
 jax_config.update("jax_enable_x64", True)
 
 _CONST_CACHE = {}
+
 
 
 def _ensure_constants():
@@ -163,6 +165,74 @@ def _flux_to_brightness_temperature(flux: np.ndarray, lam_um: np.ndarray) -> np.
     return Tb
 
 
+def _compute_effective_temperature(flux: np.ndarray, lam_um: np.ndarray, R_p: float, D_pc: float = None) -> float:
+    """Compute effective temperature from integrated flux using Stefan-Boltzmann law.
+
+    Parameters
+    ----------
+    flux : np.ndarray
+        Spectral flux F_λ in erg/s/cm²/cm (per cm of wavelength) at Earth
+    lam_um : np.ndarray
+        Wavelength grid in microns
+    R_p : float
+        Planet/brown dwarf radius in Jupiter radii
+    D_pc : float, optional
+        Distance in parsecs. If provided, flux is scaled to surface flux.
+
+    Returns
+    -------
+    T_eff : float
+        Effective temperature in Kelvin
+
+    Notes
+    -----
+    The flux at Earth is related to surface flux by:
+        F_Earth = F_surface × (R / D)²
+
+    So the surface flux is:
+        F_surface = F_Earth × (D / R)²
+
+    The total bolometric flux is computed by integrating F_λ over wavelength:
+        F_total = ∫ F_λ dλ [erg/s/cm²]
+
+    Then the effective temperature is:
+        T_eff = (F_total / σ)^(1/4)
+
+    where σ is the Stefan-Boltzmann constant (5.670374419e-5 erg/cm²/s/K⁴).
+    """
+    const = _ensure_constants()
+    R_jup = const["R_jup"]
+
+    # Stefan-Boltzmann constant in cgs: erg/cm²/s/K⁴
+    sigma_sb = 5.670374419e-5
+
+    # Convert wavelength from microns to cm
+    # 1 µm = 10^-4 cm
+    lam_cm = np.asarray(lam_um, dtype=float) * 1.0e-4
+
+    # Scale flux to surface if distance is provided
+    if D_pc is not None:
+        # Convert distance from pc to cm: 1 pc = 3.0857e18 cm
+        D_cm = D_pc * 3.0857e18
+        # Convert radius from Jupiter radii to cm
+        R_cm = R_p * R_jup
+        # Scale factor: (D/R)²
+        scale_factor = (D_cm / R_cm) ** 2
+        flux_surface = flux * scale_factor
+    else:
+        flux_surface = flux
+
+    # Integrate flux over wavelength using Simpson's rule
+    # F_λ is in erg/s/cm²/cm, integrating over cm gives erg/s/cm²
+    F_total = simpson(flux_surface, x=lam_cm)
+
+    # Stefan-Boltzmann: F = σ T^4
+    # T_eff = (F / σ)^(1/4)
+    T_eff = (F_total / sigma_sb) ** 0.25
+
+    return T_eff
+
+
 def _recover_planet_flux(
     flux_ratio: np.ndarray,
     stellar_flux: np.ndarray,
@@ -217,208 +287,139 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     idata = az.from_netcdf(posterior_path)
     params_cfg = getattr(cfg, "params", [])
     draws, N_total = _build_param_draws_from_idata(idata.posterior, params_cfg)
-    max_samples = min(int(max_samples), N_total)
-    rng = np.random.default_rng(seed)
-    max_samples = max(1, max_samples)
-    M = min(max_samples, N_total)
-    idx = np.sort(rng.choice(N_total, size=M, replace=False))
+
+    # Compute median parameters for single model evaluation
+    theta_median = {name: float(np.median(arr)) for name, arr in draws.items()}
+
     lam = lam_obs
     dlam = dlam_obs
     hires = lam_cut
-    model_samples = np.empty((M, lam.size))
-    hires_samples = np.empty((M, hires.size))
-    planet_flux_samples = None
     obs_flux = obs_flux_err = Tb_obs = Tb_obs_lo = Tb_obs_hi = None
-    if (
-        stellar_flux_np is not None
-        and "R_p" in draws
-        and "R_s" in draws
-    ):
-        planet_flux_samples = np.empty((M, hires.size))
-        R_p_draws = np.asarray(draws["R_p"], dtype=float)
-        R_s_draws = np.asarray(draws["R_s"], dtype=float)
-    else:
-        R_p_draws = R_s_draws = None
 
-    for i, sel in enumerate(idx):
-        theta = {name: arr[sel] for name, arr in draws.items()}
-        result = fm(theta)
-        hires_samples[i] = np.asarray(result["hires"], dtype=float)
-        model_samples[i] = np.asarray(result["binned"], dtype=float)
-        if planet_flux_samples is not None:
-            R_p = float(theta["R_p"])
-            R_s = float(theta["R_s"])
-            planet_flux_samples[i] = _recover_planet_flux(hires_samples[i], stellar_flux_np, R_p, R_s)
+    # Check if this is a brown dwarf (no stellar flux, direct planet emission)
+    phys_cfg = getattr(cfg, "physics", SimpleNamespace())
+    emission_mode = str(getattr(phys_cfg, "emission_mode", "planet")).lower()
+    is_brown_dwarf = emission_mode == "brown_dwarf" or stellar_flux_np is None
 
-    # Convert to percent
-    model_samples *= 100.0
-    hires_samples *= 100.0
+    # Compute median model
+    result = fm(theta_median)
+    h_med = np.asarray(result["hires"], dtype=float)
+    q_med = np.asarray(result["binned"], dtype=float)
 
-    # Use 1σ intervals (16th-84th percentiles) to match bestfit_plot.py style
-    q_lo, q_med, q_hi = np.percentile(model_samples, [16, 50, 84], axis=0)
-    h_lo, h_med, h_hi = np.percentile(hires_samples, [16, 50, 84], axis=0)
+    # Compute planet flux and brightness temperature for median model
+    pf_med = Tb_med = None
+    if "R_p" in theta_median:
+        R_p_med = float(theta_median["R_p"])
+        if stellar_flux_np is not None and "R_s" in theta_median:
+            # Planet with stellar companion - convert ratio to flux
+            R_s_med = float(theta_median["R_s"])
+            pf_med = _recover_planet_flux(h_med, stellar_flux_np, R_p_med, R_s_med)
+        elif is_brown_dwarf:
+            # Brown dwarf - hires is already planet flux
+            pf_med = h_med
+
+    # Convert to percent (only for planets with stellar companion)
+    if not is_brown_dwarf:
+        q_med *= 100.0
+        h_med *= 100.0
+
+    # Compute brightness temperature from median planet flux
+    if pf_med is not None:
+        Tb_med = _flux_to_brightness_temperature(pf_med, hires)
+
+        # Process observed data
+        if stellar_flux_np is not None and "R_s" in theta_median:
+            # Planet with stellar companion
+            R_s_med = float(theta_median["R_s"])
+            interp_stellar = np.interp(lam, hires, stellar_flux_np)
+            obs_flux = _recover_planet_flux(y_obs, interp_stellar, R_p_med, R_s_med)
+        else:
+            # Brown dwarf - observed data is already in flux units
+            obs_flux = y_obs
+
+        if obs_flux is not None:
+            Tb_obs = _flux_to_brightness_temperature(obs_flux, lam)
 
     save_payload = {
         "lam": lam,
         "dlam": dlam,
-        "depth_p16": q_lo,
         "depth_p50": q_med,
-        "depth_p84": q_hi,
         "lam_hires": hires,
-        "depth_hi_p16": h_lo,
         "depth_hi_p50": h_med,
-        "depth_hi_p97_5": h_hi,
-        "draw_idx": idx,
     }
 
-    pf_lo = pf_med = pf_hi = Tb_med = Tb_lo = Tb_hi = None
-    if planet_flux_samples is not None:
-        # Use 1σ intervals to match bestfit_plot.py style
-        pf_lo, pf_med, pf_hi = np.percentile(planet_flux_samples, [16, 50, 84], axis=0)
-        Tb_samples = _flux_to_brightness_temperature(planet_flux_samples, hires)
-        Tb_lo, Tb_med, Tb_hi = np.percentile(Tb_samples, [16, 50, 84], axis=0)
+    if pf_med is not None:
         save_payload.update(
-            planet_flux_p16=pf_lo,
             planet_flux_p50=pf_med,
-            planet_flux_p84=pf_hi,
-            Tb_p16=Tb_lo,
             Tb_p50=Tb_med,
-            Tb_p84=Tb_hi,
         )
-        R_p_med = float(np.median(R_p_draws[idx]))
-        R_s_med = float(np.median(R_s_draws[idx]))
-        interp_stellar = np.interp(lam, hires, stellar_flux_np)
-        obs_flux = _recover_planet_flux(y_obs, interp_stellar, R_p_med, R_s_med)
-        if dy_obs is not None:
-            unit_scale = _recover_planet_flux(
-                np.ones_like(lam),
-                interp_stellar,
-                R_p_med,
-                R_s_med,
-            )
-            obs_flux_err = np.abs(dy_obs) * unit_scale
-        else:
-            obs_flux_err = None
-        Tb_obs = _flux_to_brightness_temperature(obs_flux, lam)
-        if obs_flux_err is not None:
-            flux_hi = np.maximum(obs_flux + obs_flux_err, 1.0e-300)
-            flux_lo = np.maximum(obs_flux - obs_flux_err, 1.0e-300)
-            Tb_obs_hi = _flux_to_brightness_temperature(flux_hi, lam)
-            Tb_obs_lo = _flux_to_brightness_temperature(flux_lo, lam)
-        else:
-            Tb_obs_hi = Tb_obs_lo = None
 
     np.savez_compressed(exp_dir / f"{outname}_quantiles.npz", **save_payload)
 
     # Match bestfit_plot.py style
     palette = sns.color_palette("colorblind")
 
-    # Flux ratio plot
-    fig_ratio, ax_ratio = plt.subplots(figsize=(8, 4.5))
-    ax_ratio.plot(hires, h_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-    ax_ratio.fill_between(lam, q_lo, q_hi, alpha=0.3, color=palette[1])
-    ax_ratio.plot(lam, q_med, lw=2, label="Median", color=palette[1])
-    ax_ratio.errorbar(
-        lam,
-        y_obs * 100.0,
-        yerr=dy_obs * 100.0 if dy_obs is not None else None,
-        xerr=dlam,
-        fmt="o",
-        ms=3,
-        lw=1,
-        alpha=0.9,
-        label="Observed",
-        color=palette[0],
-        ecolor=palette[0],
-        capsize=2,
-    )
-    ax_ratio.set_xscale("log")
-    ax_ratio.set_yscale("log")
-    ax_ratio.set_xlabel("Wavelength [µm]", fontsize=14)
-    ax_ratio.set_ylabel(r"$F_{\rm p}/F_{\star}$ [%]", fontsize=14)
-    tick_locs = np.array([0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0])
-    ax_ratio.set_xticks(tick_locs)
-    ax_ratio.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
-    ax_ratio.tick_params(axis="y", labelsize=12)
-    ax_ratio.set_xlim(0.3, 6.0)
-    ax_ratio.grid(False)
-    ax_ratio.legend()
-    fig_ratio.tight_layout()
-    fig_ratio.savefig(exp_dir / f"{outname}.png", dpi=300)
-    fig_ratio.savefig(exp_dir / f"{outname}.pdf")
+    # Skip Fp/Fstar plot for brown dwarfs
+    if not is_brown_dwarf:
+        # Flux ratio plot
+        fig_ratio, ax_ratio = plt.subplots(figsize=(8, 4.5))
+        ax_ratio.plot(lam, q_med, lw=1, label="Median model", color=palette[4], alpha=0.7, rasterized=True)
+        ax_ratio.plot(lam, y_obs * 100.0, lw=2, label="Observed", color="black", zorder=3)
+        ax_ratio.set_xscale("log")
+        ax_ratio.set_yscale("log")
+        ax_ratio.set_xlabel("Wavelength [µm]", fontsize=14)
+        ax_ratio.set_ylabel(r"$F_{\rm p}/F_{\star}$ [%]", fontsize=14)
+        tick_locs = np.array([0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0])
+        ax_ratio.set_xticks(tick_locs)
+        ax_ratio.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
+        ax_ratio.tick_params(axis="y", labelsize=12)
+        ax_ratio.set_xlim(0.3, 6.0)
+        ax_ratio.grid(False)
+        ax_ratio.legend()
+        fig_ratio.tight_layout()
+        fig_ratio.savefig(exp_dir / f"{outname}.png", dpi=300)
+        fig_ratio.savefig(exp_dir / f"{outname}.pdf")
 
-    # Flux ratio zoom plot removed for Gliese experiment (not needed for 0.3-6 µm range)
-
-    if planet_flux_samples is not None and pf_lo is not None:
-        # Planet flux figure
+    if pf_med is not None:
+        # Planet flux figure (median only, no 1-sigma bands)
         fig_flux, ax_flux = plt.subplots(figsize=(8, 4.5))
-        ax_flux.plot(hires, pf_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-        ax_flux.fill_between(hires, pf_lo, pf_hi, alpha=0.3, color=palette[1])
+        ax_flux.plot(hires, pf_med, lw=1, label="Median model", color=palette[4], alpha=0.7, rasterized=True)
         if obs_flux is not None:
-            ax_flux.errorbar(
-                lam,
-                obs_flux,
-                yerr=obs_flux_err,
-                xerr=dlam,
-                fmt="o",
-                ms=3,
-                lw=1,
-                alpha=0.9,
-                label="Observed",
-                color=palette[0],
-                ecolor=palette[0],
-                capsize=2,
-            )
+            ax_flux.plot(lam, obs_flux, lw=2, label="Observed", color="black", zorder=3)
         ax_flux.set_xscale("log")
         ax_flux.set_yscale("log")
-        ax_flux.set_xlabel("Wavelength [µm]", fontsize=14)
-        ax_flux.set_ylabel("Planet flux [cgs]", fontsize=14)
-        tick_locs = np.array([0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0])
+ 
+        ax_flux.set_xlabel(r"Wavelength [$\mu$m]", fontsize=14)
+        ax_flux.set_ylabel(r"Flux [erg s$^{-1}$ cm$^{2}$ cm$^{-1}$]", fontsize=14)
+        tick_locs = np.array([0.6, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0])
         ax_flux.set_xticks(tick_locs)
         ax_flux.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
         ax_flux.tick_params(axis="y", labelsize=12)
-        ax_flux.set_xlim(0.3, 6.0)
+        ax_flux.set_xlim(0.6,5.0)
+        # Adjust y-range here by uncommenting and modifying:
+        ax_flux.set_ylim(10**-12, 10**-7)  # Example: adjust these values as needed
         ax_flux.grid(False)
         ax_flux.legend()
         fig_flux.tight_layout()
         fig_flux.savefig(exp_dir / f"{outname}_planet_flux.png", dpi=300)
         fig_flux.savefig(exp_dir / f"{outname}_planet_flux.pdf")
 
-        # Planet flux zoom plot removed for Gliese experiment (not needed for 0.3-6 µm range)
-
-        # Brightness temperature figure
+        # Brightness temperature figure (median only, no 1-sigma bands)
         fig_tb, ax_tb = plt.subplots(figsize=(8, 4.5))
-        ax_tb.plot(hires, Tb_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-        ax_tb.fill_between(hires, Tb_lo, Tb_hi, alpha=0.3, color=palette[1])
-        if Tb_obs is not None and Tb_obs_lo is not None and Tb_obs_hi is not None:
-            Tb_err = np.vstack(
-                (
-                    Tb_obs - Tb_obs_lo,
-                    Tb_obs_hi - Tb_obs,
-                )
-            )
-            ax_tb.errorbar(
-                lam,
-                Tb_obs,
-                yerr=Tb_err,
-                xerr=dlam,
-                fmt="o",
-                ms=3,
-                lw=1,
-                alpha=0.9,
-                label="Observed",
-                color=palette[0],
-                ecolor=palette[0],
-                capsize=2,
-            )
+        ax_tb.plot(hires, Tb_med, lw=1, label="Median model", color=palette[4], alpha=0.7, rasterized=True)
+        if Tb_obs is not None:
+            ax_tb.plot(lam, Tb_obs, lw=2, label="Observed", color="black", zorder=3)
         ax_tb.set_xscale("log")
         ax_tb.set_xlabel("Wavelength [µm]", fontsize=14)
         ax_tb.set_ylabel("Brightness temperature [K]", fontsize=14)
-        tick_locs = np.array([0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0])
+        tick_locs = np.array([
+            0.6, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0])
         ax_tb.set_xticks(tick_locs)
         ax_tb.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
         ax_tb.tick_params(axis="y", labelsize=12)
-        ax_tb.set_xlim(0.3, 6.0)
+        ax_tb.set_xlim(0.6, 5.0)
+        # Adjust y-range here by uncommenting and modifying:
+        # ax_tb.set_ylim(400, 1400)  # Example: adjust these values as needed
         ax_tb.grid(False)
         ax_tb.legend()
         fig_tb.tight_layout()
@@ -426,6 +427,26 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
         fig_tb.savefig(exp_dir / f"{outname}_brightness_temperature.pdf")
 
         # Brightness temperature zoom plot removed for Gliese experiment (not needed for 0.3-6 µm range)
+
+        # Compute effective temperature from median high-res spectrum
+        print("\n" + "="*60)
+        print("EFFECTIVE TEMPERATURE CALCULATION")
+        print("="*60)
+
+        # Get distance if available (for brown dwarfs)
+        D_pc_median = float(theta_median["D"]) if "D" in theta_median else None
+
+        T_eff = _compute_effective_temperature(pf_med, hires, R_p_med, D_pc_median)
+
+        print(f"Effective temperature from integrated median flux:")
+        print(f"  T_eff = {T_eff:.1f} K")
+        if D_pc_median is not None:
+            print(f"  Distance: {D_pc_median:.2f} pc")
+            print(f"  Radius: {R_p_med:.3f} R_Jup")
+        print("="*60 + "\n")
+
+        save_payload.update(T_eff=T_eff)
+        np.savez_compressed(exp_dir / f"{outname}_quantiles.npz", **save_payload)
 
     if show_plot:
         plt.show()

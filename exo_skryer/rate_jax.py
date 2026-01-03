@@ -451,20 +451,13 @@ class RateJAX:
         P_turnover : array
             Turnover pressure [bar], where CO/H2O ~ 1
         """
-        # Polynomial coefficients for log10(P_turnover)
-        # Fit to (log T, log C, log N, log O) → log10(P_turnover)
-        # Each variable has powers 1-4, plus constant term
-        coeffs = jnp.array([
-            -1.07028658e+03,  # constant
-            # Temperature terms (powers 1-4)
-             1.20815018e+03, -5.21868655e+02,  1.02459233e+02, -7.68350388e+00,
-            # Carbon terms (powers 1-4)
-             1.30787500e+00,  3.18619604e-01,  5.32918135e-02,  3.12269845e-03,
-            # Nitrogen terms (powers 1-4)
-             2.81238906e-02,  1.26015039e-02,  2.07616221e-03,  1.16038224e-04,
-            # Oxygen terms (powers 1-4)
-            -1.69589064e-01, -5.21662503e-02, -7.33669631e-03, -3.74492912e-04
-        ])
+        # Polynomial coefficients organized by variable
+        # Structure: constant + T^1..4 + C^1..4 + N^1..4 + O^1..4
+        const = -1.07028658e+03
+        coeff_T = jnp.array([1.20815018e+03, -5.21868655e+02, 1.02459233e+02, -7.68350388e+00])
+        coeff_C = jnp.array([1.30787500e+00, 3.18619604e-01, 5.32918135e-02, 3.12269845e-03])
+        coeff_N = jnp.array([2.81238906e-02, 1.26015039e-02, 2.07616221e-03, 1.16038224e-04])
+        coeff_O = jnp.array([-1.69589064e-01, -5.21662503e-02, -7.33669631e-03, -3.74492912e-04])
 
         # Compute log10 of input variables
         logT = jnp.log10(T)
@@ -472,29 +465,18 @@ class RateJAX:
         logN = jnp.log10(N)
         logO = jnp.log10(O)
 
-        # Build polynomial: constant + sum over (var, power) pairs
-        log10_P_turn = coeffs[0]  # constant term
+        # Powers array [1, 2, 3, 4] for vectorized exponentiation
+        powers = jnp.array([1.0, 2.0, 3.0, 4.0])
 
-        # Temperature terms (powers 1-4)
-        idx = 1
-        for power in range(1, 5):
-            log10_P_turn += coeffs[idx] * logT**power
-            idx += 1
+        # Vectorized polynomial evaluation using broadcasting
+        # For T: compute [logT^1, logT^2, logT^3, logT^4] then dot with coefficients
+        # Note: logT can be array (batched), so we use outer-like broadcasting
+        T_contrib = jnp.sum(coeff_T * logT[..., None] ** powers, axis=-1)
+        C_contrib = jnp.sum(coeff_C * logC ** powers)
+        N_contrib = jnp.sum(coeff_N * logN ** powers)
+        O_contrib = jnp.sum(coeff_O * logO ** powers)
 
-        # Carbon terms (powers 1-4)
-        for power in range(1, 5):
-            log10_P_turn += coeffs[idx] * logC**power
-            idx += 1
-
-        # Nitrogen terms (powers 1-4)
-        for power in range(1, 5):
-            log10_P_turn += coeffs[idx] * logN**power
-            idx += 1
-
-        # Oxygen terms (powers 1-4)
-        for power in range(1, 5):
-            log10_P_turn += coeffs[idx] * logO**power
-            idx += 1
+        log10_P_turn = const + T_contrib + C_contrib + N_contrib + O_contrib
 
         # Clip to valid pressure range: 10^-8 to 10^3 bar
         log10_P_turn = jnp.clip(log10_P_turn, -8.0001, 3.0001)

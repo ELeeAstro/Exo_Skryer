@@ -12,15 +12,15 @@ physics:
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic
+  vert_cloud: slab_profile
 
   opac_line: lbl
   opac_ray: lbl
   opac_cia: lbl
-  opac_cloud: nk
+  opac_cloud: nk_slab
   opac_special: lbl
 
   rt_scheme: transit_1d
-  contri_func: False
   em_scheme: None
   emission_mode: planet
   contri_func: False
@@ -68,26 +68,29 @@ params:
   - { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
   - { name: log_10_f_H-, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
 
+
+
   - { name: log_10_q_c, dist: uniform, low: -12,   high: -2,  transform: logit, init: 0}
   - { name: log_10_cld_r, dist: uniform, low: -3,   high: -1,  transform: logit, init: 0}
   - { name: log_10_p_top_slab, dist: uniform, low: -7,   high: 2,  transform: logit, init: 0}
   - { name: log_10_dp_slab, dist: uniform, low: 0,   high: 8,  transform: logit, init: 0}
 
   - { name: sigma, dist: uniform, low: 1.05,   high: 2.0,  transform: logit, init: 1}
+  - { name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
 
-  - { name: wl_node_0, dist: delta, value: 7.125, transform: identity, init: 0.335}
-  - { name: wl_node_1, dist: delta, value: 7.625, transform: identity, init: 0.335}
-  - { name: wl_node_2, dist: delta, value: 8.125, transform: identity, init: 11.875}
-  - { name: wl_node_3, dist: delta, value: 8.375, transform: identity, init: 11.875}
-  - { name: wl_node_4, dist: delta, value: 8.625, transform: identity, init: 11.875}
-  - { name: wl_node_5, dist: delta, value: 8.875, transform: identity, init: 11.875}
-  - { name: wl_node_6, dist: delta, value: 9.125, transform: identity, init: 11.875}
-  - { name: wl_node_7, dist: delta, value: 9.375, transform: identity, init: 11.875}
-  - { name: wl_node_8, dist: delta, value: 9.625, transform: identity, init: 11.875}
-  - { name: wl_node_9, dist: delta, value: 10.125, transform: identity, init: 11.875}
-  - { name: wl_node_10, dist: delta, value: 10.625, transform: identity, init: 11.875}
-  - { name: wl_node_11, dist: delta, value: 11.125, transform: identity, init: 11.875}
-  - { name: wl_node_12, dist: delta, value: 11.625, transform: identity, init: 12.0}
+  - { name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 0.335}
+  - { name: wl_node_1, dist: delta, value: 7.5, transform: identity, init: 0.335}
+  - { name: wl_node_2, dist: delta, value: 8.0, transform: identity, init: 11.875}
+  - { name: wl_node_3, dist: delta, value: 8.25, transform: identity, init: 11.875}    
+  - { name: wl_node_4, dist: delta, value: 8.5, transform: identity, init: 11.875}
+  - { name: wl_node_5, dist: delta, value: 8.75, transform: identity, init: 11.875}
+  - { name: wl_node_6, dist: delta, value: 9.0, transform: identity, init: 11.875}
+  - { name: wl_node_7, dist: delta, value: 9.25, transform: identity, init: 11.875}
+  - { name: wl_node_8, dist: delta, value: 9.5, transform: identity, init: 11.875}
+  - { name: wl_node_9, dist: delta, value: 10.0, transform: identity, init: 11.875}
+  - { name: wl_node_10, dist: delta, value: 10.5, transform: identity, init: 11.875}    
+  - { name: wl_node_11, dist: delta, value: 11.0, transform: identity, init: 11.875}
+  - { name: wl_node_12, dist: delta, value: 11.5, transform: identity, init: 12.0}
 
 
   - { name: n_0, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
@@ -99,7 +102,7 @@ params:
   - { name: n_6, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
   - { name: n_7, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
   - { name: n_8, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
-  - { name: n_9, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
+  - { name: n_9, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}    
   - { name: n_10, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
   - { name: n_11, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
   - { name: n_12, dist: uniform, low: 0.3,   high: 5.0,  transform: logit, init: 0}
@@ -114,9 +117,10 @@ params:
   - { name: log_10_k_7, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
   - { name: log_10_k_8, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
   - { name: log_10_k_9, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_10, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_10, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}    
   - { name: log_10_k_11, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
   - { name: log_10_k_12, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+
 
 sampling:
 
@@ -144,7 +148,7 @@ sampling:
     difficult_model: false       # robust defaults for gnarly posteriors
     parameter_estimation: true   # tune for good posterior, not just evidence
     gradient_guided: false       # use gradients for proposals (only if stable)
-    init_efficiency_threshold: 0.05  # >0: initial uniform sampling until eff>thr
+    init_efficiency_threshold: 0.1  # >0: initial uniform sampling until eff>thr
     verbose: true               # print textual progress to CLI
 
     # ---- termination controls ----

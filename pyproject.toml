@@ -39,6 +39,7 @@ docs = [
     "sphinx-book-theme",
     "sphinx-toolbox",
     "matplotlib",
+    "IPython",
     "tox"
 ]
 dynesty = [

@@ -13,16 +13,17 @@ import numpy as np
 from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS09, picket_fence, Milne_modified
+from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Milne_modified
 from .vert_chem import constant_vmr, CE_fastchem_jax, CE_rate_jax
 from .vert_mu import constant_mu, compute_mu
+from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile
 
 from .opacity_line import zero_line_opacity, compute_line_opacity
 from .opacity_ck import zero_ck_opacity, compute_ck_opacity
 from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
-from .opacity_cloud import zero_cloud_opacity, grey_cloud, powerlaw_cloud, F18_cloud, F18_cloud_2, direct_nk, direct_nk_slab
+from .opacity_cloud import zero_cloud_opacity, grey_cloud, deck_and_powerlaw, powerlaw_cloud, F18_cloud, F18_cloud_2, direct_nk, direct_nk_slab
 
 from . import build_opacities as XS
 from .build_chem import prepare_chemistry_kernel
@@ -63,6 +64,7 @@ def build_forward_model(
         opac_special), and radiative transfer (rt_scheme).
     obs : dict
         Observational data dictionary containing:
+
         - 'wl' : Observed wavelengths in microns (for bandpass loading)
         - 'dwl' : Wavelength bin widths in microns
     stellar_flux : `~numpy.ndarray`, optional
@@ -82,6 +84,7 @@ def build_forward_model(
 
         The function takes a parameter dictionary (free parameters from the retrieval)
         and returns:
+
         - If `return_highres=False`: 1D array of binned transit depth or emission flux
         - If `return_highres=True`: Dict with keys 'hires' (high-res spectrum) and
           'binned' (convolved spectrum)
@@ -107,7 +110,7 @@ def build_forward_model(
        to produce the final binned spectrum matching observational resolution.
 
     Configuration schemes are selected from `cfg.physics`:
-    - **vert_Tp**: isothermal, guillot, barstow, milne, picket_fence, ms09, piecewise_polynomial
+    - **vert_Tp**: isothermal, guillot, barstow, milne, picket_fence, mands, piecewise_polynomial
     - **vert_alt**: constant_g, variable_g, p_ref
     - **vert_chem**: constant_vmr, ce (FastChem placeholder), ce_rate_jax
     - **vert_mu**: auto, constant, dynamic
@@ -156,8 +159,8 @@ def build_forward_model(
         Tp_kernel = Guillot
     elif vert_tp_name == "picket_fence":
         Tp_kernel = picket_fence
-    elif vert_tp_name == "ms09":
-        Tp_kernel = MandS09
+    elif vert_tp_name == "mands":
+        Tp_kernel = MandS
     elif vert_tp_name in ("milne_2", "milne_modified"):
         Tp_kernel = Milne_modified
     else:
@@ -186,6 +189,8 @@ def build_forward_model(
         chemistry_kernel = CE_fastchem_jax
     elif vert_chem_name in ("rate_ce", "rate_jax", "ce_rate_jax"):
         chemistry_kernel = CE_rate_jax
+    elif vert_chem_name in ("quench", "quench_approx"):
+        chemistry_kernel = quench_approx
     else:
         raise NotImplementedError(f"Unknown chemistry scheme='{vert_chem_name}'")
 
@@ -208,6 +213,21 @@ def build_forward_model(
             return compute_mu(vmr_lay)
     else:
         raise NotImplementedError(f"Unknown mean-molecular-weight scheme='{vert_mu_name}'")
+
+    vert_cloud_raw = getattr(phys, "vert_cloud", None)
+    if vert_cloud_raw in (None, "None"):
+        vert_cloud_name = "none"
+    else:
+        vert_cloud_name = str(vert_cloud_raw).lower()
+
+    if vert_cloud_name in ("none", "off", "no_cloud"):
+        vert_cloud_kernel = no_cloud
+    elif vert_cloud_name in ("exponential", "exp_decay", "exponential_decay", "exponential_decay_profile"):
+        vert_cloud_kernel = exponential_decay_profile
+    elif vert_cloud_name in ("slab", "slab_profile"):
+        vert_cloud_kernel = slab_profile
+    else:
+        raise NotImplementedError(f"Unknown vert_cloud scheme='{vert_cloud_name}'")
 
     ck = False
     line_opac_scheme = getattr(phys, "opac_line", None)
@@ -366,6 +386,9 @@ def build_forward_model(
         rho_lay = (mu_lay * amu * p_lay) / (kb * T_lay)
         nd_lay = p_lay / (kb * T_lay)
 
+        # Cloud vertical profile (mass mixing ratio)
+        q_c_lay = vert_cloud_kernel(p_lay, T_lay, mu_lay, rho_lay, nd_lay, full_params)
+
         # State dictionary for physics kernels
         g_weights = None
         ck_mix_code = None
@@ -400,6 +423,7 @@ def build_forward_model(
             "p_lay": p_lay,
             "rho_lay": rho_lay,
             "nd_lay": nd_lay,
+            "q_c_lay": q_c_lay,
             "vmr_lay": vmr_lay,
             "contri_func": bool(getattr(phys, "contri_func", False)),
         }

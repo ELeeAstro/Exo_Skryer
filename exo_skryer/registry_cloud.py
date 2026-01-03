@@ -12,7 +12,10 @@ __all__ = [
     "compute_kk_grid_cache",
     "get_or_create_kk_cache",
     "clear_kk_cache",
-    "get_kk_cache_stats"
+    "get_kk_cache_stats",
+    "set_cloud_nk_data",
+    "get_cloud_nk_data",
+    "clear_cloud_nk_data",
 ]
 
 
@@ -194,3 +197,105 @@ def get_kk_cache_stats() -> dict:
         'cache_ids': list(_KK_GRID_REGISTRY.keys()),
         'memory_estimate_mb': round(memory_mb, 2),
     }
+
+
+# ============================================================================
+# Cloud n,k data registry
+# ============================================================================
+
+# Global registry for cloud refractive index data
+_CLOUD_NK_DATA: Dict[str, jnp.ndarray] = {}
+
+
+def set_cloud_nk_data(wl: jnp.ndarray, n: jnp.ndarray, k: jnp.ndarray) -> None:
+    """
+    Store cloud refractive index data in the global registry.
+
+    This function caches wavelength-dependent complex refractive index arrays
+    (n, k) for use in cloud opacity calculations. The data is stored globally
+    and can be accessed by the `given_nk` cloud opacity function.
+
+    Parameters
+    ----------
+    wl : `~jax.numpy.ndarray`, shape (nwl,)
+        Wavelength grid in microns. MUST match the model wavelength grid.
+    n : `~jax.numpy.ndarray`, shape (nwl,)
+        Real part of refractive index (dimensionless).
+    k : `~jax.numpy.ndarray`, shape (nwl,)
+        Imaginary part of refractive index (dimensionless).
+
+    Notes
+    -----
+    - Arrays are converted to JAX arrays and stored on device
+    - IMPORTANT: The wavelength grid must match the model grid exactly.
+      No interpolation is performed in `given_nk` for efficiency.
+    - This function should be called before running retrievals with `given_nk` scheme
+    - Use `clear_cloud_nk_data()` to free memory when switching cloud species
+
+    Examples
+    --------
+    >>> import jax.numpy as jnp
+    >>> from exo_skryer.registry_cloud import set_cloud_nk_data
+    >>> wl = jnp.linspace(0.5, 5.0, 1000)
+    >>> n = jnp.ones(1000) * 1.5  # Example: constant n
+    >>> k = jnp.ones(1000) * 0.01  # Example: constant k
+    >>> set_cloud_nk_data(wl, n, k)
+    """
+    global _CLOUD_NK_DATA
+    _CLOUD_NK_DATA['wl'] = jnp.asarray(wl)
+    _CLOUD_NK_DATA['n'] = jnp.asarray(n)
+    _CLOUD_NK_DATA['k'] = jnp.asarray(k)
+
+
+def get_cloud_nk_data() -> Dict[str, jnp.ndarray]:
+    """
+    Retrieve cached cloud refractive index data.
+
+    Returns
+    -------
+    nk_data : dict[str, `~jax.numpy.ndarray`]
+        Dictionary containing:
+        - 'wl': Wavelength grid in microns, shape (nwl,)
+        - 'n': Real refractive index, shape (nwl,)
+        - 'k': Imaginary refractive index, shape (nwl,)
+
+    Raises
+    ------
+    RuntimeError
+        If no cloud n,k data has been loaded (call `set_cloud_nk_data` first).
+
+    Notes
+    -----
+    This function is called internally by `given_nk` cloud opacity scheme.
+    Users typically don't need to call this directly.
+
+    Examples
+    --------
+    >>> from exo_skryer.registry_cloud import get_cloud_nk_data
+    >>> nk_data = get_cloud_nk_data()
+    >>> wl = nk_data['wl']
+    >>> n = nk_data['n']
+    >>> k = nk_data['k']
+    """
+    if not _CLOUD_NK_DATA:
+        raise RuntimeError(
+            "No cloud n,k data has been loaded. "
+            "Call set_cloud_nk_data(wl, n, k) before using the 'given_nk' cloud scheme."
+        )
+    return _CLOUD_NK_DATA
+
+
+def clear_cloud_nk_data() -> None:
+    """
+    Clear cached cloud refractive index data.
+
+    Useful for memory management or when switching between different cloud
+    species with different refractive index data.
+
+    Examples
+    --------
+    >>> from exo_skryer.registry_cloud import clear_cloud_nk_data
+    >>> clear_cloud_nk_data()  # Free memory
+    """
+    global _CLOUD_NK_DATA
+    _CLOUD_NK_DATA.clear()

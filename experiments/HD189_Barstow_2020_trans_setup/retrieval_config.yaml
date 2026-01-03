@@ -21,6 +21,7 @@ physics:
   vert_alt: variable_g
   vert_chem: constant_vmr
   vert_mu: dynamic
+  vert_cloud: no_cloud
 
   # Opacity sources
   opac_line: lbl

@@ -160,128 +160,71 @@ def hypsometric_variable_g(
     z_lay = 0.5 * (z_lev[:-1] + z_lev[1:])
     return z_lev, z_lay, dz
 
-
 def hypsometric_variable_g_pref(
     p_lev: jnp.ndarray,
     T_lay: jnp.ndarray,
     mu_lay: jnp.ndarray,
-    params: Dict[str, jnp.ndarray],
-) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute an altitude profile with variable gravity anchored at a reference pressure.
-
-    Parameters
-    ----------
-    p_lev : `~jax.numpy.ndarray`, shape (nlev,)
-        Pressure at layer interfaces (levels), units consistent across the grid.
-    T_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Layer temperatures in Kelvin.
-    mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Mean molecular weight per layer in amu.
-    params : dict[str, `~jax.numpy.ndarray`]
-        Parameter dictionary containing:
-
-        - `log_10_g` : float
-            Log₁₀ gravity at the reference radius in cm s⁻².
-        - `R_p` : float
-            Planet radius in Jupiter radii (used to form `R0 = R_p × R_jup`).
-        - `log_10_p_ref` : float
-            Log₁₀ reference pressure in bar; converted internally via
-            `p_ref = 10**log_10_p_ref × bar`.
-
-    Returns
-    -------
-    z_lev : `~jax.numpy.ndarray`, shape (nlev,)
-        Altitude at levels in cm, anchored such that `z(p_ref) = 0`.
-    z_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Altitude at layer midpoints in cm.
-    dz : `~jax.numpy.ndarray`, shape (nlay,)
-        Layer thickness in cm.
-
-    Notes
-    -----
-    The algorithm locates the bracketing layer around `p_ref`, sets `z=0` at
-    that reference, then integrates:
-    - toward lower pressures (upward in altitude)
-    - toward higher pressures (downward in altitude)
-
-    This is useful for transmission geometries where the absolute radius is
-    anchored at a chosen pressure level.
-    """
-    # Parameter values are already JAX arrays, no need to wrap
+    params,
+):
     g_ref = 10.0**params["log_10_g"]
     R0 = params["R_p"] * R_jup
     p_ref = 10.0**params["log_10_p_ref"] * bar
 
     nlev = p_lev.shape[0]
-    dlnp = jnp.log(p_lev[:-1] / p_lev[1:])
+    dlnp = jnp.log(p_lev[:-1] / p_lev[1:])  # positive for descending grid
 
-    # Ensure p_ref lies within the grid bounds
     p_ref = jnp.clip(p_ref, p_lev[-1], p_lev[0])
 
-    # Locate the layer whose bounds encompass p_ref
-    mask = p_lev >= p_ref
-    ref_layer = jnp.sum(mask.astype(jnp.int32)) - 1
-    ref_layer = jnp.clip(ref_layer, 0, nlev - 2)
+    # bracket index k such that p[k] >= p_ref >= p[k+1]
+    k = jnp.searchsorted(-p_lev, -p_ref, side="right") - 1
+    k = jnp.clip(k, 0, nlev - 2)
+
+    def g_at_z(z):
+        r = R0 / (R0 + z)
+        return g_ref * r * r
+
+    def step_pc(layer_idx, z_start, delta_ln, direction):
+        T = jnp.take(T_lay, layer_idx, mode="clip")
+        mu = jnp.take(mu_lay, layer_idx, mode="clip")
+
+        g0 = g_at_z(z_start)
+        H0 = (kb * T) / (mu * amu * g0)
+        dz_pred = direction * H0 * delta_ln
+
+        z_mid = z_start + 0.5 * dz_pred
+        g_mid = g_at_z(z_mid)
+        H_mid = (kb * T) / (mu * amu * g_mid)
+        dz = direction * H_mid * delta_ln
+        return z_start + dz
 
     z_lev = jnp.zeros_like(p_lev)
 
-    def integrate_segment(layer_idx, z_start, delta_ln, direction):
-        z_start = jnp.asarray(z_start, dtype=p_lev.dtype)
-        delta_ln = jnp.asarray(delta_ln, dtype=p_lev.dtype)
-        T = T_lay[layer_idx]
-        mu = mu_lay[layer_idx]
-        g_i = g_at_z(R0, z_start, g_ref)
-        H_i = (kb * T) / (mu * amu * g_i)
-        direction = jnp.asarray(direction, dtype=z_start.dtype)
-        dz_pred = direction * H_i * delta_ln
-        z_mid = z_start + 0.5 * dz_pred
-        g_mid = g_at_z(R0, z_mid, g_ref)
-        H_mid = (kb * T) / (mu * amu * g_mid)
-        dz_val = direction * H_mid * delta_ln
-        return z_start + dz_val
+    # partial steps from p_ref to the bracketing levels
+    d_dn = jnp.log(p_lev[k] / p_ref)       # >= 0
+    d_up = jnp.log(p_ref / p_lev[k + 1])   # >= 0
 
-    # Partial step from p_ref to the bracketing levels (if needed)
-    delta_down = jnp.maximum(jnp.log(p_lev[ref_layer] / p_ref), 0.0)
-    z_lower = integrate_segment(ref_layer, 0.0, delta_down, -1.0)
-    z_lev = z_lev.at[ref_layer].set(z_lower)
+    z_lev = z_lev.at[k].set(step_pc(k, 0.0, d_dn, -1.0))
+    z_lev = z_lev.at[k + 1].set(step_pc(k, 0.0, d_up, +1.0))
 
-    delta_up = jnp.maximum(jnp.log(p_ref / p_lev[ref_layer + 1]), 0.0)
+    # upward integration: i = k+1 .. nlev-2 updates level i+1
+    def up_body(i, z):
+        z_next = step_pc(i, z[i], dlnp[i], +1.0)
+        do = i >= (k + 1)
+        return z.at[i + 1].set(jnp.where(do, z_next, z[i + 1]))
 
-    def set_upper(z_vals):
-        z_upper = integrate_segment(ref_layer, 0.0, delta_up, 1.0)
-        return z_vals.at[ref_layer + 1].set(z_upper)
+    z_lev = jax.lax.fori_loop(0, nlev - 1, up_body, z_lev)
 
-    z_lev = jax.lax.cond(ref_layer + 1 < nlev, set_upper, lambda z_vals: z_vals, z_lev)
+    # downward integration: i = k-1 .. 0 updates level i
+    def down_body(ii, z):
+        i = (k - 1) - ii
+        z_next = step_pc(i, z[i + 1], dlnp[i], -1.0)
+        do = i >= 0
+        i_safe = jnp.maximum(i, 0)
+        return z.at[i_safe].set(jnp.where(do, z_next, z[i_safe]))
 
-    # Integrate toward lower pressures (upward in altitude)
-    def body_up(i, z_vals):
-        use_layer = jnp.logical_and(i >= (ref_layer + 1), i < nlev - 1)
-
-        def update(z_arr):
-            z_start = z_arr[i]
-            delta = dlnp[i]
-            z_next = integrate_segment(i, z_start, delta, 1.0)
-            return z_arr.at[i + 1].set(z_next)
-
-        return jax.lax.cond(use_layer, update, lambda z_arr: z_arr, z_vals)
-
-    z_lev = jax.lax.fori_loop(0, nlev - 1, body_up, z_lev)
-
-    # Integrate toward higher pressures (downward in altitude)
-    def body_down(i, z_vals):
-        idx = ref_layer - 1 - i
-        use_layer = idx >= 0
-
-        def update(z_arr):
-            z_start = z_arr[idx + 1]
-            delta = dlnp[idx]
-            z_next = integrate_segment(idx, z_start, delta, -1.0)
-            return z_arr.at[idx].set(z_next)
-
-        return jax.lax.cond(use_layer, update, lambda z_arr: z_arr, z_vals)
-
-    z_lev = jax.lax.fori_loop(0, nlev - 1, body_down, z_lev)
+    z_lev = jax.lax.fori_loop(0, nlev - 1, down_body, z_lev)
 
     dz = z_lev[1:] - z_lev[:-1]
     z_lay = 0.5 * (z_lev[:-1] + z_lev[1:])
     return z_lev, z_lay, dz
+

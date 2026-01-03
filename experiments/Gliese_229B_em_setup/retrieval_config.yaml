@@ -1,111 +1,84 @@
-# ==================================================================================
-# Gliese 229B Emission Spectrum - Brown Dwarf Setup
-# ==================================================================================
-
-# ----------------------------------------------------------------------------------
-# Data Section
-# ----------------------------------------------------------------------------------
 data:
+
   obs: ../../obs_data/Gliese_229B_emission.txt
   stellar: None
   janaf: ../../JANAF_data/
 
-# ----------------------------------------------------------------------------------
-# Physics Section
-# ----------------------------------------------------------------------------------
 physics:
+
   nlay: 99
 
-  # Vertical structure schemes
   vert_Tp: Milne_modified
   vert_alt: hypsometric_variable_g_pref
   vert_chem: constant_vmr
   vert_mu: dynamic
 
-  # Opacity sources
   opac_line: lbl
-  opac_ray: None
+  opac_ray: lbl
   opac_cia: lbl
   opac_cloud: None
   opac_special: None
 
-  # Radiative transfer
   rt_scheme: emission_1d
-  em_scheme: eaa
   emission_mode: brown_dwarf
-  contri_func: false
+  em_scheme: eaa
+  contri_func: False
 
-# ----------------------------------------------------------------------------------
-# Opacity Section
-# ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_dnu_1.txt
-  full_grid: false
-  ck: false
+
+  wl_master: wl_R10000.txt
+  full_grid: True
+  ck: False
   ck_mix: RORR
 
-  # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_dnu_1.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_dnu_1.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_dnu_1.npz}
-    - {species: NH3, path: ../../opac_data/lbl/NH3_dnu_1.npz}
-    - {species: Na, path: ../../opac_data/lbl/Na_dnu_1.npz}
-    - {species: K, path: ../../opac_data/lbl/K_dnu_1.npz}
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}     
+    - {species: CO, path: ../../opac_data/lbl/CO_R10000.npz} 
+    - {species: CO2, path: ../../opac_data/lbl/CO2_R10000.npz} 
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R10000.npz}
+    - {species: NH3, path: ../../opac_data/lbl/NH3_R10000.npz}      
+    - {species: Na, path: ../../opac_data/lbl/Na_R10000.npz}
+    - {species: K, path: ../../opac_data/lbl/K_R10000.npz}  
 
-  # Rayleigh scattering species
-  ray: None
-
-  # CIA opacity files
+  ray:
+    - {species: H2}
+    - {species: He}
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
-
-  # Cloud opacity
   cloud: None
 
-# ----------------------------------------------------------------------------------
-# Parameters Section
-# ----------------------------------------------------------------------------------
 params:
-  # Stellar parameters
-  - {name: R_s, dist: delta, value: 0.0, transform: identity, init: 0.0}
-  - {name: D, dist: delta, value: 10.0, transform: identity, init: 10.0}
 
-  # Atmospheric boundaries
-  - {name: p_bot, dist: delta, value: 1000.0, transform: identity, init: 1000.0}
-  - {name: p_top, dist: delta, value: 1e-4, transform: identity, init: 1e-4}
-  - {name: log_10_p_ref, dist: delta, value: 1.0, transform: identity, init: 1.0}
+  - { name: R_s,   dist: delta,   value: 0.0, transform: identity, init: 0.0}
+  - { name: D,   dist: delta,   value: 10.0, transform: identity, init: 10.0}
+  - { name: p_bot, dist: delta,   value: 1000.0,  transform: identity, init: 1000.0 }
+  - { name: p_top, dist: delta,   value: 1e-4, transform: identity, init: 1e-4}
+  - { name: log_10_p_ref, dist: delta,   value: 0.0, transform: identity, init: 0.0}
 
-  # Planetary parameters
-  - {name: log_10_g, dist: uniform, low: 4.0, high: 5.5, transform: logit, init: 5.0}
-  - {name: R_p, dist: uniform, low: 0.5, high: 2.0, transform: logit, init: 1.0}
+  - { name: log_10_g,  dist: uniform, low: 4.0,   high: 5.5,  transform: logit, init: 5.0}
+  - { name: R_p, dist: uniform, low: 0.5,   high: 2.0,  transform: logit, init: 1.0}
+  #- { name: M_p, dist: uniform, low: 1.0,   high: 80.0,  transform: logit, init: 1.0}
+  - { name: c, dist: uniform, low: -14.63,   high: -7.66,  transform: logit, init: 1.0}
 
-  # T-p profile parameters
-  - {name: c, dist: uniform, low: -14.63, high: -7.66, transform: logit, init: 1.0}
-  - {name: T_skin, dist: uniform, low: 50.0, high: 500.0, transform: logit, init: 400.0}
-  - {name: T_int, dist: uniform, low: 700.0, high: 1200.0, transform: logit, init: 1000.0}
-  - {name: log_10_k_ir, dist: uniform, low: -3, high: 3, transform: logit, init: -1}
-  - {name: log_10_p_t, dist: uniform, low: -4, high: 2, transform: logit, init: 0}
-  - {name: beta, dist: uniform, low: 0.1, high: 1.0, transform: logit, init: 0.5}
+  - { name: T_skin, dist: uniform, low: 50.0,   high: 500.0, transform: logit, init: 400.0 }
+  - { name: T_int, dist: uniform, low: 700.0,   high: 1200.0, transform: logit, init: 1000.0 }
+  - { name: log_10_k_ir, dist: uniform, low: -4,   high: 4,  transform: logit, init: -1}
+  - { name: log_10_p_t, dist: uniform, low: -3,   high: 2,  transform: logit, init: 0}
+  - { name: beta, dist: uniform, low: 0.1,   high: 2.0,  transform: logit, init: 0.5}
 
-  # Chemistry parameters
-  - {name: log_10_f_H2O, dist: uniform, low: -9, high: -1, transform: logit, init: -3}
-  - {name: log_10_f_CO, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CO2, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CH4, dist: uniform, low: -9, high: -1, transform: logit, init: -3}
-  - {name: log_10_f_NH3, dist: uniform, low: -9, high: -1, transform: logit, init: -3}
-  - {name: log_10_f_Na, dist: uniform, low: -9, high: -1, transform: logit, init: -6}
-  - {name: log_10_f_K, dist: uniform, low: -9, high: -1, transform: logit, init: -6}
+  - { name: log_10_f_H2O, dist: uniform, low: -9,   high: -2,  transform: logit, init: -3}
+  - { name: log_10_f_CO, dist: uniform, low: -9,   high: -2,  transform: logit, init: -5}
+  - { name: log_10_f_CO2, dist: uniform, low: -9,   high: -2,  transform: logit, init: -5}
+  - { name: log_10_f_CH4, dist: uniform, low: -9,   high: -2,  transform: logit, init: -3}
+  - { name: log_10_f_NH3, dist: uniform, low: -9,   high: -2,  transform: logit, init: -3}    
+  - { name: log_10_f_Na, dist: uniform, low: -9,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_K, dist: uniform, low: -9,   high: -2,  transform: logit, init: -6}
 
-# ----------------------------------------------------------------------------------
-# Sampling Section
-# ----------------------------------------------------------------------------------
 sampling:
+
   engine: jaxns
 
-  # NUTS / HMC settings
   nuts:
     backend: numpyro
     warmup: 100
@@ -113,68 +86,46 @@ sampling:
     seed: 42
     chains: 1
 
-  # JAXNS settings
   jaxns:
-    max_samples: 100000
-    num_live_points: 1000
-    s: 4
-    k: 0
-    c: null
-    shell_fraction: 0.5
-    difficult_model: false
-    parameter_estimation: true
-    gradient_guided: false
-    init_efficiency_threshold: 0.05
-    verbose: true
+    # ---- core NS config ----
+    max_samples: 100000          # hard cap on nested-sampling iterations
+    num_live_points: 1000        # live points (posterior resolution)
 
+    # Slice sampler hyperparameters
+    s: 4                        # slices per dimension (default ~4)
+    k: 0                         # phantom samples (0 = off, >0 for hard posteriors)
+    c: null                       # parallel chains (null -> jaxns default, ~20*D)
+    shell_fraction: 0.5          # fraction of shell explored per step (0<sf<=1)
+
+    # Global behaviour flags
+    difficult_model: false       # robust defaults for gnarly posteriors
+    parameter_estimation: true   # tune for good posterior, not just evidence
+    gradient_guided: false       # use gradients for proposals (only if stable)
+    init_efficiency_threshold: 0.1  # >0: initial uniform sampling until eff>thr
+    verbose: true               # print textual progress to CLI
+
+    # ---- termination controls ----
     termination:
-      ess: 10000
-      evidence_uncert: null
-      dlogZ: 0.1
-      max_samples: 100000
+      ess: 10000                        # target effective sample size
+      evidence_uncert: null            # stop when σ_logZ < 0.3
+      dlogZ: 0.1                     # stop when remaining evidence small
+      max_samples: 100000             # safety cap for samples
       max_num_likelihood_evaluations: null
       rtol: null
       atol: null
 
-    posterior_samples: 10000
-    seed: 42
+    # ---- posterior handling ----
+    posterior_samples: 10000           # equal-weight posterior draws
+    seed: 42                          # RNG seed for JAX
 
-  # BlackJAX nested sampling settings
   blackjax_ns:
     num_live_points: 150
     num_inner_steps: 50
     num_delete: 75
-    dlogz_stop: 0.1
+    dlogz_stop: 0
     seed: 42
 
-  # Dynesty settings
-  dynesty:
-    nlive: 100
-    bound: multi
-    sample: auto
-    dlogz: 1.0
-    maxiter: null
-    maxcall: null
-    bootstrap: 0
-    enlarge: null
-    update_interval: null
-    dynamic: false
-    print_progress: true
-    seed: 42
-
-  # UltraNest settings
-  ultranest:
-    num_live_points: 500
-    min_num_live_points: 500
-    dlogz: 0.5
-    max_iters: 0
-    verbose: true
-    show_status: true
-
-# ----------------------------------------------------------------------------------
-# Runtime Section
-# ----------------------------------------------------------------------------------
 runtime:
-  platform: gpu
-  cuda_visible_devices: 0
+  platform: gpu           # cpu | gpu | cuda | metal
+  cuda_visible_devices: 0  # or "0,1"
   threads: 1

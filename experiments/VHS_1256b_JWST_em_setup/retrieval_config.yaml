@@ -6,8 +6,8 @@
 # Data Section
 # ----------------------------------------------------------------------------------
 data:
-  obs: ../../obs_data/HD189733b_emission_JWST.txt
-  stellar: ./HD189_stellar.txt
+  obs: ../../obs_data/VHS1256b_V2.txt
+  stellar: None
   janaf: ../../JANAF_data/
 
 # ----------------------------------------------------------------------------------

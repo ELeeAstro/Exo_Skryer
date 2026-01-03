@@ -7,17 +7,166 @@ from __future__ import annotations
 
 from typing import Tuple
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 
 
-_MU_NODES = (0.0454586727, 0.2322334416, 0.5740198775, 0.9030775973)
-_MU_WEIGHTS = (0.0092068785, 0.1285704278, 0.4323381850, 0.4298845087)
-nstreams = len(_MU_NODES) * 2
+_MU_NODES = jnp.array([0.0454586727, 0.2322334416, 0.5740198775, 0.9030775973])
+_MU_WEIGHTS = jnp.array([0.0092068785, 0.1285704278, 0.4323381850, 0.4298845087])
+_N_STREAMS_HALF = 4
+nstreams = _N_STREAMS_HALF * 2
 _DT_THRESHOLD = 1.0e-4
 _DT_SAFE = 1.0e-12
 
 __all__ = ["solve_alpha_eaa", "get_emission_solver"]
+
+
+def _compute_stream_no_contrib(
+    mu: jnp.ndarray,
+    dtau_a: jnp.ndarray,
+    be_levels: jnp.ndarray,
+    al: jnp.ndarray,
+    be_internal: jnp.ndarray,
+    nlev: int,
+    nlay: int,
+    nwl: int,
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Compute downward and upward intensities for a single angular stream.
+
+    Parameters
+    ----------
+    mu : scalar
+        Cosine of the zenith angle for this stream.
+    dtau_a : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Adjusted optical depth per layer.
+    be_levels : `~jax.numpy.ndarray`, shape (nlev, nwl)
+        Planck function at level interfaces.
+    al : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Planck function differences between levels.
+    be_internal : `~jax.numpy.ndarray`, shape (nwl,)
+        Internal emission at the bottom boundary.
+    nlev, nlay, nwl : int
+        Grid dimensions.
+
+    Returns
+    -------
+    lw_down : `~jax.numpy.ndarray`, shape (nlev, nwl)
+        Downward intensity at each level.
+    lw_up : `~jax.numpy.ndarray`, shape (nlev, nwl)
+        Upward intensity at each level.
+    """
+    T_trans = jnp.exp(-dtau_a / mu)
+    mu_over_dtau = mu / jnp.maximum(dtau_a, _DT_SAFE)
+
+    def down_body(k, lw):
+        linear = (
+            lw[k] * T_trans[k]
+            + be_levels[k + 1]
+            - al[k] * mu_over_dtau[k]
+            - (be_levels[k] - al[k] * mu_over_dtau[k]) * T_trans[k]
+        )
+        iso = (
+            lw[k] * T_trans[k]
+            + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
+        )
+        next_val = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
+        return lw.at[k + 1].set(next_val)
+
+    lw_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype)
+    lw_down = lax.fori_loop(0, nlay, down_body, lw_init)
+
+    lw_up_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype).at[-1].set(
+        lw_down[-1] + be_internal
+    )
+
+    def up_body(idx, lw):
+        k = nlay - 1 - idx
+        linear = (
+            lw[k + 1] * T_trans[k]
+            + be_levels[k]
+            + al[k] * mu_over_dtau[k]
+            - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
+        )
+        iso = (
+            lw[k + 1] * T_trans[k]
+            + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
+        )
+        I_top = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
+        return lw.at[k].set(I_top)
+
+    lw_up = lax.fori_loop(0, nlay, up_body, lw_up_init)
+
+    return lw_down, lw_up
+
+
+def _compute_stream_with_contrib(
+    mu: jnp.ndarray,
+    weight: jnp.ndarray,
+    dtau_a: jnp.ndarray,
+    be_levels: jnp.ndarray,
+    al: jnp.ndarray,
+    be_internal: jnp.ndarray,
+    tau_top_layer: jnp.ndarray,
+    nlev: int,
+    nlay: int,
+    nwl: int,
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute intensities and layer contributions for a single angular stream.
+
+    Same as `_compute_stream_no_contrib` but also computes the contribution
+    function for each layer.
+    """
+    T_trans = jnp.exp(-dtau_a / mu)
+    mu_over_dtau = mu / jnp.maximum(dtau_a, _DT_SAFE)
+    T_toa = jnp.exp(-tau_top_layer / mu)
+
+    def down_body(k, lw):
+        linear = (
+            lw[k] * T_trans[k]
+            + be_levels[k + 1]
+            - al[k] * mu_over_dtau[k]
+            - (be_levels[k] - al[k] * mu_over_dtau[k]) * T_trans[k]
+        )
+        iso = (
+            lw[k] * T_trans[k]
+            + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
+        )
+        next_val = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
+        return lw.at[k + 1].set(next_val)
+
+    lw_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype)
+    lw_down = lax.fori_loop(0, nlay, down_body, lw_init)
+
+    lw_up_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype).at[-1].set(
+        lw_down[-1] + be_internal
+    )
+    layer_contrib_init = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
+
+    def up_body(idx, carry):
+        lw, layer_acc = carry
+        k = nlay - 1 - idx
+
+        linear = (
+            lw[k + 1] * T_trans[k]
+            + be_levels[k]
+            + al[k] * mu_over_dtau[k]
+            - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
+        )
+        iso = (
+            lw[k + 1] * T_trans[k]
+            + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
+        )
+        I_top = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
+
+        source = I_top - lw[k + 1] * T_trans[k]
+        layer_acc = layer_acc.at[k].set(weight * source * T_toa[k])
+        lw = lw.at[k].set(I_top)
+        return (lw, layer_acc)
+
+    lw_up, layer_contrib = lax.fori_loop(0, nlay, up_body, (lw_up_init, layer_contrib_init))
+
+    return lw_down, lw_up, layer_contrib
 
 
 def solve_alpha_eaa(
@@ -37,8 +186,6 @@ def solve_alpha_eaa(
     g_phase = g_phase.astype(jnp.float64)[::-1]
 
     al = be_levels[1:] - be_levels[:-1]
-    lw_up_sum = jnp.zeros((nlev, nwl))
-    lw_down_sum = jnp.zeros((nlev, nwl))
 
     mask = g_phase >= 1.0e-4
     fc = jnp.where(mask, g_phase**nstreams, 0.0)
@@ -61,88 +208,37 @@ def solve_alpha_eaa(
     tau_top_layer = tau_interface[:-1]
 
     if return_layer_contrib:
-        layer_contrib_sum = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
-
-    for mu, weight in zip(_MU_NODES, _MU_WEIGHTS):
-        T_trans = jnp.exp(-dtau_a / mu)
-        mu_over_dtau = mu / jnp.maximum(dtau_a, _DT_SAFE)
-
-        def down_body(k, lw):
-            linear = (
-                lw[k] * T_trans[k]
-                + be_levels[k + 1]
-                - al[k] * mu_over_dtau[k]
-                - (be_levels[k] - al[k] * mu_over_dtau[k]) * T_trans[k]
+        # Vectorize over streams with contribution function
+        def stream_fn(mu, weight):
+            return _compute_stream_with_contrib(
+                mu, weight, dtau_a, be_levels, al, be_internal,
+                tau_top_layer, nlev, nlay, nwl
             )
-            iso = (
-                lw[k] * T_trans[k]
-                + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
-            )
-            next_val = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
-            return lw.at[k + 1].set(next_val)
 
-        lw_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype)
-        lw_down = lax.fori_loop(0, nlay, down_body, lw_init)
-
-        lw_up_init = jnp.zeros((nlev, nwl), dtype=be_levels.dtype).at[-1].set(
-            lw_down[-1] + be_internal
+        lw_down_all, lw_up_all, layer_contrib_all = jax.vmap(stream_fn)(
+            _MU_NODES, _MU_WEIGHTS
         )
-
-        if return_layer_contrib:
-            T_toa = jnp.exp(-tau_top_layer / mu)
-
-            def up_body(idx, carry):
-                lw, layer_acc = carry
-                k = nlay - 1 - idx
-
-                linear = (
-                    lw[k + 1] * T_trans[k]
-                    + be_levels[k]
-                    + al[k] * mu_over_dtau[k]
-                    - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
-                )
-                iso = (
-                    lw[k + 1] * T_trans[k]
-                    + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
-                )
-                I_top = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
-
-                source = I_top - lw[k + 1] * T_trans[k]
-                layer_acc = layer_acc.at[k].add(weight * source * T_toa[k])
-                lw = lw.at[k].set(I_top)
-                return (lw, layer_acc)
-
-            lw_up, layer_contrib_sum = lax.fori_loop(
-                0, nlay, up_body, (lw_up_init, layer_contrib_sum)
+        # Shape: (n_streams, nlev, nwl) -> weighted sum over streams
+        lw_down_sum = jnp.sum(lw_down_all * _MU_WEIGHTS[:, None, None], axis=0)
+        lw_up_sum = jnp.sum(lw_up_all * _MU_WEIGHTS[:, None, None], axis=0)
+        # layer_contrib already weighted inside the function
+        layer_contrib_sum = jnp.sum(layer_contrib_all, axis=0)
+        layer_contrib_flux = jnp.pi * layer_contrib_sum[::-1]
+    else:
+        # Vectorize over streams without contribution function
+        def stream_fn(mu):
+            return _compute_stream_no_contrib(
+                mu, dtau_a, be_levels, al, be_internal, nlev, nlay, nwl
             )
-        else:
-            def up_body(idx, lw):
-                k = nlay - 1 - idx
-                linear = (
-                    lw[k + 1] * T_trans[k]
-                    + be_levels[k]
-                    + al[k] * mu_over_dtau[k]
-                    - (be_levels[k + 1] + al[k] * mu_over_dtau[k]) * T_trans[k]
-                )
-                iso = (
-                    lw[k + 1] * T_trans[k]
-                    + 0.5 * (be_levels[k] + be_levels[k + 1]) * (1.0 - T_trans[k])
-                )
-                I_top = jnp.where(dtau_a[k] > _DT_THRESHOLD, linear, iso)
-                return lw.at[k].set(I_top)
 
-            lw_up = lax.fori_loop(0, nlay, up_body, lw_up_init)
-
-        lw_down_sum = lw_down_sum + lw_down * weight
-        lw_up_sum = lw_up_sum + lw_up * weight
+        lw_down_all, lw_up_all = jax.vmap(stream_fn)(_MU_NODES)
+        # Shape: (n_streams, nlev, nwl) -> weighted sum over streams
+        lw_down_sum = jnp.sum(lw_down_all * _MU_WEIGHTS[:, None, None], axis=0)
+        lw_up_sum = jnp.sum(lw_up_all * _MU_WEIGHTS[:, None, None], axis=0)
+        layer_contrib_flux = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
 
     lw_up_flux = jnp.pi * lw_up_sum
     lw_down_flux = jnp.pi * lw_down_sum
-
-    if return_layer_contrib:
-        layer_contrib_flux = jnp.pi * layer_contrib_sum[::-1]
-    else:
-        layer_contrib_flux = jnp.zeros((nlay, nwl), dtype=lw_up_flux.dtype)
 
     return lw_up_flux, lw_down_flux, layer_contrib_flux
 

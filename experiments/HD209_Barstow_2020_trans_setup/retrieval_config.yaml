@@ -21,6 +21,7 @@ physics:
   vert_alt: variable_g
   vert_chem: constant_vmr
   vert_mu: dynamic
+  vert_cloud: exponential_decay_profile
 
   # Opacity sources
   opac_line: lbl
@@ -87,10 +88,13 @@ params:
   - {name: log_10_f_K, dist: uniform, low: -9, high: -3, transform: logit, init: -6}
 
   # Cloud parameters
-  - {name: f_cloud, dist: uniform, low: 0.0, high: 1.0, transform: logit, init: 0.5}
-  - {name: log_10_q_c, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
+  - {name: log_10_q_c_0, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
+  - {name: log_10_p_base, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
+  - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
+  - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
   - {name: cld_Q0, dist: uniform, low: 0.1, high: 65, transform: logit, init: 30.0}
+  - {name: cld_Q1, dist: delta, value: 1.0, transform: identity, init: 1.0}
   - {name: cld_a, dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 4.0}
 
 # ----------------------------------------------------------------------------------
