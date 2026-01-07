@@ -5,7 +5,7 @@ sampler_blackjax_NS.py
 BlackJAX nested sampling driver with:
 - Stable parameter keys (sampled + deltas + optional defaults injected)
 - Optional logit latent parameterisation for bounded uniforms (via distrax.Transformed)
-- Same split-normal likelihood + jitter as JAXNS/dynesty/ultranest
+- Same Gaussian likelihood + jitter as JAXNS/dynesty/ultranest
 """
 
 from __future__ import annotations
@@ -19,8 +19,6 @@ import tqdm
 import blackjax
 from anesthetic import NestedSamples
 import distrax
-
-from .build_prepared import Prepared
 
 __all__ = [
     "build_joint_prior_distrax",
@@ -114,7 +112,7 @@ def build_joint_prior_distrax(cfg) -> Tuple[distrax.Distribution, List[str]]:
     return prior, param_names
 
 
-def run_nested_blackjax(cfg, prep: Prepared, exp_dir: Path) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     ns_cfg = getattr(cfg.sampling, "blackjax_ns", None)
     if ns_cfg is None:
         raise ValueError("Missing cfg.sampling.blackjax_ns configuration.")
@@ -123,7 +121,7 @@ def run_nested_blackjax(cfg, prep: Prepared, exp_dir: Path) -> Tuple[Dict[str, n
     num_inner_steps = int(getattr(ns_cfg, "num_inner_steps", 20))
     num_delete = int(getattr(ns_cfg, "num_delete", max(1, num_live // 2)))
     seed = int(getattr(ns_cfg, "seed", 0))
-    dlogz_stop = float(getattr(ns_cfg, "dlogz_stop", 0.0))  # recommend 0.0 unless you know sign convention
+    dlogz_stop = float(getattr(ns_cfg, "dlogz_stop", 0.0))  # default 0.0; adjust based on sign convention
 
     exp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -152,14 +150,11 @@ def run_nested_blackjax(cfg, prep: Prepared, exp_dir: Path) -> Tuple[Dict[str, n
     particles = inject_fixed(particles)
 
     # Observations
-    y_obs = jnp.asarray(prep.y)
-    dy_obs_p = jnp.asarray(prep.dy_p)
-    dy_obs_m = jnp.asarray(prep.dy_m)
+    y_obs = jnp.asarray(obs["y"])
+    dy_obs = jnp.asarray(obs["dy"])
 
-    @jax.jit
-    def loglikelihood_fn(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        # params is a dict of scalars when blackjax calls it for one particle.
-        mu = prep.fm(params)
+    def _loglikelihood_single(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        mu = fm(params)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def invalid_ll(_):
@@ -172,19 +167,33 @@ def run_nested_blackjax(cfg, prep: Prepared, exp_dir: Path) -> Tuple[Dict[str, n
             c = params["c"]
             sig_jit2 = 10.0 ** (2.0 * c)
 
-            sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
-            sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
-            sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
-
-            norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
+            sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)
             sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
 
-            logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
+            logC = -jnp.log(sig_eff) - 0.5 * jnp.log(2.0 * jnp.pi)
             ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
             return jnp.where(jnp.isfinite(ll), ll, LOG_FLOOR)
 
         return jax.lax.cond(valid_mu, valid_ll, invalid_ll, operand=None)
+
+    @jax.jit
+    def loglikelihood_fn(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        first = next(iter(params.values()))
+
+        def eval_single(_):
+            return _loglikelihood_single(params)
+
+        def eval_batched(_):
+            batch = first.shape[0]
+
+            def body(i):
+                params_i = jax.tree_util.tree_map(lambda x: x[i], params)
+                return _loglikelihood_single(params_i)
+
+            return jax.lax.map(body, jnp.arange(batch))
+
+        return jax.lax.cond(first.ndim == 0, eval_single, eval_batched, operand=None)
 
     # For logprior, we must evaluate only over the sampled parameters (exclude injected deltas/defaults).
     sampled_only = {name: None for name in param_names}
@@ -287,7 +296,7 @@ def run_nested_blackjax(cfg, prep: Prepared, exp_dir: Path) -> Tuple[Dict[str, n
             if val is not None:
                 samples_dict[p.name] = np.full((n_samples,), float(val), dtype=np.float64)
 
-    # Also add optional defaults if you want them present in outputs (optional)
+    # Optionally add default parameters to outputs
     for k, v in defaults_active.items():
         if k not in samples_dict:
             samples_dict[k] = np.full((n_samples,), float(v), dtype=np.float64)

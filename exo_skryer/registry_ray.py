@@ -28,7 +28,7 @@ __all__ = [
 # Dataclass for the Rayleigh cross section data
 # Note: During preprocessing, all arrays are NumPy (CPU)
 # They get converted to JAX (device) only at the final cache creation step
-# Float64 throughout for wavelengths and cross sections.
+# Float64 for wavelengths, float32 for cross sections.
 @dataclass(frozen=True)
 class RayRegistryEntry:
     name: str
@@ -265,7 +265,7 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
 
     # Stack cross sections: (n_species, nwl) - already float64 from preprocessing
     sigma_stacked = np.stack([entry.cross_sections for entry in _RAY_ENTRIES], axis=0)
-    _RAY_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float64)
+    _RAY_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float32)
 
     _RAY_WAVELENGTH_CACHE = jnp.asarray(_RAY_ENTRIES[0].wavelengths, dtype=jnp.float64)
 

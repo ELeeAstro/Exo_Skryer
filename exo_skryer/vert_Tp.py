@@ -314,7 +314,7 @@ def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarr
     P3 = 10.0 ** params["log_10_P3"] * bar
     T0 = params["T_ref"]
 
-    # TOA pressure (since your p_lev is bottom->top)
+    # TOA pressure (p_lev is bottom->top)
     P0 = jnp.min(p_lev)
 
     def inv_sq(P, Pref, a):

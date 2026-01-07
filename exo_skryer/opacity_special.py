@@ -46,6 +46,7 @@ def zero_special_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
 
 def _interpolate_logsigma_1d(
     sigma_log: jnp.ndarray,
+    log_temperature_grid: jnp.ndarray,
     temperature_grid: jnp.ndarray,
     layer_temperatures: jnp.ndarray,
 ) -> jnp.ndarray:
@@ -55,8 +56,10 @@ def _interpolate_logsigma_1d(
     ----------
     sigma_log : `~jax.numpy.ndarray`, shape `(nT, nwl)`
         Log₁₀ cross-sections as a function of temperature.
+    log_temperature_grid : `~jax.numpy.ndarray`, shape `(nT,)`
+        Log₁₀ of temperature grid (pre-computed).
     temperature_grid : `~jax.numpy.ndarray`, shape `(nT,)`
-        Temperature grid in Kelvin.
+        Temperature grid in Kelvin (for minimum temperature check).
     layer_temperatures : `~jax.numpy.ndarray`, shape `(nlay,)`
         Layer temperatures in Kelvin.
 
@@ -75,7 +78,7 @@ def _interpolate_logsigma_1d(
       linear space.
     """
     log_t_layers = jnp.log10(layer_temperatures)
-    log_t_grid = jnp.log10(temperature_grid)
+    log_t_grid = log_temperature_grid
 
     t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
     t_idx = jnp.clip(t_idx, 0, log_t_grid.shape[0] - 2)
@@ -164,10 +167,12 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.
         return zero_special_opacity(state, params)
 
     sigma_cube = XS.cia_sigma_cube()
+    log_temperature_grids = XS.cia_log10_temperature_grids()
     temperature_grids = XS.cia_temperature_grids()
     sigma_log = sigma_cube[hm_index]
+    log_temperature_grid = log_temperature_grids[hm_index]
     temperature_grid = temperature_grids[hm_index]
-    sigma_values = 10.0 ** _interpolate_logsigma_1d(sigma_log, temperature_grid, layer_temperatures)
+    sigma_values = 10.0 ** _interpolate_logsigma_1d(sigma_log, log_temperature_grid, temperature_grid, layer_temperatures)
 
     # VMR value is already a JAX array, no need to wrap
     vmr_hm = jnp.broadcast_to(layer_vmr["H-"], (layer_count,))

@@ -94,11 +94,13 @@ def read_obs_data(path, base_dir=None):
     wl = floats[:, 0] # Central wavelengths
     dwl = floats[:, 1] # Wavelength +/- band widths (half width)
     y = floats[:, 2] # Observation y data (usually R_p^2/R_s^2 or F_p/F_s)
-    dy_minus = floats[:, 3] # Observation negative error bars
+    dy_plus = floats[:, 3] # Observation positive error bars
     if numeric_cols >= 5:
-        dy_plus = floats[:, 4]
+        dy_minus = floats[:, 4]
+        dy_sym = np.maximum(dy_plus, dy_minus)
     else:
-        dy_plus = dy_minus.copy()
+        dy_minus = dy_plus.copy()
+        dy_sym = dy_plus.copy()
     if raw.shape[1] > numeric_cols:
         response_mode = raw[:, numeric_cols] # Response function for the wavelength band
         print('[info] Using custom wavelength convolution functions for each band')
@@ -107,14 +109,11 @@ def read_obs_data(path, base_dir=None):
         print('[info] All bands have been defaulted to boxcar convolution')
 
     # Output dictionary values
-    dy_sym = 0.5 * (dy_plus + dy_minus)
     obs_dict = {
         "wl": wl,
         "dwl": dwl,
         "y": y,
         "dy": dy_sym,
-        "dy_plus": dy_plus,
-        "dy_minus": dy_minus,
         "response_mode": response_mode,
     }
 

@@ -100,7 +100,7 @@ This was converted into JAX compabitile python from the origional python code fo
    import numpy as np
    import matplotlib.pyplot as plt
    from pathlib import Path
-   from exo_skryer.rate_jax import load_gibbs_cache
+   from exo_skryer.rate_jax import load_nasa9_cache
    from exo_skryer.vert_Tp import Milne_modified
    from exo_skryer.vert_chem import CE_rate_jax
    from exo_skryer.data_constants import bar
@@ -110,10 +110,10 @@ This was converted into JAX compabitile python from the origional python code fo
    except NameError:
        root = Path.cwd().resolve()
    for _ in range(5):
-       if (root / "JANAF_data").is_dir():
+       if (root / "NASA9").is_dir():
            break
        root = root.parent
-   load_gibbs_cache(str(root / "JANAF_data"))
+   load_nasa9_cache(str(root / "NASA9"))
 
    nlev = 100
    p_bot = np.log10(100.0)
@@ -178,7 +178,7 @@ Quenching Timescale Approximation
    import numpy as np
    import matplotlib.pyplot as plt
    from pathlib import Path
-   from exo_skryer.rate_jax import load_gibbs_cache
+   from exo_skryer.rate_jax import load_nasa9_cache
    from exo_skryer.vert_Tp import Milne_modified
    from exo_skryer.vert_chem import quench_approx
    from exo_skryer.data_constants import bar
@@ -188,10 +188,10 @@ Quenching Timescale Approximation
    except NameError:
        root = Path.cwd().resolve()
    for _ in range(5):
-       if (root / "JANAF_data").is_dir():
+       if (root / "NASA9").is_dir():
            break
        root = root.parent
-   load_gibbs_cache(str(root / "JANAF_data"))
+   load_nasa9_cache(str(root / "NASA9"))
 
    nlev = 100
    p_bot = np.log10(100.0)

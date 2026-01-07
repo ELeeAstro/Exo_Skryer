@@ -88,32 +88,33 @@ def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
     where n_d is number density and ρ is mass density.
     """
     sigma_cube = XS.cia_sigma_cube()
+    log_temperature_grids = XS.cia_log10_temperature_grids()
     temperature_grids = XS.cia_temperature_grids()
 
     # Convert to log10 space for interpolation
     log_t_layers = jnp.log10(layer_temperatures)
 
-    def _interp_one_species(sigma_2d, temp_grid):
+    def _interp_one_species(sigma_2d, log_temp_grid, temp_grid):
         """Interpolate log10 cross-sections for a single CIA species.
 
         Parameters
         ----------
         sigma_2d : `~jax.numpy.ndarray`, shape (nT, nwl)
             Log10 CIA cross-sections.
+        log_temp_grid : `~jax.numpy.ndarray`, shape (nT,)
+            Log10 temperature grid.
         temp_grid : `~jax.numpy.ndarray`, shape (nT,)
-            Temperature grid in Kelvin.
+            Temperature grid in Kelvin (for min temp check).
 
         Returns
         -------
         s_interp : `~jax.numpy.ndarray`, shape (nlay, nwl)
             Log10 cross-sections interpolated to `layer_temperatures`.
         """
-        log_t_grid = jnp.log10(temp_grid)
-
         # Find temperature bracket indices and weights in log space
-        t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
-        t_idx = jnp.clip(t_idx, 0, log_t_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
+        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
+        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
         t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
         # Linear interpolation between temperature brackets
@@ -130,8 +131,8 @@ def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
         return s_interp
 
     # Vectorize over all CIA species
-    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, temperature_grids)
-    return 10.0 ** sigma_log
+    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids, temperature_grids)
+    return 10.0 ** sigma_log.astype(jnp.float64)
 
 
 def _compute_pair_weight(

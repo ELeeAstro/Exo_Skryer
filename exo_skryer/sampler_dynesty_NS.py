@@ -1,7 +1,7 @@
 """
 sampler_dynesty_NS.py
 =====================
-Dynesty nested sampling driver for a JAX forward model, aligned with your JAXNS/blackjax
+Dynesty nested sampling driver for a JAX forward model, aligned with JAXNS/blackjax
 split-normal likelihood and YAML priors.
 
 Key points:
@@ -18,8 +18,6 @@ import pickle
 import numpy as np
 import jax
 import jax.numpy as jnp
-
-from .build_prepared import Prepared
 
 try:
     import dynesty
@@ -95,22 +93,20 @@ def build_prior_transform_dynesty(cfg) -> Tuple[Callable[[np.ndarray], np.ndarra
     return prior_transform, param_names
 
 
-def build_loglikelihood_dynesty(cfg, prep: Prepared, param_names: List[str]) -> Callable[[np.ndarray], float]:
+def build_loglikelihood_dynesty(cfg, obs: dict, fm: Callable, param_names: List[str]) -> Callable[[np.ndarray], float]:
     """
     Build Dynesty log-likelihood function that wraps a JAX-jitted loglike.
 
-    Uses the same split-normal + jitter model you use elsewhere:
+    Implements Gaussian + jitter model:
       - residual r = y_obs - mu
-      - choose dy_p/dy_m depending on sign(r)
       - inflate via sigma_jit^2 = 10^(2c) (c in log10 space)
       - reject NaNs/Infs via -inf on device, and return LOG_FLOOR on host
     """
     # Observations to device (closed over)
-    y_obs    = jnp.asarray(prep.y)
-    dy_obs_p = jnp.asarray(prep.dy_p)
-    dy_obs_m = jnp.asarray(prep.dy_m)
+    y_obs    = jnp.asarray(obs["y"])
+    dy_obs = jnp.asarray(obs["dy"])
 
-    # Collect delta params once (if your prep.fm already injects them, this is harmless)
+    # Collect delta params once
     delta_dict: Dict[str, float] = {}
     for p in cfg.params:
         if str(getattr(p, "dist", "")).lower() == "delta":
@@ -142,7 +138,7 @@ def build_loglikelihood_dynesty(cfg, prep: Prepared, param_names: List[str]) -> 
     def loglike_jax(theta_vec: jnp.ndarray) -> jnp.ndarray:
         params = _vec_to_theta_dict(theta_vec)
 
-        mu = prep.fm(params)  # (N,)
+        mu = fm(params)  # (N,)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def valid_ll(_):
@@ -152,15 +148,10 @@ def build_loglikelihood_dynesty(cfg, prep: Prepared, param_names: List[str]) -> 
             c = params["c"]  # log10(sigma_jit)
             sig_jit2 = 10.0 ** (2.0 * c)  # 10^(2c)
 
-            sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
-            sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
-
-            sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
-
-            norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
+            sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)
             sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
 
-            logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
+            logC = -jnp.log(sig_eff) - 0.5 * jnp.log(2.0 * jnp.pi)
             ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
             return jnp.where(jnp.isfinite(ll), ll, -jnp.inf)
@@ -185,7 +176,8 @@ def build_loglikelihood_dynesty(cfg, prep: Prepared, param_names: List[str]) -> 
 
 def run_nested_dynesty(
     cfg,
-    prep: Prepared,
+    obs: dict,
+    fm: Callable,
     exp_dir: Path,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """
@@ -212,7 +204,7 @@ def run_nested_dynesty(
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     prior_fn, param_names = build_prior_transform_dynesty(cfg)
-    loglike_fn = build_loglikelihood_dynesty(cfg, prep, param_names)
+    loglike_fn = build_loglikelihood_dynesty(cfg, obs, fm, param_names)
     ndim = len(param_names)
 
     print(f"[Dynesty] Free parameters: {ndim}")

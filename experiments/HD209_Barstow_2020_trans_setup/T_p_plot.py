@@ -3,7 +3,7 @@
 plot_Tp_band.py — plot median temperature–pressure profile and 95% credible band.
 
 Expected layout (experiment directory):
-  - config.yaml           (your YAML, including physics + params)
+  - config.yaml           (YAML configuration, including physics + params)
   - posterior.nc          (ArviZ InferenceData with posterior group)
 
 Source layout:

@@ -19,7 +19,7 @@ def _rom_mix_band(
 ) -> jnp.ndarray:
     """Mix multiple species at one (layer, wavelength) using RORR.
 
-    Implements random overlap with ranked reordering (RORR): sequentially add
+    Implements random overlap with resampling and reordering (RORR): sequentially add
     species by forming the ROM matrix, sorting by k, and interpolating back to
     the standard g-grid.
 

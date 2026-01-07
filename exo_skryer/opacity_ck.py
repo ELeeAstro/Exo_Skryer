@@ -57,12 +57,11 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
     Cross-sections are kept in log₁₀ space throughout to maintain numerical stability
     and enable efficient mixing in the PRAS scheme.
     """
-    sigma_cube = XS.ck_sigma_cube()
-    pressure_grid = XS.ck_pressure_grid()
-    temperature_grids = XS.ck_temperature_grids()
+    sigma_cube = jnp.asarray(XS.ck_sigma_cube(), dtype=jnp.float64)
+    log_p_grid = XS.ck_log10_pressure_grid()
+    log_temperature_grids = XS.ck_log10_temperature_grids()
 
     # Convert to log10 space for interpolation
-    log_p_grid = jnp.log10(pressure_grid)
     log_p_layers = jnp.log10(layer_pressures_bar)
     log_t_layers = jnp.log10(layer_temperatures)
 
@@ -72,15 +71,15 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
     p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
     p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
-    def _interp_one_species(sigma_4d, temp_grid):
+    def _interp_one_species(sigma_4d, log_temp_grid):
         """Interpolate cross-sections for a single species.
 
         Parameters
         ----------
         sigma_4d : `~jax.numpy.ndarray`, shape (nT, nP, nwl, ng)
             Cross-sections for one species in log₁₀ space.
-        temp_grid : `~jax.numpy.ndarray`, shape (nT,)
-            Temperature grid for this species in Kelvin.
+        log_temp_grid : `~jax.numpy.ndarray`, shape (nT,)
+            Log10 temperature grid for this species.
 
         Returns
         -------
@@ -88,13 +87,10 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
             Interpolated cross-sections in log₁₀ space.
         """
 
-        # Convert temperature grid to log space
-        log_t_grid = jnp.log10(temp_grid)
-
         # Find temperature bracket indices and weights in log space
-        t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
-        t_idx = jnp.clip(t_idx, 0, log_t_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
+        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
+        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
         t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
         # Get four corners of bilinear interpolation rectangle
@@ -113,7 +109,7 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
         return s_interp
 
     # Vectorize over all species
-    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, temperature_grids)
+    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
     return sigma_log
 
 def _get_ck_quadrature(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.ndarray]:

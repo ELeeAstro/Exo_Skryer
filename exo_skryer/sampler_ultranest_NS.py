@@ -2,7 +2,7 @@
 sampler_ultranest_NS.py
 =======================
 
-UltraNest nested sampler driver aligned with your JAXNS/blackjax setup:
+UltraNest nested sampler driver with internal prior transform and likelihood construction.
 
 - Prior transform: unit cube -> physical params (no redundant "logit" handling)
 - Uses scipy.special.ndtri for Normal / LogNormal transforms
@@ -18,8 +18,6 @@ from pathlib import Path
 import numpy as np
 import jax
 import jax.numpy as jnp
-
-from .build_prepared import Prepared
 
 try:
     from ultranest import ReactiveNestedSampler
@@ -49,50 +47,94 @@ def build_prior_transform_ultranest(cfg) -> Tuple[Callable[[np.ndarray], np.ndar
     params_cfg = [p for p in cfg.params if str(getattr(p, "dist", "")).lower() != "delta"]
     param_names = [p.name for p in params_cfg]
 
+    # Pre-extract all parameter info to avoid closure issues and for safety
+    param_info = []
+    for p in params_cfg:
+        dist_name = str(getattr(p, "dist", "")).lower()
+        info = {"name": p.name, "dist": dist_name}
+
+        if dist_name == "uniform":
+            info["low"] = float(getattr(p, "low"))
+            info["high"] = float(getattr(p, "high"))
+        elif dist_name in ("gaussian", "normal"):
+            info["mu"] = float(getattr(p, "mu"))
+            info["sigma"] = float(getattr(p, "sigma"))
+        elif dist_name == "lognormal":
+            info["mu"] = float(getattr(p, "mu"))
+            info["sigma"] = float(getattr(p, "sigma"))
+        else:
+            raise ValueError(f"Unsupported distribution '{dist_name}' for parameter '{p.name}'")
+
+        param_info.append(info)
+
     def prior_transform(u: np.ndarray) -> np.ndarray:
         u = np.asarray(u, dtype=np.float64)
+
+        # Handle both vectorized (2D) and non-vectorized (1D) inputs
+        # When vectorized=True, u has shape (n_samples, n_params)
+        # When vectorized=False, u has shape (n_params,)
+        is_batch = u.ndim == 2
+
+        if is_batch:
+            n_samples, n_params = u.shape
+            if n_params != len(param_info):
+                raise ValueError(
+                    f"Dimension mismatch: got {n_params} parameters, expected {len(param_info)}. "
+                    f"Parameter names: {[info['name'] for info in param_info]}"
+                )
+        else:
+            n_params = len(u)
+            if n_params != len(param_info):
+                raise ValueError(
+                    f"Dimension mismatch: got {n_params} parameters, expected {len(param_info)}. "
+                    f"Parameter names: {[info['name'] for info in param_info]}"
+                )
+
         theta = np.empty_like(u, dtype=np.float64)
 
         eps = 1e-12
-        u = np.clip(u, eps, 1.0 - eps)
+        u_clipped = np.clip(u, eps, 1.0 - eps)
 
-        for i, p in enumerate(params_cfg):
-            dist_name = str(getattr(p, "dist", "")).lower()
+        for i, info in enumerate(param_info):
+            dist_name = info["dist"]
+
+            if is_batch:
+                # Vectorized: u_clipped[:, i] has shape (n_samples,)
+                u_i = u_clipped[:, i]
+            else:
+                # Non-vectorized: u_clipped[i] is a scalar
+                u_i = u_clipped[i]
 
             if dist_name == "uniform":
-                low = float(getattr(p, "low"))
-                high = float(getattr(p, "high"))
-                theta[i] = low + u[i] * (high - low)
+                theta_i = info["low"] + u_i * (info["high"] - info["low"])
 
             elif dist_name in ("gaussian", "normal"):
-                mu = float(getattr(p, "mu"))
-                sigma = float(getattr(p, "sigma"))
-                theta[i] = mu + sigma * ndtri(u[i])
+                theta_i = info["mu"] + info["sigma"] * ndtri(u_i)
 
             elif dist_name == "lognormal":
-                mu = float(getattr(p, "mu"))
-                sigma = float(getattr(p, "sigma"))
-                theta[i] = np.exp(mu + sigma * ndtri(u[i]))
+                theta_i = np.exp(info["mu"] + info["sigma"] * ndtri(u_i))
 
+            # Assign to appropriate location
+            if is_batch:
+                theta[:, i] = theta_i
             else:
-                raise ValueError(f"Unsupported distribution '{dist_name}' for parameter '{p.name}'")
+                theta[i] = theta_i
 
         return theta
 
     return prior_transform, param_names
 
 
-def build_loglikelihood_ultranest(cfg, prep: Prepared, param_names: List[str]) -> Callable[[np.ndarray], float]:
+def build_loglikelihood_ultranest(cfg, obs: dict, fm: Callable, param_names: List[str]) -> Callable[[np.ndarray], float]:
     """
     Build UltraNest log-likelihood function. The heavy lifting is done in JAX.
 
-    This mirrors your split-normal + jitter likelihood:
+    Implements Gaussian + jitter likelihood:
       - jitter uses c = log10(sigma_jit), sigma_jit^2 = 10^(2c)
       - invalid mu / invalid ll -> LOG_FLOOR on host
     """
-    y_obs    = jnp.asarray(prep.y)
-    dy_obs_p = jnp.asarray(prep.dy_p)
-    dy_obs_m = jnp.asarray(prep.dy_m)
+    y_obs    = jnp.asarray(obs["y"])
+    dy_obs = jnp.asarray(obs["dy"])
 
     # Delta params (fixed) injected into theta_dict for consistency
     delta_dict: Dict[str, float] = {}
@@ -121,7 +163,7 @@ def build_loglikelihood_ultranest(cfg, prep: Prepared, param_names: List[str]) -
     def loglike_jax(theta_vec: jnp.ndarray) -> jnp.ndarray:
         theta_map = _vec_to_theta_dict(theta_vec)
 
-        mu = prep.fm(theta_map)
+        mu = fm(theta_map)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def invalid_ll(_):
@@ -133,30 +175,20 @@ def build_loglikelihood_ultranest(cfg, prep: Prepared, param_names: List[str]) -
             c = theta_map["c"]                # always present (YAML or default)
             sig_jit2 = 10.0 ** (2.0 * c)      # 10^(2c)
 
-            sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
-            sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
-
-            sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
-
-            norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
+            sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)
             sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
 
-            logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
+            logC = -jnp.log(sig_eff) - 0.5 * jnp.log(2.0 * jnp.pi)
             ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
             return jnp.where(jnp.isfinite(ll), ll, -jnp.inf)
 
         return jax.lax.cond(valid_mu, valid_ll, invalid_ll, operand=None)
 
-    # Vectorized version for batch evaluation
-    loglike_jax_vectorized = jax.jit(jax.vmap(loglike_jax))
-
     # Warm-up compilation once (helps avoid "first call compiles during sampling")
     _ = float(loglike_jax(jnp.zeros((len(param_names),), dtype=jnp.float64)))
-    # Also warm up vectorized version
-    _ = loglike_jax_vectorized(jnp.zeros((2, len(param_names)), dtype=jnp.float64))
 
-    # Host callback UltraNest expects
+    # Host callback UltraNest expects (non-vectorized)
     def loglikelihood(theta: np.ndarray) -> float:
         theta_vec = jnp.asarray(theta, dtype=jnp.float64)
         val = float(loglike_jax(theta_vec))  # one device sync
@@ -164,24 +196,13 @@ def build_loglikelihood_ultranest(cfg, prep: Prepared, param_names: List[str]) -
             return LOG_FLOOR
         return val
 
-    # Vectorized callback for batched evaluation
-    def loglikelihood_vectorized(theta_batch: np.ndarray) -> np.ndarray:
-        """
-        theta_batch: shape (n_points, n_params)
-        returns: shape (n_points,)
-        """
-        theta_batch_jax = jnp.asarray(theta_batch, dtype=jnp.float64)
-        ll_batch = loglike_jax_vectorized(theta_batch_jax)  # one device sync for entire batch
-        result = np.asarray(ll_batch, dtype=np.float64)
-        result = np.where(np.isfinite(result), result, LOG_FLOOR)
-        return result
-
-    return loglikelihood, loglikelihood_vectorized
+    return loglikelihood
 
 
 def run_nested_ultranest(
     cfg,
-    prep: Prepared,
+    obs: dict,
+    fm: Callable,
     exp_dir: Path,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """
@@ -204,14 +225,14 @@ def run_nested_ultranest(
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     prior_fn, param_names = build_prior_transform_ultranest(cfg)
-    loglike_fn, loglike_fn_vectorized = build_loglikelihood_ultranest(cfg, prep, param_names)
+    loglike_fn = build_loglikelihood_ultranest(cfg, obs, fm, param_names)
 
-    # Construct sampler with vectorized=True for better performance
+    # Construct sampler (non-vectorized for simplicity and compatibility)
     sampler = ReactiveNestedSampler(
         param_names,
-        loglike_fn_vectorized,
+        loglike_fn,
         prior_fn,
-        vectorized=True
+        vectorized=False
     )
 
     if verbose:

@@ -4,7 +4,7 @@ help_runtime.py
 """
 
 import os
-import multiprocessing  # still here if you want to auto-detect cores later
+import multiprocessing  # available for auto-detection of core count if needed
 
 __all__ = ['apply_runtime_env']
 
@@ -29,7 +29,7 @@ def apply_runtime_env(rc):
     Returns
     -------
     numpyro_threads : int | None
-        Hint for numpyro.set_host_device_count in your driver.
+        Hint for numpyro.set_host_device_count in driver implementation.
     """
     rt = getattr(rc, "runtime", None)
     if rt is None:
@@ -62,8 +62,8 @@ def apply_runtime_env(rc):
             # JAX treats these as "gpu" at the higher level
             os.environ["JAX_PLATFORM_NAME"] = "gpu"
 
-    # Optional: NumPyro-specific override (still via JAX, but gives you a knob
-    # that you conceptually treat as "NumPyro device").
+    # Optional: NumPyro-specific override (still via JAX, provides additional
+    # control over "NumPyro device" conceptually).
     np_plat = getattr(rt, "numpyro_platform", None)
     if np_plat:
         np_plat_norm = str(np_plat).lower()

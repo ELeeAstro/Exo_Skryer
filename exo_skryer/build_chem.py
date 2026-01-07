@@ -13,7 +13,7 @@ __all__ = [
     'infer_log10_vmr_keys',
     'validate_log10_vmr_params',
     'prepare_chemistry_kernel',
-    'load_gibbs_if_needed'
+    'load_nasa9_if_needed'
 ]
 
 
@@ -125,11 +125,6 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
         The prepared chemistry kernel, potentially optimized for JIT compilation.
     trace_species : tuple of str
         Tuple of trace species names inferred from the opacity configuration.
-
-    Notes
-    -----
-    For constant VMR mode, this function validates required parameters and builds
-    an optimized JIT-friendly kernel using `constant_vmr` from vert_chem.
     """
     from .vert_chem import constant_vmr
 
@@ -150,11 +145,11 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
     return chemistry_kernel, trace_species
 
 
-def load_gibbs_if_needed(cfg: Any, exp_dir: Path) -> None:
-    """Load Gibbs free energy tables if chemical equilibrium chemistry requires it.
+def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
+    """Load NASA-9 thermo coefficients if RateJAX chemistry requires it.
 
     This function checks if the configured chemistry scheme requires Gibbs free
-    energy data (RateJAX chemical equilibrium modes) and loads the JANAF tables
+    energy data (RateJAX chemical equilibrium modes) and loads the NASA-9 tables
     if needed. If data is already loaded or not required, it returns immediately.
 
     Parameters
@@ -162,29 +157,7 @@ def load_gibbs_if_needed(cfg: Any, exp_dir: Path) -> None:
     cfg : config object
         Parsed YAML configuration object with `cfg.physics.vert_chem` attribute.
     exp_dir : `~pathlib.Path`
-        Experiment directory used to resolve relative paths to JANAF data.
-
-    Raises
-    ------
-    ValueError
-        If chemical equilibrium mode is selected but JANAF data path is not
-        specified in `cfg.data.janaf`.
-
-    Notes
-    -----
-    Only relevant when ``physics.vert_chem`` is set to one of:
-    - 'rate_ce'
-    - 'rate_jax'
-    - 'ce_rate_jax'
-
-    The JANAF data path can be specified relative to the experiment directory
-    or as an absolute path in the configuration.
-
-    Examples
-    --------
-    >>> load_gibbs_if_needed(cfg, exp_dir)
-    [info] Loading Gibbs free energy tables from /path/to/JANAF_data
-    [info] Gibbs cache loaded: 123 species
+        Experiment directory used to resolve relative paths to NASA-9 data.
     """
     phys = getattr(cfg, "physics", None)
     if phys is None:
@@ -198,26 +171,26 @@ def load_gibbs_if_needed(cfg: Any, exp_dir: Path) -> None:
     if vert_chem_name not in ("rate_ce", "rate_jax", "ce_rate_jax"):
         return
 
-    from rate_jax import is_gibbs_cache_loaded, load_gibbs_cache
+    from .rate_jax import is_nasa9_cache_loaded, load_nasa9_cache
 
-    if is_gibbs_cache_loaded():
-        print("[info] Gibbs cache already loaded")
+    if is_nasa9_cache_loaded():
+        print("[info] NASA-9 cache already loaded")
         return
 
     data_cfg = getattr(cfg, "data", None)
-    janaf_rel_path = getattr(data_cfg, "janaf", None) if data_cfg is not None else None
-    if janaf_rel_path is None:
+    nasa9_rel_path = getattr(data_cfg, "nasa9", None) if data_cfg is not None else None
+    if nasa9_rel_path is None:
         raise ValueError(
-            "JANAF data path not found in config. Please add 'janaf: path/to/JANAF_data' "
-            "under 'data:' section in your YAML config."
+            "NASA-9 data path not found in config. Please add 'nasa9: path/to/NASA9' "
+            "under 'data:' section in YAML config."
         )
 
-    janaf_path = (
-        str(exp_dir / janaf_rel_path)
-        if not Path(janaf_rel_path).is_absolute()
-        else janaf_rel_path
+    nasa9_path = (
+        str(exp_dir / nasa9_rel_path)
+        if not Path(nasa9_rel_path).is_absolute()
+        else nasa9_rel_path
     )
 
-    print(f"[info] Loading Gibbs free energy tables from {janaf_path}")
-    gibbs = load_gibbs_cache(janaf_path)
-    print(f"[info] Gibbs cache loaded: {len(gibbs.data)} species")
+    print(f"[info] Loading NASA-9 thermo tables from {nasa9_path}")
+    thermo = load_nasa9_cache(nasa9_path)
+    print(f"[info] NASA-9 cache loaded: {len(thermo.data)} species")

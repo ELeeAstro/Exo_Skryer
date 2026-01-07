@@ -26,6 +26,8 @@ __all__ = [
     "line_temperature_grid",
     "line_temperature_grids",
     "line_sigma_cube",
+    "line_log10_pressure_grid",
+    "line_log10_temperature_grids",
 ]
 
 
@@ -49,6 +51,8 @@ _LINE_SIGMA_CACHE: jnp.ndarray | None = None
 _LINE_TEMPERATURE_CACHE: jnp.ndarray | None = None
 _LINE_WAVELENGTH_CACHE: jnp.ndarray | None = None
 _LINE_PRESSURE_CACHE: jnp.ndarray | None = None
+_LINE_LOG10_TEMPERATURE_CACHE: jnp.ndarray | None = None
+_LINE_LOG10_PRESSURE_CACHE: jnp.ndarray | None = None
 
 # Clear all the cache entries
 def _clear_cache():
@@ -58,15 +62,20 @@ def _clear_cache():
     line_temperature_grid.cache_clear()
     line_temperature_grids.cache_clear()
     line_sigma_cube.cache_clear()
+    line_log10_pressure_grid.cache_clear()
+    line_log10_temperature_grids.cache_clear()
 
 # Reset all the global registries
 def reset_registry() -> None:
     global _LINE_SPECIES_NAMES, _LINE_SIGMA_CACHE, _LINE_TEMPERATURE_CACHE, _LINE_WAVELENGTH_CACHE, _LINE_PRESSURE_CACHE
+    global _LINE_LOG10_TEMPERATURE_CACHE, _LINE_LOG10_PRESSURE_CACHE
     _LINE_SPECIES_NAMES = ()
     _LINE_SIGMA_CACHE = None
     _LINE_TEMPERATURE_CACHE = None
     _LINE_WAVELENGTH_CACHE = None
     _LINE_PRESSURE_CACHE = None
+    _LINE_LOG10_TEMPERATURE_CACHE = None
+    _LINE_LOG10_PRESSURE_CACHE = None
     _clear_cache()
 
 # Check if the registries are set or not
@@ -280,6 +289,7 @@ def load_line_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_d
 
     # Allocate the global scope caches
     global _LINE_SPECIES_NAMES, _LINE_SIGMA_CACHE, _LINE_TEMPERATURE_CACHE, _LINE_WAVELENGTH_CACHE, _LINE_PRESSURE_CACHE
+    global _LINE_LOG10_TEMPERATURE_CACHE, _LINE_LOG10_PRESSURE_CACHE
 
     entries: List[LineRegistryEntry] = []
 
@@ -331,7 +341,7 @@ def load_line_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_d
 
     # Stack cross sections: (n_species, nT, nP, nwl) - already float32 from preprocessing
     sigma_stacked = np.stack([entry.cross_sections for entry in rectangularized_entries], axis=0)
-    _LINE_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float64)
+    _LINE_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float32)
 
     # Stack temperature grids: (n_species, nT) - keep as float64 for accuracy
     temp_stacked = np.stack([entry.temperatures for entry in rectangularized_entries], axis=0)
@@ -341,8 +351,13 @@ def load_line_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_d
     _LINE_WAVELENGTH_CACHE = jnp.asarray(rectangularized_entries[0].wavelengths, dtype=jnp.float64)
     _LINE_PRESSURE_CACHE = jnp.asarray(rectangularized_entries[0].pressures, dtype=jnp.float64)
 
+    # Pre-compute log10 of grids for efficient interpolation
+    _LINE_LOG10_PRESSURE_CACHE = jnp.log10(_LINE_PRESSURE_CACHE)
+    _LINE_LOG10_TEMPERATURE_CACHE = jnp.log10(_LINE_TEMPERATURE_CACHE)
+
     print(f"[Line] Cross section cache: {_LINE_SIGMA_CACHE.shape} (dtype: {_LINE_SIGMA_CACHE.dtype})")
     print(f"[Line] Temperature cache: {_LINE_TEMPERATURE_CACHE.shape} (dtype: {_LINE_TEMPERATURE_CACHE.dtype})")
+    print(f"[Line] Cached log10(P) and log10(T) grids for efficient interpolation")
 
     # Estimate memory usage
     sigma_mb = _LINE_SIGMA_CACHE.size * _LINE_SIGMA_CACHE.itemsize / 1024**2
@@ -402,3 +417,17 @@ def line_sigma_cube() -> jnp.ndarray:
     if _LINE_SIGMA_CACHE is None:
         raise RuntimeError("Line σ cube not built; call build_opacities() first.")
     return _LINE_SIGMA_CACHE
+
+
+@lru_cache(None)
+def line_log10_pressure_grid() -> jnp.ndarray:
+    if _LINE_LOG10_PRESSURE_CACHE is None:
+        raise RuntimeError("Line log10(P) grid not built; call build_opacities() first.")
+    return _LINE_LOG10_PRESSURE_CACHE
+
+
+@lru_cache(None)
+def line_log10_temperature_grids() -> jnp.ndarray:
+    if _LINE_LOG10_TEMPERATURE_CACHE is None:
+        raise RuntimeError("Line log10(T) grids not built; call build_opacities() first.")
+    return _LINE_LOG10_TEMPERATURE_CACHE

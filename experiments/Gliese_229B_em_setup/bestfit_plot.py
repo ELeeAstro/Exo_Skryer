@@ -4,7 +4,7 @@ plot_model_band.py — plot median model and 95% credible band using the same
 forward model as the retrieval, built via build_forward_model(cfg, obs).
 
 Expected layout (experiment directory):
-  - config.yaml           (your YAML)
+  - config.yaml           (YAML configuration)
   - posterior.nc          (ArviZ InferenceData with posterior group)
   - observed_data.csv     (optional; lam_um,dlam_um,depth,depth_sigma)
 
@@ -381,7 +381,7 @@ def _bump_opacity_paths_one_level(cfg, exp_dir: Path):
                     resolved = _resolve_path_relative(p_str, exp_dir)
                     setattr(spec, "path", str(resolved))
 
-        # Handle single objects with .path (in case you ever have those)
+        # Handle single objects with .path (if present)
         elif hasattr(val, "path"):
             p = getattr(val, "path")
             if not p:

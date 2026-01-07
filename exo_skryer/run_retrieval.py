@@ -124,8 +124,8 @@ def main() -> None:
     load_bandpass_registry(obs, full_grid, cut_grid)
 
     # Load Gibbs free energy tables for chemical equilibrium (if using rate_jax)
-    from .build_chem import load_gibbs_if_needed
-    load_gibbs_if_needed(cfg, exp_dir)
+    from .build_chem import load_nasa9_if_needed
+    load_nasa9_if_needed(cfg, exp_dir)
 
     # Build the forward model from the YAML options - return a function that samplers can use
     from .build_model import build_forward_model
@@ -133,10 +133,7 @@ def main() -> None:
 
     fm_fnc = build_forward_model(cfg, obs, stellar_flux=stellar_flux)
 
-    # Prepare the main dataclass required for all samplers and forward model
-    from .build_prepared import build_prepared
-    prep = build_prepared(cfg, obs, fm=fm_fnc)
-
+    # All samplers are now self-contained - no build_prepared needed!
     t_start_2 = time.perf_counter()
 
     # Prepare the sampling schemes
@@ -146,42 +143,41 @@ def main() -> None:
     evidence_info: Dict[str, Any] = {}
     samples_dict: Dict[str, Any] = {}
 
-    # Which high-level sampler to use: "nuts", "hmc", "jaxns", "numpyro_ns", or "blackjax_ns"
     engine = cfg.sampling.engine
 
     if engine == "nuts":
         # Extract backend driver
         backend = cfg.sampling.nuts.backend
         if backend == "blackjax":
-            # Blackjax MCMC driver
+            # Blackjax MCMC driver (self-contained)
             from .sampler_blackjax_MCMC import run_nuts_blackjax
-            samples_dict = run_nuts_blackjax(cfg, prep, exp_dir)
+            samples_dict = run_nuts_blackjax(cfg, obs, fm_fnc, exp_dir)
         elif backend == "numpyro":
-            # Numpyro MCMC driver
+            # Numpyro MCMC driver (self-contained)
             from .sampler_numpyro_MCMC import run_nuts_numpyro
-            samples_dict = run_nuts_numpyro(cfg, prep, exp_dir)
+            samples_dict = run_nuts_numpyro(cfg, obs, fm_fnc, exp_dir)
         else:
             raise ValueError(f"Unknown backend for NUTS: {backend!r}")
 
     elif engine == "jaxns":
-        # jaxns nested-sampling driver
+        # jaxns nested-sampling driver (self-contained)
         from .sampler_jaxns_NS import run_nested_jaxns
-        samples_dict, evidence_info = run_nested_jaxns(cfg, prep, exp_dir)
+        samples_dict, evidence_info = run_nested_jaxns(cfg, obs, fm_fnc, exp_dir)
 
     elif engine == "blackjax_ns":
-        # BlackJAX nested-sampling driver
+        # BlackJAX nested-sampling driver (self-contained)
         from .sampler_blackjax_NS import run_nested_blackjax
-        samples_dict, evidence_info = run_nested_blackjax(cfg, prep, exp_dir)
+        samples_dict, evidence_info = run_nested_blackjax(cfg, obs, fm_fnc, exp_dir)
 
     elif engine == "ultranest":
-        # UltraNest nested-sampling driver
+        # UltraNest nested-sampling driver (self-contained)
         from .sampler_ultranest_NS import run_nested_ultranest
-        samples_dict, evidence_info = run_nested_ultranest(cfg, prep, exp_dir)
+        samples_dict, evidence_info = run_nested_ultranest(cfg, obs, fm_fnc, exp_dir)
 
     elif engine == "dynesty":
-        # Dynesty nested-sampling driver
+        # Dynesty nested-sampling driver (self-contained)
         from .sampler_dynesty_NS import run_nested_dynesty
-        samples_dict, evidence_info = run_nested_dynesty(cfg, prep, exp_dir)
+        samples_dict, evidence_info = run_nested_dynesty(cfg, obs, fm_fnc, exp_dir)
 
     else:
         raise ValueError("Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty")

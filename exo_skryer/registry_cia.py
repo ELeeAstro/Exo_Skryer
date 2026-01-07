@@ -23,6 +23,7 @@ __all__ = [
     "cia_sigma_cube",
     "cia_temperature_grid",
     "cia_temperature_grids",
+    "cia_log10_temperature_grids",
 ]
 
 
@@ -66,6 +67,7 @@ _CIA_SPECIES_NAMES: Tuple[str, ...] = ()  # Lightweight: only species names (few
 _CIA_SIGMA_CACHE: jnp.ndarray | None = None
 _CIA_TEMPERATURE_CACHE: jnp.ndarray | None = None
 _CIA_WAVELENGTH_CACHE: jnp.ndarray | None = None
+_CIA_LOG10_TEMPERATURE_CACHE: jnp.ndarray | None = None
 
 # Clear cache helper function
 def _clear_cache():
@@ -74,15 +76,17 @@ def _clear_cache():
     cia_temperature_grids.cache_clear()
     cia_temperature_grid.cache_clear()
     cia_sigma_cube.cache_clear()
+    cia_log10_temperature_grids.cache_clear()
 
 # Reset all registry values
 def reset_registry():
     global _CIA_SPECIES_NAMES, _CIA_SIGMA_CACHE, _CIA_TEMPERATURE_CACHE
-    global _CIA_WAVELENGTH_CACHE
+    global _CIA_WAVELENGTH_CACHE, _CIA_LOG10_TEMPERATURE_CACHE
     _CIA_SPECIES_NAMES = ()
     _CIA_SIGMA_CACHE = None
     _CIA_TEMPERATURE_CACHE = None
     _CIA_WAVELENGTH_CACHE = None
+    _CIA_LOG10_TEMPERATURE_CACHE = None
     _clear_cache()
 
 # Helper function to check if data is in the global cache
@@ -182,13 +186,13 @@ def _rectangularize_entries(entries: List[CiaRegistryEntry]) -> Tuple[CiaRegistr
 def _build_hminus_cia_entry(index: int, target_wavelengths: np.ndarray, spec) -> CiaRegistryEntry:
     lam = np.asarray(target_wavelengths, dtype=float)
 
-    # Rectangularise to the H2-He grid size you expect
+    # Rectangularise to the expected H2-He grid size
     nT = 334
     T = np.linspace(100.0, 6000.0, nT, dtype=float)
 
     floor = -199.0
 
-    # Base validity window from your constants
+    # Base validity window from configured constants
     lam_min_base = float(lam_min)   # module constant
     lam0_base = float(lam_0)        # module constant
     valid = (lam >= lam_min_base) & (lam <= lam0_base)
@@ -233,7 +237,7 @@ def _build_hminus_cia_entry(index: int, target_wavelengths: np.ndarray, spec) ->
 def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir: Optional[Path] = None) -> None:
 
     # Initialise the global caches
-    global _CIA_SPECIES_NAMES, _CIA_SIGMA_CACHE, _CIA_TEMPERATURE_CACHE, _CIA_WAVELENGTH_CACHE
+    global _CIA_SPECIES_NAMES, _CIA_SIGMA_CACHE, _CIA_TEMPERATURE_CACHE, _CIA_WAVELENGTH_CACHE, _CIA_LOG10_TEMPERATURE_CACHE
     entries: List[CiaRegistryEntry] = []
     config = getattr(cfg.opac, "cia", None)
     if not config:
@@ -273,14 +277,14 @@ def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_di
     # All preprocessing is done in NumPy (CPU). Now we send the final data
     # to the device (GPU/CPU as configured) for use in JIT-compiled forward model.
     # Mixed precision strategy:
-    # Float64 for grids and cross sections.
+    # Float64 for grids, float32 for cross sections.
     # ============================================================================
 
     print(f"[CIA] Transferring {len(rectangularized_entries)} species to device...")
 
     # Stack cross sections: (n_species, nT, nwl) - already float64 from preprocessing
     sigma_stacked = np.stack([entry.cross_sections for entry in rectangularized_entries], axis=0)
-    _CIA_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float64)
+    _CIA_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float32)
 
     # Stack temperature grids: (n_species, nT) - keep as float64 for accuracy
     temp_stacked = np.stack([entry.temperatures for entry in rectangularized_entries], axis=0)
@@ -288,8 +292,12 @@ def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_di
 
     _CIA_WAVELENGTH_CACHE = jnp.asarray(rectangularized_entries[0].wavelengths, dtype=jnp.float64)
 
+    # Pre-compute log10 of temperature grids for efficient interpolation
+    _CIA_LOG10_TEMPERATURE_CACHE = jnp.log10(_CIA_TEMPERATURE_CACHE)
+
     print(f"[CIA] Cross section cache: {_CIA_SIGMA_CACHE.shape} (dtype: {_CIA_SIGMA_CACHE.dtype})")
     print(f"[CIA] Temperature cache: {_CIA_TEMPERATURE_CACHE.shape} (dtype: {_CIA_TEMPERATURE_CACHE.dtype})")
+    print(f"[CIA] Cached log10(T) grids for efficient interpolation")
 
     # Estimate memory usage
     sigma_mb = _CIA_SIGMA_CACHE.size * _CIA_SIGMA_CACHE.itemsize / 1024**2
@@ -342,3 +350,10 @@ def cia_temperature_grids() -> jnp.ndarray:
 @lru_cache(None)
 def cia_temperature_grid() -> jnp.ndarray:
     return cia_temperature_grids()[0]
+
+
+@lru_cache(None)
+def cia_log10_temperature_grids() -> jnp.ndarray:
+    if _CIA_LOG10_TEMPERATURE_CACHE is None:
+        raise RuntimeError("CIA log10(T) grids not built; call build_opacities() first.")
+    return _CIA_LOG10_TEMPERATURE_CACHE

@@ -8,7 +8,7 @@
 data:
   obs: ../../obs_data/HD209458b_transmission_Sing2016.txt
   stellar: None
-  janaf: ../../JANAF_data/
+  nasa9: ../../NASA9/
 
 # ----------------------------------------------------------------------------------
 # Physics Section

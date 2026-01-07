@@ -3,18 +3,17 @@ try:
 except ImportError:
     __version__ = ''
 
-# Note: Imports are commented out to prevent eager JAX initialization.
+# Imports are commented out to prevent eager JAX initialization.
 # This allows run_retrieval.py to set CUDA_VISIBLE_DEVICES before JAX loads.
 # Modules are imported on-demand within functions that use them.
 #
-# If you need to use these modules directly, import them explicitly:
+# For direct module usage, import explicitly:
 #   from exo_skryer import aux_functions
 #
 # from . import aux_functions
 # from . import build_chem
 # from . import build_model
 # from . import build_opacities
-# from . import build_prepared
 # from . import ck_mix_PRAS
 # from . import ck_mix_RORR
 # from . import help_io

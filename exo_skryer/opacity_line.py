@@ -16,107 +16,6 @@ __all__ = [
     "compute_line_opacity"
 ]
 
-
-def _interpolate_sigma(layer_pressures_bar: jnp.ndarray, layer_temperatures: jnp.ndarray) -> jnp.ndarray:
-    """Bilinear interpolation of line-by-line cross-sections on (log P, log T) grids.
-
-    This function retrieves pre-loaded line-by-line absorption cross-section tables
-    from the opacity registry and interpolates them to the specified atmospheric layer
-    conditions using bilinear interpolation in log₁₀(P)-log₁₀(T) space. The interpolation
-    is performed separately for each species and returns cross-sections in linear space.
-
-    Parameters
-    ----------
-    layer_pressures_bar : `~jax.numpy.ndarray`, shape (nlay,)
-        Atmospheric layer pressures in bar.
-    layer_temperatures : `~jax.numpy.ndarray`, shape (nlay,)
-        Atmospheric layer temperatures in Kelvin.
-
-    Returns
-    -------
-    sigma_interp : `~jax.numpy.ndarray`, shape (nspecies, nlay, nwl)
-        Interpolated absorption cross-sections in linear space with units of
-        cm² molecule⁻¹. The axes represent:
-        - nspecies: Number of absorbing species
-        - nlay: Number of atmospheric layers
-        - nwl: Number of wavelength points
-
-    Notes
-    -----
-    The bilinear interpolation algorithm:
-    1. Convert layer pressures and temperatures to log₁₀ space
-    2. For each layer, find the bracketing (P, T) grid indices
-    3. Compute interpolation weights in each dimension
-    4. For each species, interpolate the four corners: (T₀,P₀), (T₀,P₁), (T₁,P₀), (T₁,P₁)
-    5. First interpolate in pressure at fixed T₀ and T₁, then interpolate in temperature
-    6. Convert from log₁₀ space back to linear space: σ = 10^(log₁₀σ_interp)
-
-    Cross-sections are stored in log₁₀ space in the registry to maintain numerical
-    stability across many orders of magnitude, then converted back to linear space
-    after interpolation.
-    """
-    # Direct access to cached registry data (no redundant caching needed)
-    sigma_cube = XS.line_sigma_cube()
-    pressure_grid = XS.line_pressure_grid()
-    temperature_grids = XS.line_temperature_grids()
-
-    # Convert to log10 space for interpolation
-    log_p_grid = jnp.log10(pressure_grid)
-    log_p_layers = jnp.log10(layer_pressures_bar)
-    log_t_layers = jnp.log10(layer_temperatures)
-
-    # Find pressure bracket indices and weights in log space (same for all species)
-    p_idx = jnp.searchsorted(log_p_grid, log_p_layers) - 1
-    p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
-    p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
-    p_weight = jnp.clip(p_weight, 0.0, 1.0)
-
-    def _interp_one_species(sigma_3d, temp_grid):
-        """Interpolate cross-sections for a single species.
-
-        Parameters
-        ----------
-        sigma_3d : `~jax.numpy.ndarray`, shape (nT, nP, nwl)
-            Cross-sections for one species in log₁₀ space.
-        temp_grid : `~jax.numpy.ndarray`, shape (nT,)
-            Temperature grid for this species in Kelvin.
-
-        Returns
-        -------
-        s_interp : `~jax.numpy.ndarray`, shape (nlay, nwl)
-            Interpolated cross-sections in log₁₀ space.
-        """
-        # sigma_3d: (n_temp, n_pressure, n_wavelength)
-        # temp_grid: (n_temp,)
-
-        # Convert temperature grid to log space
-        log_t_grid = jnp.log10(temp_grid)
-
-        # Find temperature bracket indices and weights in log space
-        t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
-        t_idx = jnp.clip(t_idx, 0, log_t_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
-        t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-        # Get four corners of bilinear interpolation rectangle
-        # Indexing: sigma_3d[temp, pressure, wavelength]
-        s_t0_p0 = sigma_3d[t_idx, p_idx, :]              # shape: (n_layers, n_wavelength)
-        s_t0_p1 = sigma_3d[t_idx, p_idx + 1, :]
-        s_t1_p0 = sigma_3d[t_idx + 1, p_idx, :]
-        s_t1_p1 = sigma_3d[t_idx + 1, p_idx + 1, :]
-
-        # Bilinear interpolation: first interpolate in pressure, then temperature
-        s_t0 = (1.0 - p_weight)[:, None] * s_t0_p0 + p_weight[:, None] * s_t0_p1
-        s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
-        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
-
-        return s_interp
-
-    # Vectorize over all species
-    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, temperature_grids)
-    return 10.0 ** sigma_log
-
-
 def zero_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Return a zero line-by-line opacity array.
 
@@ -220,8 +119,8 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
     species_names = XS.line_species_names()
     layer_count = layer_pressures.shape[0]
     sigma_cube = XS.line_sigma_cube()
-    pressure_grid = XS.line_pressure_grid()
-    temperature_grids = XS.line_temperature_grids()
+    log_p_grid = XS.line_log10_pressure_grid()
+    log_temperature_grids = XS.line_log10_temperature_grids()
 
     # Direct lookup - species names must match VMR keys exactly
     # VMR values are already JAX arrays, no need to wrap
@@ -231,7 +130,6 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
     )
 
     layer_pressures_bar = layer_pressures / 1e6
-    log_p_grid = jnp.log10(pressure_grid)
     log_p_layers = jnp.log10(layer_pressures_bar)
     log_t_layers = jnp.log10(layer_temperatures)
 
@@ -240,11 +138,10 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
     p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
     p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
-    def _interp_one_species(sigma_3d, temp_grid):
-        log_t_grid = jnp.log10(temp_grid)
-        t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
-        t_idx = jnp.clip(t_idx, 0, log_t_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
+    def _interp_one_species(sigma_3d, log_temp_grid):
+        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
+        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
         t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
         s_t0_p0 = sigma_3d[t_idx, p_idx, :]
@@ -255,10 +152,10 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
         s_t0 = (1.0 - p_weight)[:, None] * s_t0_p0 + p_weight[:, None] * s_t0_p1
         s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
         s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
-        return 10.0 ** s_interp
+        return 10.0 ** s_interp.astype(jnp.float64)
 
     # Vectorize over all species: (n_species, nlay, nwl)
-    sigma_interp_all = jax.vmap(_interp_one_species)(sigma_cube, temperature_grids)
+    sigma_interp_all = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
 
     # Weight by volume mixing ratios: (n_species, nlay, 1) * (n_species, nlay, nwl)
     weighted_sigma_all = sigma_interp_all * mixing_ratios[:, :, None]

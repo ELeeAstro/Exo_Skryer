@@ -43,6 +43,7 @@ def rayleigh(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarra
     g : `~jax.numpy.ndarray`
         Asymmetry parameter (scattering anisotropy).
     """
+
     # Complex refractive index and polarizability
     m = n + 1j * k
     m2 = m * m
@@ -54,17 +55,16 @@ def rayleigh(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarra
     Q_sca_ray = (8.0 / 3.0) * x**4 * jnp.real(alp**2)
     Q_ext_ray = Q_abs_ray + Q_sca_ray
 
-    # Asymmetry parameter: zero for Rayleigh (isotropic scattering approximation)
+    # Asymmetry parameter: zero for Rayleigh (isotropic scattering
     g_ray = 0.0
 
     return Q_ext_ray, Q_sca_ray, g_ray
 
 
 def madt(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute extinction and scattering efficiencies using Modified Anomalous Diffraction Theory.
+    """Compute extinction and scattering efficiencies using Modified Anomalous Diffraction Theory (MADT.
 
-    Valid for larger particles (x >= 1). Uses geometric optics approximations
-    with empirical corrections for edge effects.
+    Most for larger particles (x >= 1) and soft particles (n ~< 3).
 
     Parameters
     ----------
@@ -84,6 +84,7 @@ def madt(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, j
     g : `~jax.numpy.ndarray`
         Asymmetry parameter (scattering anisotropy).
     """
+
     # MADT regime setup
     k_min = 1e-12
     k_eff = jnp.maximum(k, k_min)
@@ -132,7 +133,6 @@ def madt(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, j
     Q_sca_madt = Q_ext_madt - Q_abs_madt
 
     # Asymmetry parameter from Rayleigh formula (valid for small-to-moderate x)
-    # Converted from Fortran snippet
     numerator = (
         -2.0 * k**6
         + k**4 * (13.0 - 2.0 * n**2)
@@ -145,6 +145,7 @@ def madt(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, j
         + (2.0 * n**2 + 3.0)**2
     )
     Cm = numerator / jnp.maximum(denominator, 1e-30)
+
     # Limit to 0.9 to capture constant region
     g_madt = jnp.minimum(Cm * x**2, 0.9)
 
@@ -156,7 +157,7 @@ def lxmie(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray,
     """Compute extinction and scattering efficiencies using exact Mie theory.
 
     Valid for all size parameters. Uses the full Lorenz-Mie solution with
-    continued fractions for numerical stability.
+    continued fractions for numerical stability (Kitzmann et al. 2018).
 
     Parameters
     ----------
@@ -182,15 +183,8 @@ def lxmie(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray,
     g : `~jax.numpy.ndarray`
         Asymmetry parameter (scattering anisotropy).
 
-    Notes
-    -----
-    This is a wrapper around the full LX-MIE implementation that provides
-    a consistent interface with the Rayleigh and MADT approximations.
-    For batched computations, consider using the underlying lxmie_jax directly.
     """
     # Import the full Mie solver
-    # Note: Using a local import to avoid circular dependencies
-    # and to keep the main lxmie implementation in its own module
     from .lxmie_mod import lxmie_jax
 
     # Construct complex refractive index

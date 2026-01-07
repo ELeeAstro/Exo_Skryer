@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 import functools
 from typing import Optional, Literal
 
@@ -18,9 +19,6 @@ __all__ = ['pchip_1d', 'latin_hypercube', 'simpson', 'simpson_padded']
 def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     """
     Compute slopes for PCHIP interpolation.
-
-    This is a helper function for `pchip_1d` that computes slopes at each
-    data point, ensuring the interpolation is shape-preserving (monotonic).
 
     Parameters
     ----------
@@ -35,10 +33,6 @@ def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     -------
     m : `~jax.numpy.ndarray`
         1D array of slopes (first derivatives) at each node position with shape (N,).
-        Slopes are computed to preserve monotonicity: when adjacent intervals have
-        opposite-signed secants, the slope is set to zero to prevent overshooting.
-        For N=2, returns constant slope equal to the secant. For N>=3, uses weighted
-        harmonic mean for interior points and one-sided formulas for endpoints.
     """
     x = jnp.asarray(x)
     y = jnp.asarray(y)
@@ -162,11 +156,6 @@ def latin_hypercube(
 ) -> tuple[jnp.ndarray, jax.Array]:
     """Generate Latin hypercube samples in the unit hypercube [0, 1)^n_dim.
 
-    Latin Hypercube Sampling (LHS) is a stratified sampling technique that ensures
-    better space-filling properties than pure random sampling. The unit interval
-    [0, 1) is divided into `n_samples` equally probable strata in each dimension,
-    and one sample is drawn from each stratum.
-
     Parameters
     ----------
     key : `~jax.Array`
@@ -181,7 +170,7 @@ def latin_hypercube(
         improving space-filling properties. If False, strata are assigned
         sequentially without permutation.
     dtype : dtype, optional
-        Data type for the output array. Default is `jax.numpy.float32`.
+        Data type for the output array. Default is `jax.numpy.float64`.
 
     Returns
     -------
@@ -337,7 +326,7 @@ def simpson(
     x: Optional[jnp.ndarray] = None,
     dx: float = 1.0,
     axis: int = -1,
-    even: EvenMode = None,   # None behaves like SciPy default ("simpson" in modern SciPy)
+    even: EvenMode = None,
 ):
     """
     JAX-compatible composite Simpson integrator, similar to scipy.integrate.simpson.
@@ -353,7 +342,7 @@ def simpson(
     axis : int
         Axis of integration.
     even : {None, 'simpson', 'avg', 'first', 'last'}
-        Handling when number of samples is even. Matches SciPy's documented behaviours. :contentReference[oaicite:2]{index=2}
+        Handling when number of samples is even. Matches SciPy's documented behaviours. 
     """
     y = jnp.asarray(y)
     y = _as_last_axis(y, axis)
@@ -413,10 +402,6 @@ def simpson(
     return base + corr
 
 
-# ============================================================================
-# Simpson integration for padded arrays with explicit valid lengths
-# ============================================================================
-
 def _move_last(a: jnp.ndarray, axis: int) -> jnp.ndarray:
     """Move specified axis to last position."""
     return jnp.moveaxis(a, axis, -1)
@@ -438,9 +423,6 @@ def simpson_padded(
 ):
     """
     Composite Simpson integration for padded arrays with non-uniform spacing.
-
-    Safe when the padded tail repeats x values (zero spacing), as long as
-    n_valid indicates the number of true domain points.
 
     Parameters
     ----------
@@ -464,25 +446,8 @@ def simpson_padded(
     Returns
     -------
     integral : `~jax.numpy.ndarray`
-        Definite integral over valid region.
-        Returns NaN if grid is invalid (non-monotonic on valid prefix).
-
-    Notes
-    -----
-    This function is designed for batched integration via vmap:
-
-        result = jax.vmap(simpson_padded, in_axes=(0, 0, 0))(y_batch, x_batch, n_valid_batch)
-
-    The padded tail (indices >= n_valid) is safely ignored, even if x has
-    repeated values there.
-
-    Examples
-    --------
-    >>> wl_pad = jnp.array([1.0, 1.1, 1.2, 1.3, 1.3, 1.3])  # Padded with repeats
-    >>> y_pad = jnp.array([1.0, 1.1, 1.2, 1.3, 0.0, 0.0])
-    >>> result = simpson_padded(y_pad, wl_pad, n_valid=4)
     """
-    from jax import lax
+
 
     y = jnp.asarray(y)
     x = jnp.asarray(x)
@@ -493,13 +458,13 @@ def simpson_padded(
     n = jnp.clip(n_valid, 2, Nmax)
 
     # ---- Grid sanity: require strictly increasing x on valid prefix ----
-    # We can't slice with dynamic length under jit, so mask the diffs.
+    # Dynamic slicing not allowed under jit, so mask the diffs.
     h_all = jnp.diff(x, axis=-1)  # (..., Nmax-1)
     idx_h = jnp.arange(Nmax - 1)
     h_mask = idx_h < (n - 1)      # True for valid diffs only
     grid_ok = jnp.all(jnp.where(h_mask, h_all > 0.0, True), axis=-1)
 
-    # Simpson needs odd number of points; for even n we'll do Simpson on first n-1
+    # Simpson needs odd number of points; for even n apply Simpson on first n-1
     m = jnp.where((n % 2) == 1, n, n - 1)  # odd, >= 3 unless n == 2
 
     def core_simpson(_):

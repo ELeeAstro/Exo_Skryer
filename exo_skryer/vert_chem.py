@@ -10,7 +10,7 @@ from typing import Dict
 import jax.numpy as jnp
 
 from .data_constants import amu, kb
-from .rate_jax import RateJAX, get_gibbs_cache
+from .rate_jax import RateJAX, get_nasa9_cache
 
 
 
@@ -168,13 +168,13 @@ def CE_rate_jax(
     Notes
     -----
     This function requires Gibbs free-energy tables to be loaded (see
-    `get_gibbs_cache()`). It calls `RateJAX.solve_profile(T_lay, p_bar)` with
+    `get_nasa9_cache()`). It calls `RateJAX.solve_profile(T_lay, p_bar)` with
     `p_bar = p_lay / 1e6`.
     """
     del nlay  # Unused but kept for API compatibility with other vert_chem functions
 
     # Get cached Gibbs tables (will raise RuntimeError if not loaded)
-    gibbs = get_gibbs_cache()
+    thermo = get_nasa9_cache()
 
     # Extract metallicity and C/O ratio from params (keep as JAX arrays for JIT compatibility)
     metallicity = params['M/H']  # [dex]
@@ -189,7 +189,7 @@ def CE_rate_jax(
     C = CO_ratio * O
 
     # Create RateJAX solver
-    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_He)
+    rate = RateJAX(thermo=thermo, C=C, N=N, O=O, fHe=solar_He)
 
     # Solve chemical equilibrium profile
     vmr_lay = rate.solve_profile(T_lay, p_lay/1e6)
@@ -357,7 +357,7 @@ def quench_approx(
     del nlay  # Unused but kept for API compatibility
 
     # Get cached Gibbs tables (will raise RuntimeError if not loaded)
-    gibbs = get_gibbs_cache()
+    thermo = get_nasa9_cache()
 
     # Extract metallicity and C/O ratio from params
     metallicity = params['M/H']  # [dex]
@@ -373,7 +373,7 @@ def quench_approx(
 
 
     # Create RateJAX solver and compute chemical equilibrium
-    rate = RateJAX(gibbs=gibbs, C=C, N=N, O=O, fHe=solar_He)
+    rate = RateJAX(thermo=thermo, C=C, N=N, O=O, fHe=solar_He)
     vmr_eq = rate.solve_profile(T_lay, p_lay / 1e6)
 
     # Compute mean molecular weight (needed for mixing timescale)

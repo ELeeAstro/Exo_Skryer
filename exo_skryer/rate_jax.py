@@ -17,51 +17,46 @@ import optimistix as optx
 R_GAS = 8.314462618
 
 # ============================================================================
-# Global cache for Gibbs free energy tables
+# Global cache for NASA-9 thermo data
 # ============================================================================
-_GIBBS_CACHE: Optional["GibbsTableJAX"] = None
+_NASA9_CACHE: Optional["NASA9ThermoJAX"] = None
 
 Species = Tuple[str, ...]
 
 __all__ = [
-    "GibbsTableJAX",
-    "load_gibbs_cache",
-    "get_gibbs_cache",
-    "clear_gibbs_cache",
-    "is_gibbs_cache_loaded",
+    "NASA9ThermoJAX",
+    "load_nasa9_cache",
+    "get_nasa9_cache",
+    "clear_nasa9_cache",
+    "is_nasa9_cache_loaded",
+    "RateJAX",
 ]
 
 
-class GibbsTableJAX:
-    """JAX-friendly Gibbs free-energy interpolator.
+class NASA9ThermoJAX:
+    """JAX-friendly NASA-9 thermo evaluator.
 
-    The table stores, for each species, a temperature grid and pre-scaled Gibbs
-    and enthalpy terms so that interpolation can be done with `jax.numpy.interp`
-    (no SciPy dependency, JIT-compatible).
+    Stores per-species NASA-9 polynomial coefficients and evaluates the
+    dimensionless Gibbs free energy `G/(R T)` on-the-fly in JAX (no pre-tabulation).
 
     Notes
     -----
     Expected per-species dictionary structure:
 
-    - `T` : `~jax.numpy.ndarray`, shape (nT,)
-        Temperature grid in Kelvin.
-    - `g_over_R` : `~jax.numpy.ndarray`, shape (nT,)
-        Gibbs free energy divided by the molar gas constant, `G/R` (dimensionless).
-    - `heat_over_R298` : float
-        Enthalpy term at 298.15 K scaled as `H_298/R` (dimensionless).
+    - `coeffs_low` : `~jax.numpy.ndarray`, shape (10,)
+        NASA-9 coefficients for the low-temperature range.
+    - `coeffs_high` : `~jax.numpy.ndarray`, shape (10,)
+        NASA-9 coefficients for the high-temperature range.
+    - `t_switch` : float
+        Temperature [K] where the polynomial range switches.
+    - `t_min`, `t_max` : float
+        Valid temperature bounds for the data (inputs are clipped).
     """
     def __init__(self, data: Mapping[str, Mapping[str, jnp.ndarray]]):
         self.data = data
 
-    def g_rt(self, spec: str, T: jnp.ndarray) -> jnp.ndarray:
-        """Evaluate the dimensionless Gibbs combination used by RATE.
-
-        The returned quantity corresponds to:
-
-            g_RT(T) = -G(T)/R + (H_298/R) / T
-
-        where `G(T)` is the molar Gibbs free energy and `H_298` is the molar
-        enthalpy at 298.15 K.
+    def g_over_RT(self, spec: str, T: jnp.ndarray) -> jnp.ndarray:
+        """Evaluate the dimensionless Gibbs free energy `G/(R T)` from NASA-9 polynomials.
 
         Parameters
         ----------
@@ -72,24 +67,72 @@ class GibbsTableJAX:
 
         Returns
         -------
-        g_RT : `~jax.numpy.ndarray`
-            Dimensionless Gibbs combination evaluated at `T`.
+        g_over_RT : `~jax.numpy.ndarray`
+            Dimensionless Gibbs free energy `G/(R T)` evaluated at `T`.
         """
         d = self.data[spec]
-        T_grid      = d["T"]
-        g_over_R    = d["g_over_R"]
-        heat_over_R = d["heat_over_R298"]   # already in units of (H/R)
+        coeffs_low = d["coeffs_low"]
+        coeffs_high = d["coeffs_high"]
+        t_switch = d["t_switch"]
+        t_min = d["t_min"]
+        t_max = d["t_max"]
 
-        g_over_R_T = jnp.interp(T, T_grid, g_over_R)
-        return -g_over_R_T + heat_over_R / T
+        T = jnp.asarray(T)
+        T = jnp.clip(T, t_min, t_max)
+
+        def _h_over_RT(coeffs: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+            a1, a2, a3, a4, a5, a6, a7, a8, a9, _a10 = coeffs
+            t2 = t * t
+            t3 = t2 * t
+            t4 = t3 * t
+            t5 = t4 * t
+            return (
+                -a1 / (t * t)
+                + (a2 * jnp.log(t)) / t
+                + a3
+                + a4 * t / 2.0
+                + a5 * t2 / 3.0
+                + a6 * t3 / 4.0
+                + a7 * t4 / 5.0
+                + a8 * t5 / 6.0
+                + a9 / t
+            )
+
+        def _s_over_R(coeffs: jnp.ndarray, t: jnp.ndarray) -> jnp.ndarray:
+            a1, a2, a3, a4, a5, a6, a7, a8, _a9, a10 = coeffs
+            t2 = t * t
+            t3 = t2 * t
+            t4 = t3 * t
+            t5 = t4 * t
+            return (
+                -0.5 * a1 / (t * t)
+                - a2 / t
+                + a3 * jnp.log(t)
+                + a4 * t
+                + a5 * t2 / 2.0
+                + a6 * t3 / 3.0
+                + a7 * t4 / 4.0
+                + a8 * t5 / 5.0
+                + a10
+            )
+
+        h_low = _h_over_RT(coeffs_low, T)
+        s_low = _s_over_R(coeffs_low, T)
+        h_high = _h_over_RT(coeffs_high, T)
+        s_high = _s_over_R(coeffs_high, T)
+
+        use_low = T < t_switch
+        h = jnp.where(use_low, h_low, h_high)
+        s = jnp.where(use_low, s_low, s_high)
+        return h - s
 
 
 # ============================================================================
 # Global cache management functions
 # ============================================================================
 
-def load_gibbs_cache(janaf_dir: str) -> GibbsTableJAX:
-    """Load JANAF thermodynamic tables into the global Gibbs cache.
+def load_nasa9_cache(nasa9_dir: str) -> NASA9ThermoJAX:
+    """Load NASA-9 polynomial coefficient files into the global NASA-9 cache.
 
     This function should be called once during initialization (e.g., in
     run_retrieval.py) to load and cache the Gibbs free energy data before
@@ -97,98 +140,131 @@ def load_gibbs_cache(janaf_dir: str) -> GibbsTableJAX:
 
     Parameters
     ----------
-    janaf_dir : str
-        Directory containing JANAF table files
+    nasa9_dir : str
+        Directory containing NASA-9 coefficient files
 
     Returns
     -------
-    gibbs : GibbsTableJAX
-        The loaded Gibbs table (also cached globally)
+    nasa9 : NASA9ThermoJAX
+        The loaded NASA-9 thermo table (also cached globally)
 
     Notes
     -----
     Expected file format:
-      - Each file: 3 columns -> T, G, H
-      - Filename: "<MOLNAME>_*.txt" (e.g., "H2O_janaf.txt")
-      - Units: T [K], G [J/mol], H [kJ/mol]
+      - Each file contains 20 floating point values (10 low-T + 10 high-T)
+      - This repo stores them as 4 lines with 5 values each (still 20 total)
+      - Filename: "<MOLNAME>.txt" (e.g., "H2O.txt")
 
     Examples
     --------
     >>> # In run_retrieval.py or similar initialization:
-    >>> from rate_jax import load_gibbs_cache
-    >>> gibbs = load_gibbs_cache("JANAF_data/")
+    >>> from rate_jax import load_nasa9_cache
+    >>> thermo = load_nasa9_cache("NASA9/")
     """
-    global _GIBBS_CACHE
+    global _NASA9_CACHE
 
     data: Dict[str, Dict[str, jnp.ndarray]] = {}
 
-    for fname in os.listdir(janaf_dir):
+    t_min = 200.0
+    t_max = 6000.0
+    t_switch = 1000.0
+
+    def _read_nasa9_coeffs(path: str) -> Tuple[np.ndarray, np.ndarray, float]:
+        """Read NASA-9 coefficients from a file.
+
+        Supported formats:
+        - 20 numbers: low10 + high10
+        - 23 numbers: Tmin, Tmid, Tmax + low10 + high10
+
+        Lines may contain comments starting with '#' or '!'.
+        """
+        with open(path, "r", encoding="utf-8") as f:
+            raw_lines = f.read().splitlines()
+
+        cleaned: list[str] = []
+        for line in raw_lines:
+            line = line.split("#", 1)[0]
+            line = line.split("!", 1)[0]
+            cleaned.append(line)
+
+        raw = "\n".join(cleaned).replace("D", "E")
+        coeffs = np.fromstring(raw, sep=" ")
+
+        t_switch_local = t_switch
+        if coeffs.size == 23:
+            _tmin, tmid, _tmax = coeffs[:3]
+            t_switch_local = float(tmid)
+            coeffs = coeffs[3:]
+
+        # Some sources include an additional high-temperature range, providing
+        # three blocks of 10 coefficients (30 total). For Exo_Skryer we keep the
+        # first two ranges (low, high) and ignore the third.
+        if coeffs.size == 30:
+            coeffs = coeffs[:20]
+
+        if coeffs.size != 20:
+            raise ValueError(
+                f"Expected 20 NASA-9 coefficients in {path} (or 23 including Tmin/Tmid/Tmax), got {coeffs.size}."
+            )
+        return coeffs[:10], coeffs[10:], t_switch_local
+
+    for fname in os.listdir(nasa9_dir):
         if not fname.endswith(".txt"):
             continue
+        path = os.path.join(nasa9_dir, fname)
+        molname = os.path.splitext(fname)[0]
 
-        path = os.path.join(janaf_dir, fname)
-        molname = fname.split("_")[0]  # "H2O_foo.txt" -> "H2O"
-
-        T, G, H = np.loadtxt(path, unpack=True)
-
-        # Sort by temperature
-        order = np.argsort(T)
-        T = T[order]
-        G = G[order]
-        H = H[order]
-
-        # Find value closest to 298.15 K
-        idx_298 = np.argmin(np.abs(T - 298.15))
-        heat_over_R298 = 1000.0 * H[idx_298] / R_GAS  # H in kJ/mol → J/mol, /R
-
+        coeffs_low_np, coeffs_high_np, t_switch_local = _read_nasa9_coeffs(path)
         data[molname] = {
-            "T": jnp.asarray(T),
-            "g_over_R": jnp.asarray(G / R_GAS),
-            "heat_over_R298": float(heat_over_R298),
+            "coeffs_low": jnp.asarray(coeffs_low_np),
+            "coeffs_high": jnp.asarray(coeffs_high_np),
+            "t_switch": jnp.asarray(t_switch_local),
+            "t_min": jnp.asarray(t_min),
+            "t_max": jnp.asarray(t_max),
         }
 
-    _GIBBS_CACHE = GibbsTableJAX(data)
-    return _GIBBS_CACHE
+    _NASA9_CACHE = NASA9ThermoJAX(data)
+    return _NASA9_CACHE
 
 
-def get_gibbs_cache() -> Optional[GibbsTableJAX]:
-    """Return the cached Gibbs free energy table.
+def get_nasa9_cache() -> NASA9ThermoJAX:
+    """Return the cached NASA-9 thermo table.
 
     Returns
     -------
-    gibbs : GibbsTableJAX or None
-        The cached Gibbs table, or None if not yet loaded
+    nasa9 : NASA9ThermoJAX
+        The cached NASA-9 thermo table.
 
     Raises
     ------
     RuntimeError
-        If cache has not been initialized with load_gibbs_cache()
+        If cache has not been initialized with load_nasa9_cache()
     """
-    if _GIBBS_CACHE is None:
+    if _NASA9_CACHE is None:
         raise RuntimeError(
-            "Gibbs cache not initialized. Call load_gibbs_cache() first."
+            "NASA-9 cache not initialized. Call load_nasa9_cache() first."
         )
-    return _GIBBS_CACHE
+    return _NASA9_CACHE
 
 
-def clear_gibbs_cache() -> None:
-    """Clear the cached Gibbs free energy table.
+def clear_nasa9_cache() -> None:
+    """Clear the cached NASA-9 thermo table.
 
     Useful for freeing memory or reloading with different data.
     """
-    global _GIBBS_CACHE
-    _GIBBS_CACHE = None
+    global _NASA9_CACHE
+    _NASA9_CACHE = None
 
 
-def is_gibbs_cache_loaded() -> bool:
-    """Return `True` if the Gibbs cache is loaded.
+def is_nasa9_cache_loaded() -> bool:
+    """Return `True` if the NASA-9 cache is loaded.
 
     Returns
     -------
     loaded : bool
-        True if cache is loaded, False otherwise
+        True if cache is loaded, False otherwise.
     """
-    return _GIBBS_CACHE is not None
+    return _NASA9_CACHE is not None
 
 
 class RateJAX:
@@ -204,8 +280,8 @@ class RateJAX:
 
     Parameters
     ----------
-    gibbs : `~exo_skryer.rate_jax.GibbsTableJAX`
-        Gibbs free-energy interpolator created by `load_gibbs_cache`.
+    thermo : `~exo_skryer.rate_jax.NASA9ThermoJAX`
+        NASA-9 thermo evaluator created by `load_nasa9_cache`.
     C, N, O : float
         Elemental abundances (number ratios relative to H₂, following the original
         RATE conventions).
@@ -215,13 +291,13 @@ class RateJAX:
 
     def __init__(
         self,
-        gibbs: GibbsTableJAX,
+        thermo: NASA9ThermoJAX,
         C: float = 2.5e-4,
         N: float = 1.0e-4,
         O: float = 5.0e-4,
         fHe: float = 0.0,
     ):
-        self.gibbs = gibbs
+        self.thermo = thermo
         # Keep as JAX arrays for JIT compatibility (don't convert to Python float)
         self.C = C
         self.N = N
@@ -234,10 +310,10 @@ class RateJAX:
             "H2", "H", "He",
         )
 
-    # ---------- Gibbs wrappers ----------
+    # ---------- Thermo wrappers ----------
 
-    def grt(self, spec: str, T: jnp.ndarray) -> jnp.ndarray:
-        return self.gibbs.g_rt(spec, T)
+    def g_over_RT(self, spec: str, T: jnp.ndarray) -> jnp.ndarray:
+        return self.thermo.g_over_RT(spec, T)
 
     # ---------- Equilibrium constants k' ----------
 
@@ -260,7 +336,7 @@ class RateJAX:
         K'₀ : array
             Modified equilibrium constant [bar⁻¹]
         """
-        return jnp.exp(-(2.0 * self.grt("H", T) - self.grt("H2", T))) / p
+        return jnp.exp(-(2.0 * self.g_over_RT("H", T) - self.g_over_RT("H2", T))) / p
 
     def kprime1(self, T: jnp.ndarray, p: jnp.ndarray) -> jnp.ndarray:
         """
@@ -285,8 +361,8 @@ class RateJAX:
         """
         return jnp.exp(
             -(
-                self.grt("CO", T) + 3.0 * self.grt("H2", T)
-                - self.grt("CH4", T) - self.grt("H2O", T)
+                self.g_over_RT("CO", T) + 3.0 * self.g_over_RT("H2", T)
+                - self.g_over_RT("CH4", T) - self.g_over_RT("H2O", T)
             )
         ) / p**2
 
@@ -309,8 +385,8 @@ class RateJAX:
         """
         return jnp.exp(
             -(
-                self.grt("CO", T) + self.grt("H2O", T)
-                - self.grt("CO2", T) - self.grt("H2", T)
+                self.g_over_RT("CO", T) + self.g_over_RT("H2O", T)
+                - self.g_over_RT("CO2", T) - self.g_over_RT("H2", T)
             )
         )
 
@@ -337,8 +413,8 @@ class RateJAX:
         """
         return jnp.exp(
             -(
-                self.grt("C2H2", T) + 3.0 * self.grt("H2", T)
-                - 2.0 * self.grt("CH4", T)
+                self.g_over_RT("C2H2", T) + 3.0 * self.g_over_RT("H2", T)
+                - 2.0 * self.g_over_RT("CH4", T)
             )
         ) / p**2
 
@@ -363,8 +439,8 @@ class RateJAX:
         """
         return jnp.exp(
             -(
-                self.grt("C2H2", T) + self.grt("H2", T)
-                - self.grt("C2H4", T)
+                self.g_over_RT("C2H2", T) + self.g_over_RT("H2", T)
+                - self.g_over_RT("C2H4", T)
             )
         ) / p
 
@@ -391,8 +467,8 @@ class RateJAX:
         """
         return jnp.exp(
             -(
-                self.grt("N2", T) + 3.0 * self.grt("H2", T)
-                - 2.0 * self.grt("NH3", T)
+                self.g_over_RT("N2", T) + 3.0 * self.g_over_RT("H2", T)
+                - 2.0 * self.g_over_RT("NH3", T)
             )
         ) / p**2
 
@@ -419,8 +495,8 @@ class RateJAX:
         """
         return jnp.exp(
             -(
-                self.grt("HCN", T) + 3.0 * self.grt("H2", T)
-                - self.grt("NH3", T) - self.grt("CH4", T)
+                self.g_over_RT("HCN", T) + 3.0 * self.g_over_RT("H2", T)
+                - self.g_over_RT("NH3", T) - self.g_over_RT("CH4", T)
             )
         ) / p**2
 
@@ -793,8 +869,8 @@ class RateJAX:
         A: jnp.ndarray,
         guess: float,
         vmax: float,
-        xtol: float = 1e-8,
-        imax: int = 50,
+        xtol: float = 1e-10,
+        imax: int = 80,
         kmax: int = 10,
     ) -> jnp.ndarray:
         """
@@ -824,14 +900,22 @@ class RateJAX:
         root : scalar array
             Root of polynomial, clamped to [0, vmax]
         """
+        # Optimistix tolerances should be set in line with dtype. If x64 is disabled,
+        # JAX will use float32, and tighter tolerances than ~1e-6 are ineffective.
+        xtol_eff = float(xtol)
+        if A.dtype == jnp.float32:
+            xtol_eff = max(xtol_eff, 1e-6)
+
+        # Success sentinel for Optimistix root-finding.
+        _RESULT_SUCCESS = optx.RESULTS._name_to_item["successful"]
 
         def poly_fn(x, _args):
             """Function to find root of: polynomial(x) = 0"""
             return cls._eval_poly(A, x)
 
-        def try_solve(guess_scaled: float) -> jnp.ndarray:
+        def try_solve(guess_scaled: float) -> tuple[jnp.ndarray, jnp.ndarray]:
             """Try to solve from a given initial guess."""
-            solver = optx.Newton(rtol=xtol, atol=xtol)
+            solver = optx.Newton(rtol=xtol_eff, atol=xtol_eff)
             sol = optx.root_find(
                 poly_fn,
                 solver,
@@ -840,32 +924,72 @@ class RateJAX:
                 max_steps=imax,
                 throw=False,  # Don't raise on convergence failure
             )
-            return sol.value
+            # Accept either explicit success or sufficiently small residual.
+            fval = sol.state.f
+            ok = (sol.result == _RESULT_SUCCESS) | (jnp.abs(fval) <= 10.0 * xtol_eff)
+            return sol.value, ok
 
         # Try multiple initial guesses with decreasing scales
         def attempt_body(carry):
-            root, attempt = carry
+            root, ok, attempt = carry
             scale = 10.0 ** (-attempt)
             guess_scaled = guess * scale
-            root_candidate = try_solve(guess_scaled)
-            return (root_candidate, attempt + 1)
+            root_candidate, ok_candidate = try_solve(guess_scaled)
+            return (root_candidate, ok_candidate, attempt + 1)
 
         def attempt_cond(carry):
-            root, attempt = carry
+            root, ok, attempt = carry
             finite = jnp.isfinite(root)
             in_range = jnp.logical_and(root >= 0.0, root <= vmax)
-            good = jnp.logical_and(finite, in_range)
+            good = jnp.logical_and(ok, jnp.logical_and(finite, in_range))
             more_attempts = attempt < kmax
             # keep trying while root is bad and we still have attempts left
             return jnp.logical_and(~good, more_attempts)
 
         # Start with bogus root so we always do at least one attempt
-        carry0 = (jnp.array(-1.0), jnp.int32(0))
-        root_final, _ = lax.while_loop(attempt_cond, attempt_body, carry0)
+        carry0 = (jnp.array(-1.0), jnp.array(False), jnp.int32(0))
+        root_final, ok_final, _ = lax.while_loop(attempt_cond, attempt_body, carry0)
 
-        # Final clamp as a safety net
+        def _bisect_root() -> jnp.ndarray:
+            """Bisection fallback on [0, vmax] if a sign change exists."""
+            lo = jnp.array(0.0, dtype=A.dtype)
+            hi = jnp.asarray(vmax, dtype=A.dtype)
+            flo = cls._eval_poly(A, lo)
+            fhi = cls._eval_poly(A, hi)
+
+            n_iter = 60 if A.dtype == jnp.float64 else 40
+
+            def body(_, state):
+                lo, hi, flo, fhi = state
+                mid = 0.5 * (lo + hi)
+                fmid = cls._eval_poly(A, mid)
+                # If fmid is NaN/Inf, shrink interval conservatively.
+                bad = ~jnp.isfinite(fmid)
+                go_left = jnp.where(bad, True, flo * fmid <= 0.0)
+                lo2 = jnp.where(go_left, lo, mid)
+                hi2 = jnp.where(go_left, mid, hi)
+                flo2 = jnp.where(go_left, flo, fmid)
+                fhi2 = jnp.where(go_left, fmid, fhi)
+                return lo2, hi2, flo2, fhi2
+
+            lo, hi, _, _ = lax.fori_loop(0, n_iter, body, (lo, hi, flo, fhi))
+            return 0.5 * (lo + hi)
+
+        def _fallback_root() -> jnp.ndarray:
+            # If Newton fails entirely (NaN or no acceptable candidate), return a safe interior point.
+            return jnp.asarray(0.5, dtype=A.dtype) * jnp.asarray(vmax, dtype=A.dtype)
+
+        # If Newton succeeded and produced a finite in-range root, use it. Otherwise try bisection if possible.
         root_final = jnp.clip(root_final, 0.0, vmax)
-        return root_final
+        newton_good = ok_final & jnp.isfinite(root_final)
+        f0 = cls._eval_poly(A, jnp.array(0.0, dtype=A.dtype))
+        f1 = cls._eval_poly(A, jnp.asarray(vmax, dtype=A.dtype))
+        sign_change = jnp.isfinite(f0) & jnp.isfinite(f1) & (f0 * f1 <= 0.0)
+        return lax.cond(
+            newton_good,
+            lambda: root_final,
+            lambda: lax.cond(sign_change, _bisect_root, _fallback_root),
+        )
 
 
 
@@ -1095,8 +1219,13 @@ class RateJAX:
         k5 = self.kprime5(T, p)
         k6 = self.kprime6(T, p)
 
-        # Avoid exact 0/inf constants (which break algebra downstream)
-        k_min, k_max = 1e-300, 1e300
+        # Avoid exact 0/inf constants (which break algebra downstream).
+        # Use dtype-aware bounds to avoid float32 overflow/underflow when x64 is disabled.
+        if k0.dtype == jnp.float64:
+            k_min, k_max = 1e-300, 1e300
+        else:
+            finfo = jnp.finfo(jnp.float32)
+            k_min, k_max = finfo.tiny, finfo.max
         k0 = jnp.clip(k0, k_min, k_max)
         k1 = jnp.clip(k1, k_min, k_max)
         k2 = jnp.clip(k2, k_min, k_max)

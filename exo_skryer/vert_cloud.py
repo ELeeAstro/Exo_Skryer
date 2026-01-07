@@ -12,6 +12,7 @@ __all__ = [
     "no_cloud",
     "exponential_decay_profile",
     "slab_profile",
+    "const_profile",
 ]
 
 
@@ -78,7 +79,7 @@ def exponential_decay_profile(
     params : dict[str, `~jax.numpy.ndarray`]
         Parameter dictionary containing:
 
-        - `log_10_q_c_0` : float
+        - `log_10_q_c` : float
             Log₁₀ cloud mass mixing ratio at the base pressure.
         - `log_10_alpha_cld` : float
             Log₁₀ cloud pressure power-law exponent.
@@ -96,7 +97,7 @@ def exponential_decay_profile(
     This ensures q_c = 0 in the deep atmosphere below the cloud base.
     """
     # Retrieved parameters
-    q_c_0 = 10.0 ** params["log_10_q_c_0"]
+    q_c_0 = 10.0 ** params["log_10_q_c"]
     alpha = 10.0 ** params["log_10_alpha_cld"]
 
     p_base = 10.0 ** params["log_10_p_base"] * 1e6  # bar → microbar
@@ -172,3 +173,44 @@ def slab_profile(
     q_c_lay = q_c_slab * slab_mask
 
     return q_c_lay
+
+
+def const_profile(
+    p_lay: jnp.ndarray,
+    T_lay: jnp.ndarray,
+    mu_lay: jnp.ndarray,
+    rho_lay: jnp.ndarray,
+    nd_lay: jnp.ndarray,
+    params: Dict[str, jnp.ndarray],
+) -> jnp.ndarray:
+    """Constant cloud mass mixing ratio throughout the entire atmosphere.
+
+    Parameters
+    ----------
+    p_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Pressure at layer centers in microbar.
+    T_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Layer temperatures in K.
+    mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Mean molecular weight per layer in amu.
+    rho_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Mass density per layer in g cm⁻³.
+    nd_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Number density per layer in cm⁻³.
+    params : dict[str, `~jax.numpy.ndarray`]
+        Parameter dictionary containing:
+
+        - `log_10_q_c` : float
+            Log₁₀ cloud mass mixing ratio (constant value throughout atmosphere).
+
+    Returns
+    -------
+    q_c_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Cloud mass mixing ratio per layer (constant value everywhere).
+    """
+    # Retrieved parameter
+    q_c = 10.0 ** params["log_10_q_c"]
+
+    # Return constant profile
+    nlay = T_lay.shape[0]
+    return jnp.full(nlay, q_c)

@@ -2,11 +2,11 @@ data:
 
   obs: ../../obs_data/Gliese_229B_emission.txt
   stellar: None
-  janaf: ../../JANAF_data/
+  nasa9: ../../NASA9/
 
 physics:
 
-  nlay: 99
+  nlay: 101
 
   vert_Tp: Milne_modified
   vert_alt: hypsometric_variable_g_pref

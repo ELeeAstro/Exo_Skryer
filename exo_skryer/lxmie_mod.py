@@ -2,8 +2,8 @@
 lxmie_mod.py
 ============
 
-Lorenz-Mie scattering exact solution using JAX.
-Implements the full Mie theory for homogeneous spheres.
+LX-MIE Mie code refactored into JAX (Kitzmann et al. 2018).
+
 """
 
 from __future__ import annotations
@@ -194,11 +194,13 @@ def _compute_mie_coeffs(N: int, m: jnp.ndarray, x: jnp.ndarray,
 
 
 @partial(jax.jit, static_argnames=("nmax", "cf_max_terms"))
-def lxmie_jax(ri, x, *, nmax: int = 4096, cf_max_terms: int = 4096, cf_eps: float = _DEFAULT_CF_EPS):
-    """JIT-safe LX-MIE-like Mie scattering solver.
+def lxmie_jax(ri, x, *, nmax: int = 2000, cf_max_terms: int = 2000, cf_eps: float = _DEFAULT_CF_EPS):
+    """JIT-safe LX-MIE  Mie solver.
 
     Computes Mie scattering efficiencies for homogeneous spheres using
-    the full Lorenz-Mie solution with continued fractions for numerical stability.
+    the full Lorenz-Mie solution with continued fractions for numerical stability (Kitzmann et al. 2018).
+    For JIT compatibility, we meed to assume a constant nmax (Accurate up to around x = 1000)
+    
 
     Parameters
     ----------
@@ -223,12 +225,6 @@ def lxmie_jax(ri, x, *, nmax: int = 4096, cf_max_terms: int = 4096, cf_eps: floa
         Absorption efficiency.
     g : `~jax.numpy.ndarray`
         Asymmetry parameter.
-
-    Notes
-    -----
-    - Computes a_n, b_n up to nmax (static)
-    - Masks sums to nb(x) to reproduce truncation
-    - Uses 64-bit precision for numerical stability
     """
     m = ri.astype(jnp.complex128)
     x = x.astype(jnp.float64)

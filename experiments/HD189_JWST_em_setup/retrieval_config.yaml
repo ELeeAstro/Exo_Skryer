@@ -8,7 +8,7 @@
 data:
   obs: ../../obs_data/HD189733b_emission_JWST.txt
   stellar: ./HD189_stellar.txt
-  janaf: ../../JANAF_data/
+  nasa9: ../../NASA9/
 
 # ----------------------------------------------------------------------------------
 # Physics Section

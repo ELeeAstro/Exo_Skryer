@@ -1,3 +1,7 @@
+# Dev ignore
+FastChem/
+stash/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -149,8 +153,6 @@ telescope_data/**/*.h5
 JANAF_data/**/*.npz
 JANAF_data/**/*.npy
 
-# Stash directory (old/test code)
-stash/
 
 # Agent workspace (scripts and tools created by AI agent)
 agent_workspace/

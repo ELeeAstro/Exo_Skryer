@@ -26,7 +26,9 @@ __all__ = [
     "ck_temperature_grids",
     "ck_sigma_cube",
     "ck_g_points",
-    "ck_g_weights"
+    "ck_g_weights",
+    "ck_log10_pressure_grid",
+    "ck_log10_temperature_grids",
 ]
 
 
@@ -54,6 +56,8 @@ _CK_G_POINTS_CACHE: jnp.ndarray | None = None
 _CK_G_WEIGHTS_CACHE: jnp.ndarray | None = None
 _CK_WAVELENGTH_CACHE: jnp.ndarray | None = None
 _CK_PRESSURE_CACHE: jnp.ndarray | None = None
+_CK_LOG10_TEMPERATURE_CACHE: jnp.ndarray | None = None
+_CK_LOG10_PRESSURE_CACHE: jnp.ndarray | None = None
 
 
 # Clear all the cache entries
@@ -66,12 +70,14 @@ def _clear_cache():
     ck_sigma_cube.cache_clear()
     ck_g_points.cache_clear()
     ck_g_weights.cache_clear()
+    ck_log10_pressure_grid.cache_clear()
+    ck_log10_temperature_grids.cache_clear()
 
 
 # Reset all the global registries
 def reset_registry() -> None:
     global _CK_SPECIES_NAMES, _CK_SIGMA_CACHE, _CK_TEMPERATURE_CACHE, _CK_G_POINTS_CACHE, _CK_G_WEIGHTS_CACHE
-    global _CK_WAVELENGTH_CACHE, _CK_PRESSURE_CACHE
+    global _CK_WAVELENGTH_CACHE, _CK_PRESSURE_CACHE, _CK_LOG10_TEMPERATURE_CACHE, _CK_LOG10_PRESSURE_CACHE
     _CK_SPECIES_NAMES = ()
     _CK_SIGMA_CACHE = None
     _CK_TEMPERATURE_CACHE = None
@@ -79,6 +85,8 @@ def reset_registry() -> None:
     _CK_G_WEIGHTS_CACHE = None
     _CK_WAVELENGTH_CACHE = None
     _CK_PRESSURE_CACHE = None
+    _CK_LOG10_TEMPERATURE_CACHE = None
+    _CK_LOG10_PRESSURE_CACHE = None
     _clear_cache()
 
 # Check if the registries are set or not
@@ -344,7 +352,7 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir
 
     # Allocate the global scope caches
     global _CK_SPECIES_NAMES, _CK_SIGMA_CACHE, _CK_TEMPERATURE_CACHE, _CK_G_POINTS_CACHE, _CK_G_WEIGHTS_CACHE
-    global _CK_WAVELENGTH_CACHE, _CK_PRESSURE_CACHE
+    global _CK_WAVELENGTH_CACHE, _CK_PRESSURE_CACHE, _CK_LOG10_TEMPERATURE_CACHE, _CK_LOG10_PRESSURE_CACHE
 
     entries: List[CKRegistryEntry] = []
 
@@ -425,10 +433,15 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir
     _CK_WAVELENGTH_CACHE = jnp.asarray(rectangularized_entries[0].wavelengths, dtype=jnp.float64)
     _CK_PRESSURE_CACHE = jnp.asarray(rectangularized_entries[0].pressures, dtype=jnp.float64)
 
+    # Pre-compute log10 of grids for efficient interpolation
+    _CK_LOG10_PRESSURE_CACHE = jnp.log10(_CK_PRESSURE_CACHE)
+    _CK_LOG10_TEMPERATURE_CACHE = jnp.log10(_CK_TEMPERATURE_CACHE)
+
     print(f"[CK] Cross section cache: {_CK_SIGMA_CACHE.shape} (dtype: {_CK_SIGMA_CACHE.dtype})")
     print(f"[CK] Temperature cache: {_CK_TEMPERATURE_CACHE.shape} (dtype: {_CK_TEMPERATURE_CACHE.dtype})")
     print(f"[CK] G-points cache: {_CK_G_POINTS_CACHE.shape} (dtype: {_CK_G_POINTS_CACHE.dtype})")
     print(f"[CK] G-weights cache: {_CK_G_WEIGHTS_CACHE.shape} (dtype: {_CK_G_WEIGHTS_CACHE.dtype})")
+    print(f"[CK] Cached log10(P) and log10(T) grids for efficient interpolation")
 
     # Estimate memory usage
     sigma_mb = _CK_SIGMA_CACHE.size * _CK_SIGMA_CACHE.itemsize / 1024**2
@@ -502,3 +515,17 @@ def ck_g_weights() -> jnp.ndarray:
     if _CK_G_WEIGHTS_CACHE is None:
         raise RuntimeError("c-k g-weights not built; call build_opacities() first.")
     return _CK_G_WEIGHTS_CACHE
+
+
+@lru_cache(None)
+def ck_log10_pressure_grid() -> jnp.ndarray:
+    if _CK_LOG10_PRESSURE_CACHE is None:
+        raise RuntimeError("c-k log10(P) grid not built; call build_opacities() first.")
+    return _CK_LOG10_PRESSURE_CACHE
+
+
+@lru_cache(None)
+def ck_log10_temperature_grids() -> jnp.ndarray:
+    if _CK_LOG10_TEMPERATURE_CACHE is None:
+        raise RuntimeError("c-k log10(T) grids not built; call build_opacities() first.")
+    return _CK_LOG10_TEMPERATURE_CACHE

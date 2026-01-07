@@ -6,7 +6,7 @@ JAXNS nested sampler driver with:
 - Stable theta_map keys (sampled + deltas + optional defaults injected)
 - Optional "latent logit" parameterisation for bounded uniforms (future gradient-guided friendly)
 - Silent defaults (e.g. c=-99) that only apply if the parameter is NOT present in YAML at all
-- Same split-normal likelihood + jitter as before
+- Same Gaussian likelihood + jitter as before
 """
 
 from __future__ import annotations
@@ -24,8 +24,6 @@ import jaxns
 from jaxns import NestedSampler, TerminationCondition, resample, Model, Prior, summary
 from jaxns.utils import save_results
 
-from .build_prepared import Prepared
-
 tfpd = tfp.distributions
 
 __all__ = [
@@ -34,9 +32,9 @@ __all__ = [
 ]
 
 
-def make_jaxns_model(cfg, prep: Prepared) -> Model:
+def make_jaxns_model(cfg, obs: dict, fm) -> Model:
     """
-    Build a JAXNS Model from cfg + prep.
+    Build a JAXNS Model from cfg + obs + fm.
 
     Improvements vs prior version:
       - delta params injected into theta_map inside prior_model (stable keys)
@@ -47,9 +45,8 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
     """
 
     # --- observed data closed over in the likelihood ---
-    y_obs = jnp.asarray(prep.y)
-    dy_obs_p = jnp.asarray(prep.dy_p)
-    dy_obs_m = jnp.asarray(prep.dy_m)
+    y_obs = jnp.asarray(obs["y"])
+    dy_obs = jnp.asarray(obs["dy"])
 
     # ----------------------------
     # Build delta injection dict
@@ -144,10 +141,10 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
 
         return params
 
-    # ----- Split-normal (asymmetric Gaussian) log-likelihood -----
+    # ----- Gaussian (symmetric) log-likelihood -----
     @jax.jit
     def log_likelihood(theta_map: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        mu = prep.fm(theta_map)  # (N,)
+        mu = fm(theta_map)  # (N,)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def invalid_ll(_):
@@ -162,18 +159,10 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
             # sigma_jit^2 = 10^(2c)
             sig_jit2 = 10.0 ** (2.0 * c)
 
-            # inflate BOTH sides in quadrature
-            sigp_eff = jnp.sqrt(dy_obs_p**2 + sig_jit2)
-            sigm_eff = jnp.sqrt(dy_obs_m**2 + sig_jit2)
-
-            # choose side for exponent
-            sig_eff = jnp.where(r >= 0.0, sigp_eff, sigm_eff)
-
-            # normalisation must use the SAME effective scales
-            norm = jnp.clip(sigm_eff + sigp_eff, 1e-300, jnp.inf)
+            sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)
             sig_eff = jnp.clip(sig_eff, 1e-300, jnp.inf)
 
-            logC = 0.5 * jnp.log(2.0 / jnp.pi) - jnp.log(norm)
+            logC = -jnp.log(sig_eff) - 0.5 * jnp.log(2.0 * jnp.pi)
             ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
             return jnp.where(jnp.isfinite(ll), ll, -jnp.inf)
@@ -185,14 +174,15 @@ def make_jaxns_model(cfg, prep: Prepared) -> Model:
 
 def run_nested_jaxns(
     cfg,
-    prep: Prepared,
+    obs: dict,
+    fm,
     exp_dir: Path,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     """
     Full-featured JAXNS driver.
 
     Called as:
-        samples_dict, evidence_info = run_nested_jaxns(cfg, prep, exp_dir)
+        samples_dict, evidence_info = run_nested_jaxns(cfg, obs, fm, exp_dir)
     """
     jcfg = cfg.sampling.jaxns
 
@@ -218,8 +208,8 @@ def run_nested_jaxns(
 
     key = jax.random.PRNGKey(seed)
 
-    # ---- build JAXNS model from cfg + prep ----
-    model = make_jaxns_model(cfg, prep)
+    # ---- build JAXNS model from cfg + obs + fm ----
+    model = make_jaxns_model(cfg, obs, fm)
 
     ns = NestedSampler(
         model=model,
@@ -285,7 +275,7 @@ def run_nested_jaxns(
         replace=True,
     )
 
-    # ---- convert to your standard samples_dict format ----
+    # ---- convert to samples_dict format ----
     samples_dict: Dict[str, np.ndarray] = {}
 
     # Bayesian parameters: handle logit-transformed and regular parameters

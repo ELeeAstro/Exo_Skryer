@@ -8,7 +8,7 @@
 data:
   obs: ../../obs_data/VHS1256b_V2.txt
   stellar: None
-  janaf: ../../JANAF_data/
+  nasa9: ../../NASA9/
 
 # ----------------------------------------------------------------------------------
 # Physics Section

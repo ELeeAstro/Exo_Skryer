@@ -29,11 +29,11 @@ def _to_chains_draws(arr: np.ndarray) -> np.ndarray:
 
 
 def _is_fixed(p) -> bool:
-    # Fixed ≡ dist='delta' (you don't really use 'fixed' in YAML anymore)
+    # Fixed ≡ dist='delta' ('fixed' is deprecated in YAML configuration)
     return str(getattr(p, "dist", "")).lower() == "delta" or bool(getattr(p, "fixed", False))
 
 
-# --------- main: build InferenceData from your samples_dict ---------
+# --------- main: build InferenceData from samples_dict ---------
 
 def to_inferencedata(
     samples_dict: Dict[str, np.ndarray],
@@ -41,13 +41,13 @@ def to_inferencedata(
     include_fixed: bool = False,
 ) -> az.InferenceData:
     """
-    Convert your {param: array} mapping into ArviZ InferenceData.
+    Convert {param: array} mapping into ArviZ InferenceData.
 
     Parameters
     ----------
     samples_dict : dict
         Mapping name -> samples. Each value can be shaped (draws,) or (chains, draws).
-        Typically this is what comes back from your sampler (after JAX → NumPy).
+        Sampler output after JAX → NumPy conversion.
     cfg : SimpleNamespace
         Parsed YAML configuration. Expects `cfg.params` as a list of parameter objects
         with at least attributes: `name`, `dist`, and optionally `init` / `value`.
@@ -64,7 +64,7 @@ def to_inferencedata(
 
     params_cfg = getattr(cfg, "params", None)
     if params_cfg is None:
-        raise ValueError("cfg.params must be defined in your YAML configuration.")
+        raise ValueError("cfg.params must be defined in YAML configuration.")
 
     for p in params_cfg:
         name = p.name
@@ -89,13 +89,13 @@ def to_inferencedata(
 
     idata = az.from_dict(posterior=posterior)
 
-    # attach minimal attrs so you remember how many chains/draws you had
+    # attach minimal attrs for chain/draw counts
     c, d = next(iter(posterior.values())).shape
     idata.attrs["chains"] = int(c)
     idata.attrs["draws"] = int(d)
 
     # optional: store some config meta-info if present
-    # (you can tweak these to whatever you like)
+    # (customizable per implementation)
     model_name = getattr(cfg, "model_name", None)
     if model_name is None:
         # fall back to something from physics section if useful
@@ -107,7 +107,7 @@ def to_inferencedata(
 
     idata.attrs["model_name"] = model_name
 
-    # you could also stash the sampler engine if present
+    # sampler engine can be stored if present
     sampling = getattr(cfg, "sampling", None)
     if sampling is not None:
         engine = getattr(sampling, "engine", None)

@@ -14,9 +14,9 @@ from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
 from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Milne_modified
-from .vert_chem import constant_vmr, CE_fastchem_jax, CE_rate_jax
+from .vert_chem import constant_vmr, CE_fastchem_jax, CE_rate_jax, quench_approx
 from .vert_mu import constant_mu, compute_mu
-from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile
+from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
 
 from .opacity_line import zero_line_opacity, compute_line_opacity
 from .opacity_ck import zero_ck_opacity, compute_ck_opacity
@@ -226,6 +226,8 @@ def build_forward_model(
         vert_cloud_kernel = exponential_decay_profile
     elif vert_cloud_name in ("slab", "slab_profile"):
         vert_cloud_kernel = slab_profile
+    elif vert_cloud_name in ("const", "constant", "const_profile"):
+        vert_cloud_kernel = const_profile
     else:
         raise NotImplementedError(f"Unknown vert_cloud scheme='{vert_cloud_name}'")
 
@@ -427,6 +429,7 @@ def build_forward_model(
             "vmr_lay": vmr_lay,
             "contri_func": bool(getattr(phys, "contri_func", False)),
         }
+        
         if stellar_flux_arr is not None:
             state["stellar_flux"] = stellar_flux_arr
         if g_weights is not None:

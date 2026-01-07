@@ -108,7 +108,7 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("Rayleigh wavelength grid must match forward-model grid.")
 
-    sigma_log = XR.ray_sigma_table()
+    sigma_log = jnp.asarray(XR.ray_sigma_table(), dtype=jnp.float64)
     sigma_values = 10.0**sigma_log
     species_names = XR.ray_species_names()
 

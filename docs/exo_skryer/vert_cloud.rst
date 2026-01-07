@@ -2,122 +2,82 @@
 Cloud Vertical Profiles
 ***************************
 
-The ``vert_cloud`` module provides functions to compute the vertical distribution of cloud
-mass mixing ratio (``q_c_lay``) as a function of pressure and atmospheric conditions.
+Should cloud opacities be required in the retrieval model, first a vertical profile must be defined.
+Exo Skryer uses the mass mixing ratio, :math:`q_{\rm c}` [g g\ :sup:`-1`],  of cloud materials as the basic unit of the vertical cloud profile
 
-These functions are called after the atmospheric structure (temperature, chemistry, altitude)
-has been computed, and return a cloud mass mixing ratio profile that is then used by cloud
-opacity functions to compute optical properties.
+.. math::
 
-Available Cloud Profiles
-=========================
+  q_{\rm c} = \frac{\rho_{\rm c}}{\rho_{\rm a}}
+
+where :math:`\rho_{\rm c}` [g cm\ :sup:`-3`] is the condensed cloud mass density and :math:`\rho_{\rm a}` [g cm\ :sup:`-3`] the background atmospheric mass density.
+Exo Skryer provides several vertical cloud profile functions in the `~exo_skryer.vert_cloud` module.
 
 No Cloud
 --------
 
-Returns zero cloud mass mixing ratio everywhere (cloud-free atmosphere).
-
-**YAML Configuration:**
-
-.. code-block:: yaml
-
-   physics:
-     vert_cloud: none
-
-**Parameters:**
-
-None required.
-
-
-Exponential Decay Profile
---------------------------
-
-Exponential decay profile with smooth tanh base cutoff.
-
-The cloud mass mixing ratio follows:
+A zero cloud profile can be defined, which is useful should custom methods be required that don't need the cloud mass mixing ratio
 
 .. math::
 
-   q_c(P) = q_{c,0} \left(\frac{P}{P_{\rm base}}\right)^\alpha S_{\rm base}(P)
+  q_{\rm c}(p) = 0
 
-where :math:`S_{\rm base}` is a smooth gate function that transitions from 1 (aloft)
-to 0 (deep atmosphere) around :math:`P_{\rm base}`.
-
-**YAML Configuration:**
+**Example YAML Configuration:**
 
 .. code-block:: yaml
 
    physics:
-     vert_cloud: exponential
+     vert_cloud: no_cloud
 
-   params:
-     - { name: log_10_q_c_0, dist: uniform, lower: -12, upper: -2 }
-     - { name: log_10_H_cld, dist: uniform, lower: -2, upper: 2 }
-     - { name: log_10_p_base, dist: uniform, lower: -6, upper: 3 }
-     - { name: width_base_dex, dist: delta, value: 0.25 }  # optional
-
-**Parameters:**
-
-- ``log_10_q_c_0``: Log₁₀ cloud mass mixing ratio at the base pressure
-- ``log_10_H_cld``: Log₁₀ cloud pressure scale height parameter (controls α = 1/H_cld)
-- ``log_10_p_base``: Log₁₀ base pressure in bar
-- ``width_base_dex``: Width of the base cutoff in dex (default: 0.25)
 
 
 Slab Profile
 ------------
 
-Uniform cloud slab with hard pressure cutoffs.
+A slab profile is defined with a constant :math:`q_{\rm c}` between a top pressure and a given :math:`\Delta` pressure.
+This follows a similar profile to ` <>`_.
 
-The cloud has constant :math:`q_c` between :math:`P_{\rm top}` and :math:`P_{\rm bot}`,
-and zero outside.
+**Example YAML Configuration:**
 
-**YAML Configuration:**
+.. math::
+
+   q_{\rm c}(p) = \begin{cases}
+      q_{\rm c, slab}
+       &  p \le p_{\rm c, top} + \Delta p \\
+      0 & p > p_{\rm c, top} + \Delta p\\
+   \end{cases}
 
 .. code-block:: yaml
 
    physics:
-     vert_cloud: slab
+     vert_cloud: slab_profile
 
    params:
-     - { name: log_10_q_c, dist: uniform, lower: -12, upper: -2 }
-     - { name: log_10_p_top_slab, dist: uniform, lower: -6, upper: 2 }
-     - { name: log_10_dp_slab, dist: uniform, lower: 0.5, upper: 4 }
-
-**Parameters:**
-
-- ``log_10_q_c``: Log₁₀ cloud mass mixing ratio inside the slab
-- ``log_10_p_top_slab``: Log₁₀ pressure at the top of the slab in bar
-- ``log_10_dp_slab``: Log₁₀ pressure extent of the slab (P_bot = P_top × 10^Δlog_P)
+     - { name: log_10_q_c, dist: uniform, low: -12, high: -2, transform: logit, init: -6 }
+     - { name: log_10_p_top_slab, dist: uniform, low: -6, high: 2, transform: logit, init: -2 }
+     - { name: log_10_dp_slab, dist: uniform, low: -2, high: 2, transform: logit, init: 0.5 }
 
 
-Integration with Cloud Opacity
-===============================
+Exponential Decay Profile
+-------------------------
 
-The cloud vertical profile functions compute ``q_c_lay``, which is then added to the
-atmospheric state dictionary. Cloud opacity functions (e.g., ``direct_nk``, ``grey_cloud``)
-access this value to compute optical properties.
+The exponential decay profile reduces the :math:`q_{\rm c}` with pressure from a given base value at a base pressure exponentially, given by a decay rate :math:`\alpha`.
+Below the base pressure, there is zero cloud.
 
-**Workflow:**
+**Example YAML Configuration:**
 
-1. Compute atmospheric structure (T, P, chemistry, altitude, density)
-2. Call ``vert_cloud`` kernel → produces ``q_c_lay``
-3. Add ``q_c_lay`` to ``state`` dictionary
-4. Cloud opacity function uses ``state["q_c_lay"]`` to compute extinction
+.. math::
 
+   q_{\rm c}(p) = \begin{cases}
+      q_{\rm c, base} \left(\frac{p}{p_{\rm c, base}}\right)^{\alpha} &  p \le p_{\rm c, base} \\
+      0 & p > p_{\rm c, base}\\
+   \end{cases}
 
-API Reference
-=========
+.. code-block:: yaml
 
-.. automodapi:: exo_skryer.vert_cloud
-   :no-heading:
-   :no-main-docstr:
+   physics:
+     vert_cloud: exponential_decay_profile
 
-
-See Also
-========
-
-- :doc:`opacity_cloud` for cloud optical property calculations
-- :doc:`vert_Tp` for temperature-pressure profiles
-- :doc:`vert_alt` for altitude structure
-- :doc:`api` for complete API reference
+   params:
+     - { name: log_10_q_c, dist: uniform, low: -12, high: -2, transform: logit, init: -6 }
+     - { name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0.0 }
+     - { name: log_10_p_base, dist: uniform, low: -6, high: 2, transform: logit, init: -1 }

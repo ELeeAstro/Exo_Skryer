@@ -2,7 +2,7 @@ data:
 
   obs: ../../obs_data/WASP-17b_JWST.txt
   stellar: None
-  janaf: ../../JANAF_data/
+  nasa9: ../../NASA9/
 
 physics:
 
@@ -177,4 +177,3 @@ runtime:
   platform: gpu           # cpu | gpu | cuda | metal
   cuda_visible_devices: 1  # or "0,1"
   threads: 1
-
