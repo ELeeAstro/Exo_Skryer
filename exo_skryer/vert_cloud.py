@@ -90,11 +90,6 @@ def exponential_decay_profile(
     -------
     q_c_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Cloud mass mixing ratio per layer.
-
-    Notes
-    -----
-    A hard cutoff is applied at P_base: clouds are zero for P >= P_base.
-    This ensures q_c = 0 in the deep atmosphere below the cloud base.
     """
     # Retrieved parameters
     q_c_0 = 10.0 ** params["log_10_q_c"]
@@ -152,11 +147,6 @@ def slab_profile(
     -------
     q_c_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Cloud mass mixing ratio per layer (q_c inside slab, 0 outside).
-
-    Notes
-    -----
-    The slab extends from P_top to P_bot = P_top * 10^(Δlog_P).
-    Hard cutoffs are used (no smooth edges).
     """
     # Retrieved parameters
     q_c_slab = 10.0 ** params["log_10_q_c"]

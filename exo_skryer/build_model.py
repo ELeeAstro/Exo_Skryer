@@ -23,7 +23,7 @@ from .opacity_ck import zero_ck_opacity, compute_ck_opacity
 from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
-from .opacity_cloud import zero_cloud_opacity, grey_cloud, deck_and_powerlaw, powerlaw_cloud, F18_cloud, F18_cloud_2, direct_nk, direct_nk_slab
+from .opacity_cloud import compute_cloud_opacity, zero_cloud_opacity, grey_cloud, deck_and_powerlaw, F18_cloud, direct_nk, given_nk
 
 from . import build_opacities as XS
 from .build_chem import prepare_chemistry_kernel
@@ -88,40 +88,6 @@ def build_forward_model(
         - If `return_highres=False`: 1D array of binned transit depth or emission flux
         - If `return_highres=True`: Dict with keys 'hires' (high-res spectrum) and
           'binned' (convolved spectrum)
-
-    Notes
-    -----
-    The forward model pipeline consists of:
-
-    1. **Vertical Structure**: Computes pressure-temperature profile (vert_Tp),
-       altitude grid (vert_alt), chemical abundances (vert_chem), and mean
-       molecular weight (vert_mu) for each atmospheric layer.
-
-    2. **Opacity Calculation**: Computes wavelength-dependent opacity from line
-       absorption (opac_line), Rayleigh scattering (opac_ray), collision-induced
-       absorption (opac_cia), clouds (opac_cloud), and special opacity sources
-       like H- bound-free (opac_special).
-
-    3. **Radiative Transfer**: Solves the radiative transfer equation using the
-       specified rt_scheme (transit_1d or emission_1d) to produce a high-resolution
-       spectrum.
-
-    4. **Instrumental Response**: Applies wavelength-dependent response functions
-       to produce the final binned spectrum matching observational resolution.
-
-    Configuration schemes are selected from `cfg.physics`:
-    - **vert_Tp**: isothermal, guillot, barstow, milne, picket_fence, mands, piecewise_polynomial
-    - **vert_alt**: constant_g, variable_g, p_ref
-    - **vert_chem**: constant_vmr, ce (FastChem placeholder), ce_rate_jax
-    - **vert_mu**: auto, constant, dynamic
-    - **opac_line**: none, lbl, ck
-    - **opac_ray, opac_cia**: none, lbl, ck
-    - **opac_cloud**: none, grey, powerlaw_cloud, f18, f18_2, nk
-    - **opac_special**: on (default), off
-    - **rt_scheme**: transit_1d, emission_1d
-
-    For constant VMR chemistry, required trace species are automatically inferred
-    from the opacity configuration and validated against `cfg.params`.
     """
 
     # Extract fixed (delta) parameters from cfg.params
@@ -285,16 +251,14 @@ def build_forward_model(
         cld_opac_kernel = None
     elif cld_opac_scheme_str.lower() == "grey":
         cld_opac_kernel = grey_cloud
-    elif cld_opac_scheme_str.lower() == "powerlaw_cloud":
-        cld_opac_kernel = powerlaw_cloud
+    elif cld_opac_scheme_str.lower() in ("powerlaw", "deck_and_powerlaw"):
+        cld_opac_kernel = deck_and_powerlaw
     elif cld_opac_scheme_str.lower() == "f18":
         cld_opac_kernel = F18_cloud
-    elif cld_opac_scheme_str.lower() == "f18_2":
-        cld_opac_kernel = F18_cloud_2
-    elif cld_opac_scheme_str.lower() == "nk":
+    elif cld_opac_scheme_str.lower() in ("nk", "direct_nk"):
         cld_opac_kernel = direct_nk
-    elif cld_opac_scheme_str.lower() == "nk_slab":
-        cld_opac_kernel = direct_nk_slab        
+    elif cld_opac_scheme_str.lower() in ("given_nk", "cached_nk"):
+        cld_opac_kernel = given_nk
     else:
         raise NotImplementedError(f"Unknown cld_opac_scheme='{cld_opac_scheme}'")
 

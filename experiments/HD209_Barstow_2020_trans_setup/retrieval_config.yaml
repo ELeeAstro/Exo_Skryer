@@ -21,7 +21,7 @@ physics:
   vert_alt: variable_g
   vert_chem: constant_vmr
   vert_mu: dynamic
-  vert_cloud: exponential_decay_profile
+  vert_cloud: const_profile
 
   # Opacity sources
   opac_line: lbl
@@ -41,7 +41,7 @@ physics:
 # ----------------------------------------------------------------------------------
 opac:
   wl_master: wl_R10000.txt
-  full_grid: true
+  full_grid: false
   ck: false
   ck_mix: RORR
 
@@ -76,8 +76,9 @@ params:
   - {name: p_top, dist: delta, value: 1e-8, transform: identity, init: 1e-8}
 
   # Planetary parameters
-  - {name: log_10_g, dist: normal, mu: 3.0, sigma: 0.3, transform: logit, init: 3.0}
+  - {name: log_10_g, dist: uniform, low: 2.7, high: 3.3, transform: logit, init: 3.0}
   - {name: R_p, dist: uniform, low: 1.1, high: 1.5, transform: logit, init: 1.4}
+
 
   # T-p profile parameters
   - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}
@@ -88,9 +89,7 @@ params:
   - {name: log_10_f_K, dist: uniform, low: -9, high: -3, transform: logit, init: -6}
 
   # Cloud parameters
-  - {name: log_10_q_c_0, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
-  - {name: log_10_p_base, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
+  - {name: log_10_q_c, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
   - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
   - {name: cld_Q0, dist: uniform, low: 0.1, high: 65, transform: logit, init: 30.0}
@@ -120,9 +119,9 @@ sampling:
     c: null
     shell_fraction: 0.5
     difficult_model: false
-    parameter_estimation: true
+    parameter_estimation: false
     gradient_guided: false
-    init_efficiency_threshold: 0.05
+    init_efficiency_threshold: 0.1
     verbose: true
 
     termination:
@@ -139,18 +138,18 @@ sampling:
 
   # BlackJAX nested sampling settings
   blackjax_ns:
-    num_live_points: 150
-    num_inner_steps: 50
-    num_delete: 75
-    dlogz_stop: 0
+    num_live_points: 1000
+    num_inner_steps: 30
+    num_delete: 500
+    dlogz_stop: 0.1
     seed: 42
 
   # Dynesty settings
   dynesty:
-    nlive: 100
+    nlive: 1000
     bound: multi
     sample: auto
-    dlogz: 1.0
+    dlogz: 0.1
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -162,17 +161,33 @@ sampling:
 
   # UltraNest settings
   ultranest:
-    num_live_points: 100
+    num_live_points: 1000
     min_num_live_points: 100
     dlogz: 0.1
     max_iters: 0
     verbose: true
     show_status: true
 
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 1000              # Number of live points
+    evidence_tolerance: 0.1          # dlogZ stopping criterion
+    sampling_efficiency: 0.3         # 0.8 (unimodal), 0.3 (multimodal)
+    n_iter_before_update: 100        # Update interval for proposals
+    null_log_evidence: -1.0e99       # Null evidence (usually leave default)
+    max_modes: 100                   # Maximum number of modes to find
+    mode_tolerance: -1.0e99          # Mode separation tolerance
+    seed: -1                         # Random seed (-1 = random, >=0 for reproducibility)
+    verbose: true                    # Print progress
+    resume: true                     # Resume from previous run if interrupted
+    importance_nested_sampling: false # Use importance nested sampling
+    multimodal: true                 # Enable multimodal mode detection
+    const_efficiency_mode: false     # Constant efficiency mode
+
 # ----------------------------------------------------------------------------------
 # Runtime Section
 # ----------------------------------------------------------------------------------
 runtime:
   platform: cpu
-  cuda_visible_devices: 1
+  cuda_visible_devices: 0
   threads: 1

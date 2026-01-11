@@ -129,7 +129,14 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
 
     # Build joint prior
     prior, param_names = build_joint_prior_distrax(cfg)
-    print(f"[blackjax_ns] Prior over {len(param_names)} parameters: {param_names}")
+
+    print(f"[blackjax_ns] Running nested sampling...")
+    print(f"[blackjax_ns] Free parameters: {len(param_names)}")
+    print(f"[blackjax_ns] Parameter names: {param_names}")
+    print(f"[blackjax_ns] num_live_points: {num_live}")
+    print(f"[blackjax_ns] num_inner_steps: {num_inner_steps}")
+    print(f"[blackjax_ns] num_delete: {num_delete}")
+    print(f"[blackjax_ns] dlogz_stop: {dlogz_stop}")
 
     # RNG and initial particles
     rng_key = jax.random.PRNGKey(seed)
@@ -153,7 +160,9 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
 
-    def _loglikelihood_single(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    @jax.jit
+    def loglikelihood_fn(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        # params is a dict of scalars when blackjax calls it for one particle.
         mu = fm(params)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
@@ -176,24 +185,6 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
             return jnp.where(jnp.isfinite(ll), ll, LOG_FLOOR)
 
         return jax.lax.cond(valid_mu, valid_ll, invalid_ll, operand=None)
-
-    @jax.jit
-    def loglikelihood_fn(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        first = next(iter(params.values()))
-
-        def eval_single(_):
-            return _loglikelihood_single(params)
-
-        def eval_batched(_):
-            batch = first.shape[0]
-
-            def body(i):
-                params_i = jax.tree_util.tree_map(lambda x: x[i], params)
-                return _loglikelihood_single(params_i)
-
-            return jax.lax.map(body, jnp.arange(batch))
-
-        return jax.lax.cond(first.ndim == 0, eval_single, eval_batched, operand=None)
 
     # For logprior, we must evaluate only over the sampled parameters (exclude injected deltas/defaults).
     sampled_only = {name: None for name in param_names}

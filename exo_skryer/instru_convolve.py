@@ -62,19 +62,6 @@ def _convolve_spectrum_core(
     binned_spectrum : `~jax.numpy.ndarray`, shape (nbin,)
         Convolved spectrum in observational bins. Each element represents:
         bin_i = ∫ F(λ) w(λ) dλ / ∫ w(λ) dλ
-
-    Notes
-    -----
-    The convolution is computed as:
-    1. Extract spectrum values at sampled wavelengths using `idx_pad`
-    2. Multiply by response weights: F(λ) × w(λ)
-    3. Integrate using Simpson's rule with vmap over bins
-    4. Normalize by integrated throughput
-
-    The simpson_padded function handles the padded arrays correctly by using
-    valid_lens to determine which points are real vs padded.
-
-    The normalization denominator is clamped to 1e-99 to prevent division by zero.
     """
     spec_pad = jnp.take(spec, idx_pad, axis=0)  # (nbin, max_len)
 
@@ -114,21 +101,6 @@ def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
 
         If no bins are registered (nbin=0), returns an empty array with the
         same dtype as `spectrum`.
-
-    Notes
-    -----
-    The bandpass registry must be loaded before calling this function using
-    `load_bandpass_registry()` from the registry_bandpass module. The registry
-    caches pre-computed wavelength samples, response weights, and normalization
-    factors for efficient convolution.
-
-    This function is designed to work inside JIT-compiled forward models. The
-    bandpass data is fetched once and then passed to the JIT-compiled convolution
-    kernel.
-
-    See Also
-    --------
-    registry_bandpass.load_bandpass_registry : Loads and caches response data
     """
     n_bins = bandpass_num_bins()
     if n_bins == 0:

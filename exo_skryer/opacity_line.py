@@ -40,12 +40,6 @@ def zero_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarr
     -------
     zeros : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Zero-valued line opacity array in cm² g⁻¹.
-
-    Notes
-    -----
-    This function maintains API compatibility with other opacity calculation
-    functions so that the forward model can seamlessly switch between different
-    opacity schemes without changing function signatures.
     """
     # Use shape directly without jnp.size() for JIT compatibility
     shape = (state["nlay"], state["nwl"])
@@ -86,29 +80,6 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
     kappa_line : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Total line absorption mass opacity in cm² g⁻¹ at each layer and
         wavelength point.
-
-    Notes
-    -----
-    The opacity formula is:
-
-        κ_line(λ) = Σ_i [f_i × σ_i(λ, P, T)] / μ
-
-    where:
-    - f_i is the volume mixing ratio of species i
-    - σ_i is the absorption cross-section in cm² molecule⁻¹
-    - μ is the mean molecular weight in amu
-
-    The pressure input to this function should be in microbar to match the forward
-    model convention, but is converted to bar internally for table lookup.
-
-    Cross-sections are stored in log₁₀ space in the registry to handle values
-    spanning many orders of magnitude, then converted back to linear space after
-    interpolation.
-
-    See Also
-    --------
-    zero_line_opacity : Returns zero opacity when LBL is disabled
-    build_opacities : Pre-loads and caches line-by-line cross-section tables
     """
     layer_pressures = state["p_lay"]
     layer_temperatures = state["T_lay"]

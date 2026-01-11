@@ -77,7 +77,18 @@ def main() -> None:
         os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
         os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
         os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
+
+        # XLA GPU optimization flags
+        xla_flags = (
+            "--xla_gpu_enable_latency_hiding_scheduler=true "
+            "--xla_gpu_enable_highest_priority_async_stream=true "
+            "--xla_gpu_enable_fast_min_max=true "
+            "--xla_gpu_deterministic_ops=false"
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+
         print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
+        print(f"[info] XLA GPU: latency hiding, async streams, fast math enabled")
 
     # Print main yaml parameters to command line (after setting environment)
     from .help_print import print_cfg
@@ -179,8 +190,13 @@ def main() -> None:
         from .sampler_dynesty_NS import run_nested_dynesty
         samples_dict, evidence_info = run_nested_dynesty(cfg, obs, fm_fnc, exp_dir)
 
+    elif engine == "pymultinest":
+        # PyMultiNest nested-sampling driver (self-contained)
+        from .sampler_pymultinest_NS import run_nested_pymultinest
+        samples_dict, evidence_info = run_nested_pymultinest(cfg, obs, fm_fnc, exp_dir)
+
     else:
-        raise ValueError("Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty")
+        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty, pymultinest")
 
     print(f"[info] Finished Sampling")
 

@@ -24,13 +24,6 @@ def format_duration(seconds: float) -> str:
     -------
     str
         Formatted duration as ``"<d>d <h>h <m>m <s>s"``.
-
-    Examples
-    --------
-    >>> format_duration(3661.5)
-    '0d 1h 1m 1.500s'
-    >>> format_duration(90125.234)
-    '1d 1h 2m 5.234s'
     """
     days, rem = divmod(seconds, 24 * 3600)
     hours, rem = divmod(rem, 3600)

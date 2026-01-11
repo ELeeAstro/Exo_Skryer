@@ -164,12 +164,6 @@ def CE_rate_jax(
     -------
     vmr_lay : dict[str, `~jax.numpy.ndarray`]
         Dictionary mapping species names to VMR profiles with shape (nlay,).
-
-    Notes
-    -----
-    This function requires Gibbs free-energy tables to be loaded (see
-    `get_nasa9_cache()`). It calls `RateJAX.solve_profile(T_lay, p_bar)` with
-    `p_bar = p_lay / 1e6`.
     """
     del nlay  # Unused but kept for API compatibility with other vert_chem functions
 
@@ -344,15 +338,6 @@ def quench_approx(
     -------
     vmr_lay : dict[str, `~jax.numpy.ndarray`]
         Dictionary mapping species names to quenched VMR profiles with shape (nlay,).
-
-    Notes
-    -----
-    This routine:
-
-    1. Computes equilibrium VMRs using `RateJAX`.
-    2. Estimates a single mixing timescale profile `tau_mix`.
-    3. For selected species, computes `tau_chem` and freezes the abundance above
-       the quench level where `tau_chem > tau_mix`.
     """
     del nlay  # Unused but kept for API compatibility
 

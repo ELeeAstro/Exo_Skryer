@@ -36,13 +36,6 @@ def zero_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
     -------
     zeros : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Zero-valued Rayleigh opacity array in cm² g⁻¹.
-
-    Notes
-    -----
-    This function is used as a fallback when Rayleigh opacities are disabled or
-    the Rayleigh registry has not been populated. It keeps a consistent API with
-    `compute_ray_opacity()` so callers can switch Rayleigh scattering on/off
-    without changing function signatures.
     """
     # Use shape directly without int() conversion for JIT compatibility
     shape = (state["nlay"], state["nwl"])
@@ -79,22 +72,6 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     -------
     kappa_ray : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Rayleigh scattering mass opacity in cm² g⁻¹ at each layer and wavelength.
-
-    Notes
-    -----
-    The Rayleigh registry stores cross-sections in log₁₀ space with shape
-    (nspecies, nwl). This function converts them back to linear space and forms
-    the mixture-weighted cross-section:
-
-        σ_mix(λ) = Σ_i [ f_i × σ_i(λ) ]
-
-    The per-layer mass opacity is then:
-
-        κ_ray(λ) = (n / ρ) × σ_mix(λ)
-
-    where n is `state["nd_lay"]` and ρ is `state["rho_lay"]`. The wavelength grid
-    in `state["wl"]` must exactly match the grid used to build the registry cache
-    (`registry_ray.ray_master_wavelength()`); a mismatch raises `ValueError`.
     """
     if not XR.has_ray_data():
         return zero_ray_opacity(state, params)

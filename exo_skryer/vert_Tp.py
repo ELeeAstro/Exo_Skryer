@@ -154,8 +154,8 @@ def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[
             Internal temperature in Kelvin.
         - `log_10_k_ir` : float
             Log₁₀ infrared opacity in cm² g⁻¹.
-        - `T_skin` : float
-            Skin temperature in Kelvin.
+        - `T_ratio` : float
+            Ratio between the skin temperature and internal temperature (T_skin/T_int).
         - `log_10_p_0` : float
             Log₁₀ reference pressure in bar for the stretched exponential.
         - `beta` : float
@@ -171,14 +171,14 @@ def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[
     g = 10.0**params["log_10_g"]
     T_int = params["T_int"]
     k_ir = 10.0**params["log_10_k_ir"]
-    T_skin = params["T_skin"]
+    T_ratio = params["T_ratio"]
     p_t = 10.0**params["log_10_p_t"]
     beta = params["beta"]
 
     tau_ir = k_ir / g * p_lev
 
     q_inf = 0.710446
-    q0 = (4.0/3.0) * (T_skin / T_int)**4
+    q0 = (4.0/3.0) * (T_ratio)**4
 
     dq = q0 - q_inf
     # Stretched exponential: sig = exp(-((p/p_0)^beta))

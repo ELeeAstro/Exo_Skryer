@@ -16,13 +16,9 @@ __all__ = [
     "zero_cloud_opacity",
     "grey_cloud",
     "deck_and_powerlaw",
-    "powerlaw_cloud",
     "F18_cloud",
-    "F18_cloud_2",
     "direct_nk",
-    "direct_nk_slab",
     "given_nk",
-    "_compute_mie_madt_efficiencies",
 ]
 
 
@@ -170,20 +166,6 @@ def compute_cloud_opacity(
         Single-scattering albedo (Q_sca / Q_ext).
     g : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Asymmetry parameter for scattering phase function.
-
-    Notes
-    -----
-    The q_c_lay vertical profile should be computed separately using functions
-    from the vert_cloud module (e.g., no_cloud, exponential_decay_profile,
-    slab_profile) and added to the state dictionary before calling this function.
-
-    Examples
-    --------
-    >>> # After computing vertical profile
-    >>> q_c_lay = exponential_decay_profile(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params)
-    >>> state["q_c_lay"] = q_c_lay
-    >>> # Now compute cloud opacity
-    >>> k_cld, ssa, g = compute_cloud_opacity(state, params, opacity_scheme="direct_nk")
     """
     scheme_lower = opacity_scheme.lower().strip()
 
@@ -302,11 +284,6 @@ def deck_and_powerlaw(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarr
 
     return k_cld, ssa, g
 
-
-# Alias for backwards compatibility
-powerlaw_cloud = deck_and_powerlaw
-
-
 def F18_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Compute a cloud opacity using Fisher and Heng (2018) with vertical profile.
 
@@ -349,15 +326,6 @@ def F18_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> 
         Single-scattering albedo (zeros; pure absorption).
     g : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Asymmetry parameter (zeros).
-
-    Notes
-    -----
-    The F18 parameterization for extinction efficiency is:
-        Qext(x) = Q1 / (Q0 * x^(-a) + x^0.2)
-
-    The cloud mass mixing ratio vertical profile (q_c_lay) should be computed
-    separately using vert_cloud functions and added to the state dictionary
-    before calling this function.
     """
     wl = state["wl"]
     q_c_lay = state["q_c_lay"]  # (nlay,)
@@ -413,8 +381,6 @@ def direct_nk(
             Log₁₀ imaginary refractive-index nodes.
         - `log_10_cld_r` : float
             Log₁₀ particle radius in microns.
-        - `sigma` : float
-            Log-normal width parameter (clipped to be ≥ 1).
         - `cld_rho` : float, optional
             Cloud bulk density in g cm⁻³ (defaults to 1.0).
 
@@ -426,17 +392,6 @@ def direct_nk(
         Single-scattering albedo derived from (Q_sca / Q_ext).
     g : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Asymmetry parameter (zeros in this implementation).
-
-    Notes
-    -----
-    The retrieved node curves are interpolated using `aux_functions.pchip_1d`.
-    To avoid extrapolation artifacts, the contribution is limited to the
-    wavelength span covered by the nodes, with a small floor outside the node
-    support.
-
-    The cloud mass mixing ratio vertical profile (q_c_lay) should be computed
-    separately using vert_cloud functions and added to the state dictionary
-    before calling this function.
     """
     wl = state["wl"]          # (nwl,) in micron
     q_c_lay = state["q_c_lay"]  # (nlay,)
@@ -444,9 +399,7 @@ def direct_nk(
     # -----------------------------
     # Retrieved / configured knobs
     # -----------------------------
-    r = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
-    sig = params["sigma"]
-    sig = jnp.maximum(sig, 1.0 + 1e-8)  # log-normal width must be >= 1
+    r_eff = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
     cld_rho = params.get("cld_rho", 1.0)  # Cloud bulk density, defaults to 1.0 g/cm³
 
     # Keep n positive for scattering math sanity (doesn't forbid n<1)
@@ -476,11 +429,6 @@ def direct_nk(
     # -----------------------------
     # Compute optical properties
     # -----------------------------
-    # Precompute log(sig)^2 once to avoid redundant computation
-    log_sig_sq = jnp.log(sig) ** 2
-
-    # Effective radius for lognormal distribution
-    r_eff = r * jnp.exp(2.5 * log_sig_sq)
 
     # Compute Mie/MADT efficiencies conditionally (skip wavelengths outside node support)
     Q_ext_vals, Q_sca_vals, g_vals = jax.vmap(_compute_mie_or_zero, in_axes=(0, 0, 0, None, 0))(
@@ -491,8 +439,7 @@ def direct_nk(
     # q_c_lay: (nlay,), Q_ext_vals: (nwl,) -> k_cld: (nlay, nwl)
     k_cld = (
         (3.0 * q_c_lay[:, None] * Q_ext_vals[None, :])
-        / (4.0 * cld_rho * (r * 1e-4))
-        * jnp.exp(0.5 * log_sig_sq)
+        / (4.0 * cld_rho * (r_eff * 1e-4))
     )
 
     ssa_wl = jnp.clip(Q_sca_vals / jnp.maximum(Q_ext_vals, 1e-30), 0.0, 1.0)
@@ -531,8 +478,6 @@ def given_nk(
 
         - `log_10_cld_r` : float
             Log₁₀ particle radius in microns.
-        - `sigma` : float
-            Log-normal width parameter (clipped to be ≥ 1).
         - `cld_rho` : float, optional
             Cloud bulk density in g cm⁻³ (defaults to 1.0).
 
@@ -549,32 +494,6 @@ def given_nk(
     ------
     RuntimeError
         If no cloud n,k data has been loaded (call `set_cloud_nk_data` first).
-
-    Notes
-    -----
-    Before using this function, load refractive index data into the registry:
-
-    >>> from exo_skryer.registry_cloud import set_cloud_nk_data
-    >>> set_cloud_nk_data(wl_data, n_data, k_data)
-
-    IMPORTANT: The cached n,k arrays must already be on the same wavelength grid
-    as the model (state["wl"]). No interpolation is performed - the arrays are
-    used directly. This ensures maximum efficiency for repeated forward model calls.
-
-    The cloud mass mixing ratio vertical profile (q_c_lay) should be computed
-    separately using vert_cloud functions and added to the state dictionary
-    before calling this function.
-
-    Examples
-    --------
-    >>> # Load refractive index data
-    >>> from exo_skryer.registry_cloud import set_cloud_nk_data
-    >>> wl_nk = jnp.array([0.5, 1.0, 2.0, 5.0])
-    >>> n_nk = jnp.array([1.5, 1.45, 1.4, 1.35])
-    >>> k_nk = jnp.array([0.01, 0.02, 0.03, 0.04])
-    >>> set_cloud_nk_data(wl_nk, n_nk, k_nk)
-    >>> # Now use in opacity calculation
-    >>> k_cld, ssa, g = given_nk(state, params)
     """
     wl = state["wl"]          # (nwl,) in micron
     q_c_lay = state["q_c_lay"]  # (nlay,)
@@ -589,19 +508,12 @@ def given_nk(
     # -----------------------------
     # Retrieved / configured knobs
     # -----------------------------
-    r = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
-    sig = params["sigma"]
-    sig = jnp.maximum(sig, 1.0 + 1e-8)  # log-normal width must be >= 1
+    r_eff = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
     cld_rho = params.get("cld_rho", 1.0)  # Cloud bulk density, defaults to 1.0 g/cm³
 
     # -----------------------------
     # Compute optical properties
     # -----------------------------
-    # Precompute log(sig)^2 once to avoid redundant computation
-    log_sig_sq = jnp.log(sig) ** 2
-
-    # Effective radius for lognormal distribution
-    r_eff = r * jnp.exp(2.5 * log_sig_sq)
 
     # Compute Mie/MADT efficiencies using modular blending function
     Q_ext_vals, Q_sca_vals, g_vals = jax.vmap(_compute_mie_madt_efficiencies, in_axes=(0, 0, 0, None))(
@@ -612,8 +524,7 @@ def given_nk(
     # q_c_lay: (nlay,), Q_ext_vals: (nwl,) -> k_cld: (nlay, nwl)
     k_cld = (
         (3.0 * q_c_lay[:, None] * Q_ext_vals[None, :])
-        / (4.0 * cld_rho * (r * 1e-4))
-        * jnp.exp(0.5 * log_sig_sq)
+        / (4.0 * cld_rho * (r_eff * 1e-4))
     )
 
     ssa_wl = jnp.clip(Q_sca_vals / jnp.maximum(Q_ext_vals, 1e-30), 0.0, 1.0)
@@ -623,8 +534,3 @@ def given_nk(
     g = g_vals[None, :] + jnp.zeros_like(q_c_lay[:, None])
 
     return k_cld, ssa, g
-
-
-# Aliases for backwards compatibility and alternative naming schemes
-F18_cloud_2 = F18_cloud  # Placeholder - implement variant if needed
-direct_nk_slab = direct_nk  # Placeholder - implement slab variant if needed

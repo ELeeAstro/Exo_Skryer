@@ -27,11 +27,6 @@ def resolve_obs_path(cfg: Any) -> str:
     ------
     ValueError
         If no observational data path is present in the configuration.
-
-    Examples
-    --------
-    >>> obs_path = resolve_obs_path(cfg)
-    >>> obs = read_obs_data(obs_path, base_dir=exp_dir)
     """
     data_cfg = getattr(cfg, "data", None)
     rel_obs_path: Optional[str] = None

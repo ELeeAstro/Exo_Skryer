@@ -211,6 +211,17 @@ def run_nested_jaxns(
     # ---- build JAXNS model from cfg + obs + fm ----
     model = make_jaxns_model(cfg, obs, fm)
 
+    # Get parameter names for printing
+    param_names = [p.name for p in cfg.params if str(getattr(p, "dist", "")).lower() != "delta"]
+
+    print(f"[JAXNS] Running nested sampling...")
+    print(f"[JAXNS] Free parameters: {len(param_names)}")
+    print(f"[JAXNS] Parameter names: {param_names}")
+    print(f"[JAXNS] num_live_points: {num_live_points}")
+    print(f"[JAXNS] max_samples: {max_samples}")
+    print(f"[JAXNS] difficult_model: {difficult_model}")
+    print(f"[JAXNS] gradient_guided: {gradient_guided}")
+
     ns = NestedSampler(
         model=model,
         max_samples=max_samples,

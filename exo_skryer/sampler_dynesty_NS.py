@@ -207,10 +207,13 @@ def run_nested_dynesty(
     loglike_fn = build_loglikelihood_dynesty(cfg, obs, fm, param_names)
     ndim = len(param_names)
 
+    print(f"[Dynesty] Running nested sampling...")
     print(f"[Dynesty] Free parameters: {ndim}")
-    print(f"[Dynesty] Live points: {nlive}")
-    print(f"[Dynesty] Bound: {bound}, Sample: {sample}")
-    print(f"[Dynesty] dlogZ stopping criterion: {dlogz}")
+    print(f"[Dynesty] Parameter names: {param_names}")
+    print(f"[Dynesty] nlive: {nlive}")
+    print(f"[Dynesty] bound: {bound}")
+    print(f"[Dynesty] sample: {sample}")
+    print(f"[Dynesty] dlogz: {dlogz}")
     print(f"[Dynesty] dynamic: {dynamic}")
 
     rstate = np.random.default_rng(seed)

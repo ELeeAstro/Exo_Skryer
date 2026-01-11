@@ -119,14 +119,6 @@ def kk_n_from_k_wavenumber_fast(
     -------
     n_nu : `~jax.numpy.ndarray`, shape (N,)
         Real refractive index on the wavenumber grid.
-
-    Notes
-    -----
-    For best performance in JIT-compiled code, precompute the cache and pass it
-    explicitly:
-
-        cache = get_or_create_kk_cache(nu)
-        n = kk_n_from_k_wavenumber_fast(nu, k_nu, nu_ref, n_ref, cache=cache)
     """
     nu = jnp.asarray(nu)
     k_nu = jnp.maximum(jnp.asarray(k_nu), 0.0)

@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from . import build_opacities as XS
 
 __all__ = [
+    "zero_special_opacity",
     "compute_hminus_opacity",
     "compute_special_opacity"
 ]
@@ -67,15 +68,6 @@ def _interpolate_logsigma_1d(
     -------
     sigma_interp_log : `~jax.numpy.ndarray`, shape `(nlay, nwl)`
         Log₁₀ cross-sections interpolated to each layer temperature.
-
-    Notes
-    -----
-    - Interpolation is performed linearly in log₁₀(T), which is typically more
-      stable for continuum tables spanning wide temperature ranges.
-    - For layer temperatures below the minimum tabulated temperature, the
-      output is set to a very small log₁₀ cross-section (`-199`) to avoid
-      extrapolation while remaining numerically safe after converting back to
-      linear space.
     """
     log_t_layers = jnp.log10(layer_temperatures)
     log_t_grid = log_temperature_grid
@@ -132,16 +124,6 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.
         H⁻ continuum mass opacity in cm² g⁻¹. Returns zeros when the CIA registry
         is not loaded, does not contain `"H-"`, or when `state["vmr_lay"]` does
         not provide an `"H-"` mixing ratio.
-
-    Notes
-    -----
-    The CIA registry cross-sections are stored in log₁₀ space. This function
-    interpolates in log₁₀(T) and converts back to linear space via:
-
-        σ(λ, T) = 10^(log₁₀σ_interp)
-
-    The wavelength grid in `state["wl"]` must match
-    `build_opacities.cia_master_wavelength()`; a mismatch raises `ValueError`.
     """
     if not XS.has_cia_data():
         return zero_special_opacity(state, params)

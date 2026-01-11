@@ -40,12 +40,6 @@ def zero_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
     -------
     zeros : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Zero-valued CIA opacity array in cm² g⁻¹.
-
-    Notes
-    -----
-    This function maintains API compatibility with `compute_cia_opacity()` so
-    that the forward model can seamlessly switch between CIA enabled/disabled
-    without changing the function signature.
     """
     # Use shape directly without jnp.size() for JIT compatibility
     shape = (state["nlay"], state["nwl"])
@@ -73,19 +67,6 @@ def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
         cm⁵ molecule⁻². The first axis corresponds to different CIA pairs
         (e.g., H2-He, H2-H2), the second to atmospheric layers, and the
         third to wavelength points.
-
-    Notes
-    -----
-    The interpolation algorithm:
-    1. Convert layer temperatures to log₁₀ space
-    2. For each CIA species, find temperature bracket indices
-    3. Perform linear interpolation in log₁₀(σ) vs. log₁₀(T)
-    4. Convert result back to linear space: σ = 10^(log₁₀σ_interp)
-    5. Set cross-sections below minimum tabulated temperature to 10⁻¹⁹⁹
-
-    The returned cross-sections should satisfy:
-        κ = (n_d)² × σ / ρ → cm² g⁻¹
-    where n_d is number density and ρ is mass density.
     """
     sigma_cube = XS.cia_sigma_cube()
     log_temperature_grids = XS.cia_log10_temperature_grids()
@@ -167,11 +148,6 @@ def _compute_pair_weight(
     ------
     ValueError
         If `name` is not in 'A-B' format with exactly two hyphen-separated species.
-
-    Notes
-    -----
-    For homonuclear pairs like H2-H2, this returns f_H2², which correctly
-    represents the self-collision probability.
     """
     name_clean = name.strip()
 
@@ -234,18 +210,6 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     ------
     ValueError
         If the CIA wavelength grid does not match the forward model master grid.
-
-    Notes
-    -----
-    The opacity formula for each pair is:
-
-        κ_pair(λ, T) = f_A × f_B × (n_d)² / ρ × σ_pair(λ, T)
-
-    where σ_pair has units of cm⁵ molecule⁻², ensuring the final opacity has
-    units of cm² g⁻¹.
-
-    The H- "pair" is handled separately by special opacity routines and is
-    automatically filtered out here to avoid double-counting.
     """
     # Use JAX array directly without int() for JIT compatibility
     layer_count = state["nlay"]

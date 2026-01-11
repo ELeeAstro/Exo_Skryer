@@ -51,14 +51,6 @@ def hypsometric(
         Altitude at layer midpoints in cm.
     dz : `~jax.numpy.ndarray`, shape (nlay,)
         Layer thickness in cm.
-
-    Notes
-    -----
-    The layer thickness is computed as:
-
-        dz = H × ln(p_lower / p_upper)
-
-    with `H = kb T / (μ amu g_ref)` and `g_ref = 10**log_10_g`.
     """
     # Parameter values are already JAX arrays, no need to wrap
     g_ref = 10.0**params["log_10_g"]
@@ -125,12 +117,6 @@ def hypsometric_variable_g(
         Altitude at layer midpoints in cm.
     dz : `~jax.numpy.ndarray`, shape (nlay,)
         Layer thickness in cm.
-
-    Notes
-    -----
-    This uses a predictor-corrector step per layer:
-    - predict `dz` using `g(z_current)`
-    - correct using `g(z_current + 0.5 dz_pred)`
     """
     # Parameter values are already JAX arrays, no need to wrap
     g_ref = 10.0**params["log_10_g"]

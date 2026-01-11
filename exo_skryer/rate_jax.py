@@ -38,19 +38,6 @@ class NASA9ThermoJAX:
 
     Stores per-species NASA-9 polynomial coefficients and evaluates the
     dimensionless Gibbs free energy `G/(R T)` on-the-fly in JAX (no pre-tabulation).
-
-    Notes
-    -----
-    Expected per-species dictionary structure:
-
-    - `coeffs_low` : `~jax.numpy.ndarray`, shape (10,)
-        NASA-9 coefficients for the low-temperature range.
-    - `coeffs_high` : `~jax.numpy.ndarray`, shape (10,)
-        NASA-9 coefficients for the high-temperature range.
-    - `t_switch` : float
-        Temperature [K] where the polynomial range switches.
-    - `t_min`, `t_max` : float
-        Valid temperature bounds for the data (inputs are clipped).
     """
     def __init__(self, data: Mapping[str, Mapping[str, jnp.ndarray]]):
         self.data = data
@@ -147,19 +134,6 @@ def load_nasa9_cache(nasa9_dir: str) -> NASA9ThermoJAX:
     -------
     nasa9 : NASA9ThermoJAX
         The loaded NASA-9 thermo table (also cached globally)
-
-    Notes
-    -----
-    Expected file format:
-      - Each file contains 20 floating point values (10 low-T + 10 high-T)
-      - This repo stores them as 4 lines with 5 values each (still 20 total)
-      - Filename: "<MOLNAME>.txt" (e.g., "H2O.txt")
-
-    Examples
-    --------
-    >>> # In run_retrieval.py or similar initialization:
-    >>> from rate_jax import load_nasa9_cache
-    >>> thermo = load_nasa9_cache("NASA9/")
     """
     global _NASA9_CACHE
 

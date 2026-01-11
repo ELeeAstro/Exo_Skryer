@@ -57,11 +57,6 @@ def compute_mu(vmr_lay: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     -------
     mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Mean molecular weight profile in g mol⁻¹.
-
-    Notes
-    -----
-    Species are included only if their symbols exist in the internal molecular
-    weight table derived from `data_constants.CHEM_SPECIES_DATA`.
     """
     species_list = sorted(species for species in vmr_lay.keys() if species in _SPECIES_MASS)
     if not species_list:

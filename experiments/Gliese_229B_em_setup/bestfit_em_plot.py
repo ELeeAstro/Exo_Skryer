@@ -183,22 +183,6 @@ def _compute_effective_temperature(flux: np.ndarray, lam_um: np.ndarray, R_p: fl
     -------
     T_eff : float
         Effective temperature in Kelvin
-
-    Notes
-    -----
-    The flux at Earth is related to surface flux by:
-        F_Earth = F_surface × (R / D)²
-
-    So the surface flux is:
-        F_surface = F_Earth × (D / R)²
-
-    The total bolometric flux is computed by integrating F_λ over wavelength:
-        F_total = ∫ F_λ dλ [erg/s/cm²]
-
-    Then the effective temperature is:
-        T_eff = (F_total / σ)^(1/4)
-
-    where σ is the Stefan-Boltzmann constant (5.670374419e-5 erg/cm²/s/K⁴).
     """
     const = _ensure_constants()
     R_jup = const["R_jup"]

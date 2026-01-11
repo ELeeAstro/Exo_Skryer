@@ -355,10 +355,6 @@ def run_nuts_blackjax(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nd
     samples_dict : Dict[str, jnp.ndarray]
         Dictionary mapping parameter names to samples arrays.
         Shape: (draws,) for single chain.
-
-    Notes
-    -----
-    Currently only supports chains=1. Multi-chain support can be added via vmap/pmap.
     """
     # Extract NUTS configuration
     nuts_cfg = cfg.sampling.nuts

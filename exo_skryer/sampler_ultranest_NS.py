@@ -235,12 +235,11 @@ def run_nested_ultranest(
         vectorized=False
     )
 
-    if verbose:
-        print(f"[UltraNest] Running nested sampling...")
-        print(f"[UltraNest] Free parameters: {len(param_names)}")
-        print(f"[UltraNest] Parameter names: {param_names}")
-        print(f"[UltraNest] min_num_live_points: {min_num_live_points}")
-        print(f"[UltraNest] dlogz: {dlogz}")
+    print(f"[UltraNest] Running nested sampling...")
+    print(f"[UltraNest] Free parameters: {len(param_names)}")
+    print(f"[UltraNest] Parameter names: {param_names}")
+    print(f"[UltraNest] min_num_live_points: {min_num_live_points}")
+    print(f"[UltraNest] dlogz: {dlogz}")
 
     run_kwargs = dict(
         min_num_live_points=min_num_live_points,
