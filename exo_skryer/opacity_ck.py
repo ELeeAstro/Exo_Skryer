@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
-from .data_constants import amu
+from .data_constants import amu, bar
 from .ck_mix_RORR import mix_k_tables_rorr
 from .ck_mix_PRAS import mix_k_tables_pras
 
@@ -192,7 +192,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
         Atmospheric state dictionary containing:
 
         - `p_lay` : `~jax.numpy.ndarray`, shape (nlay,)
-            Layer pressures in microbar.
+            Layer pressures in dyne cm⁻².
         - `T_lay` : `~jax.numpy.ndarray`, shape (nlay,)
             Layer temperatures in Kelvin.
         - `mu_lay` : `~jax.numpy.ndarray`, shape (nlay,)
@@ -236,7 +236,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
         axis=0,
     )
 
-    sigma_log = _interpolate_sigma_log(layer_pressures / 1e6, layer_temperatures)
+    sigma_log = _interpolate_sigma_log(layer_pressures / bar, layer_temperatures)
 
     g_points, g_weights = _get_ck_quadrature(state)
 

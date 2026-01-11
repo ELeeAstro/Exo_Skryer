@@ -9,7 +9,7 @@ from typing import Dict
 
 import jax.numpy as jnp
 
-from .data_constants import amu, kb
+from .data_constants import amu, kb, bar
 from .rate_jax import RateJAX, get_nasa9_cache
 
 
@@ -186,7 +186,7 @@ def CE_rate_jax(
     rate = RateJAX(thermo=thermo, C=C, N=N, O=O, fHe=solar_He)
 
     # Solve chemical equilibrium profile
-    vmr_lay = rate.solve_profile(T_lay, p_lay/1e6)
+    vmr_lay = rate.solve_profile(T_lay, p_lay / bar)
 
     return vmr_lay
 
@@ -359,7 +359,7 @@ def quench_approx(
 
     # Create RateJAX solver and compute chemical equilibrium
     rate = RateJAX(thermo=thermo, C=C, N=N, O=O, fHe=solar_He)
-    vmr_eq = rate.solve_profile(T_lay, p_lay / 1e6)
+    vmr_eq = rate.solve_profile(T_lay, p_lay / bar)
 
     # Compute mean molecular weight (needed for mixing timescale)
     from .vert_mu import compute_mu
@@ -377,7 +377,7 @@ def quench_approx(
     for species in vmr_eq.keys():
         if species in quenched_species:
             # Compute chemical timescale and apply quenching
-            tau_chem = _chemical_timescale(species, T_lay, p_lay/1e6)
+            tau_chem = _chemical_timescale(species, T_lay, p_lay / bar)
             vmr_quenched[species] = _apply_quench_single(vmr_eq[species], tau_chem, tau_mix)
         else:
             # Non-quenched species: use equilibrium values

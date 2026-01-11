@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 
 from . import build_opacities as XS
-from .data_constants import amu
+from .data_constants import amu, bar
 
 __all__ = [
     "zero_line_opacity",
@@ -61,7 +61,7 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
         Atmospheric state dictionary containing:
 
         - `p_lay` : `~jax.numpy.ndarray`, shape (nlay,)
-            Layer pressures in microbar.
+            Layer pressures in dyne cm⁻².
         - `T_lay` : `~jax.numpy.ndarray`, shape (nlay,)
             Layer temperatures in Kelvin.
         - `mu_lay` : `~jax.numpy.ndarray`, shape (nlay,)
@@ -100,7 +100,7 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
         axis=0,
     )
 
-    layer_pressures_bar = layer_pressures / 1e6
+    layer_pressures_bar = layer_pressures / bar
     log_p_layers = jnp.log10(layer_pressures_bar)
     log_t_layers = jnp.log10(layer_temperatures)
 

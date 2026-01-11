@@ -11,8 +11,8 @@ h = 6.62607015e-27
 c_light = 2.99792458e10
 pc = 3.0856775814913673e18
 
-R_jup = 7.1492e9
 R_sun  = 6.957e10
+R_jup = 7.1492e9
 R_earth = 6.3781e8
 
 M_sun = 1.988416e33
@@ -20,8 +20,8 @@ M_jup = 1.89813e30
 M_earth = 5.9722e27
 
 
-bar = 1.0e6
-pa = 1.0e5
+bar = 1.0e6 # bar -> dyne
+pa = 10.0 # pa -> dyne
 
 
 

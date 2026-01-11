@@ -136,7 +136,7 @@ def compute_cloud_opacity(
         - `wl` : `~jax.numpy.ndarray`, shape (nwl,)
             Wavelength grid in microns.
         - `p_lay` : `~jax.numpy.ndarray`, shape (nlay,)
-            Layer pressures in microbar.
+            Layer pressures in dyne cm⁻².
         - `q_c_lay` : `~jax.numpy.ndarray`, shape (nlay,)
             Cloud mass mixing ratio per layer (from vert_cloud kernel).
         - `nlay` : int

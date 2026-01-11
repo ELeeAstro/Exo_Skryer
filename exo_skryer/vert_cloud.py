@@ -8,6 +8,8 @@ mass mixing ratio (q_c_lay) as a function of pressure and atmospheric conditions
 from typing import Dict
 import jax.numpy as jnp
 
+from .data_constants import bar
+
 __all__ = [
     "no_cloud",
     "exponential_decay_profile",
@@ -29,7 +31,7 @@ def no_cloud(
     Parameters
     ----------
     p_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Pressure at layer centers in microbar.
+        Pressure at layer centers in dyne cm⁻².
     T_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Layer temperatures in K.
     mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
@@ -67,7 +69,7 @@ def exponential_decay_profile(
     Parameters
     ----------
     p_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Pressure at layer centers in microbar.
+        Pressure at layer centers in dyne cm⁻².
     T_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Layer temperatures in K.
     mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
@@ -84,7 +86,7 @@ def exponential_decay_profile(
         - `log_10_alpha_cld` : float
             Log₁₀ cloud pressure power-law exponent.
         - `log_10_p_base` : float
-            Log₁₀ base pressure in bar (converted to microbar internally).
+            Log₁₀ base pressure in bar (converted to dyne cm⁻² internally).
 
     Returns
     -------
@@ -95,7 +97,7 @@ def exponential_decay_profile(
     q_c_0 = 10.0 ** params["log_10_q_c"]
     alpha = 10.0 ** params["log_10_alpha_cld"]
 
-    p_base = 10.0 ** params["log_10_p_base"] * 1e6  # bar → microbar
+    p_base = 10.0 ** params["log_10_p_base"] * bar  # bar → dyne cm⁻²
 
     # Hard cutoff: clouds only exist for P < P_base
     cloud_mask = p_lay < p_base
@@ -124,7 +126,7 @@ def slab_profile(
     Parameters
     ----------
     p_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Pressure at layer centers in microbar.
+        Pressure at layer centers in dyne cm⁻².
     T_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Layer temperatures in K.
     mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
@@ -151,12 +153,12 @@ def slab_profile(
     # Retrieved parameters
     q_c_slab = 10.0 ** params["log_10_q_c"]
 
-    # Slab boundaries in pressure (bars → microbar)
+    # Slab boundaries in pressure (bars → dyne cm⁻²)
     log_P_top = params["log_10_p_top_slab"]
     Delta_log_P = params["log_10_dp_slab"]
 
-    P_top = 10.0 ** log_P_top * 1e6  # bar → microbar
-    P_bot = 10.0 ** (log_P_top + Delta_log_P) * 1e6  # bar → microbar
+    P_top = 10.0 ** log_P_top * bar  # bar → dyne cm⁻²
+    P_bot = 10.0 ** (log_P_top + Delta_log_P) * bar  # bar → dyne cm⁻²
 
     # Hard slab cutoff: 1 inside [P_top, P_bot], 0 outside
     slab_mask = jnp.logical_and(p_lay >= P_top, p_lay <= P_bot)
@@ -178,7 +180,7 @@ def const_profile(
     Parameters
     ----------
     p_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Pressure at layer centers in microbar.
+        Pressure at layer centers in dyne cm⁻².
     T_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Layer temperatures in K.
     mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
