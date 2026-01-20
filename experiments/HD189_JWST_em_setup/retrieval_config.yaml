@@ -8,7 +8,7 @@
 data:
   obs: ../../obs_data/HD189733b_emission_JWST.txt
   stellar: ./HD189_stellar.txt
-  nasa9: ../../NASA9/
+  janaf: ../../JANAF_data/
 
 # ----------------------------------------------------------------------------------
 # Physics Section
@@ -20,15 +20,15 @@ physics:
   vert_Tp: Guillot
   vert_alt: p_ref
   vert_chem: constant_vmr
-  vert_mu: dynamic
+  vert_mu: dynamic    
+  vert_cloud: exponential_decay_profile
 
-  # Opacity sources
   opac_line: lbl
   opac_ray: None
   opac_cia: lbl
-  opac_cloud: nk
-  opac_special: true
-  vert_cloud: exponential_decay_profile
+  opac_cloud: direct_nk
+  opac_special: None
+
 
   # Radiative transfer
   rt_scheme: emission_1d
@@ -40,17 +40,17 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_dnu_1.txt
+  wl_master: wl_R20000.txt
   full_grid: false
   ck: false
   ck_mix: RORR
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_dnu_1.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_dnu_1.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_dnu_1.npz}
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
+    - {species: CO, path: ../../opac_data/lbl/CO_R20000.npz}
+    - {species: CO2, path: ../../opac_data/lbl/CO2_R20000.npz}
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}
 
   # Rayleigh scattering species
   ray: None
@@ -83,7 +83,7 @@ params:
   # T-p profile parameters
   - {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
   - {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
-  - {name: log_10_k_ir, dist: uniform, low: -6, high: 6, transform: logit, init: -6}
+  - {name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
   - {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
 
   # Chemistry parameters
@@ -93,48 +93,60 @@ params:
   - {name: log_10_f_CH4, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
 
   # Cloud parameters
-  - {name: log_10_q_c_0, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
+  - {name: log_10_q_c, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
   - {name: log_10_p_base, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
   - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
-  - {name: sigma, dist: uniform, low: 1.001, high: 2.0, transform: logit, init: 1}
-  - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
+  - {name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5}
 
-  # Wavelength nodes for nk cloud opacity
-  - {name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 0.335}
-  - {name: wl_node_1, dist: delta, value: 8.0, transform: identity, init: 11.875}
-  - {name: wl_node_2, dist: delta, value: 8.5, transform: identity, init: 11.875}
-  - {name: wl_node_3, dist: delta, value: 8.75, transform: identity, init: 11.875}
-  - {name: wl_node_4, dist: delta, value: 9.0, transform: identity, init: 11.875}
-  - {name: wl_node_5, dist: delta, value: 10.0, transform: identity, init: 11.875}
-  - {name: wl_node_6, dist: delta, value: 11.0, transform: identity, init: 11.875}
-  - {name: wl_node_7, dist: delta, value: 12.0, transform: identity, init: 12.0}
+  - { name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 7.0}
+  - { name: wl_node_1, dist: delta, value: 7.5, transform: identity, init: 7.5}
+  - { name: wl_node_2, dist: delta, value: 8.0, transform: identity, init: 8.0}
+  - { name: wl_node_3, dist: delta, value: 8.25, transform: identity, init: 8.25}
+  - { name: wl_node_4, dist: delta, value: 8.5, transform: identity, init: 8.5}
+  - { name: wl_node_5, dist: delta, value: 8.75, transform: identity, init: 8.75}
+  - { name: wl_node_6, dist: delta, value: 9.0, transform: identity, init: 9.0}
+  - { name: wl_node_7, dist: delta, value: 9.25, transform: identity, init: 9.25}
+  - { name: wl_node_8, dist: delta, value: 9.5, transform: identity, init: 9.5}
+  - { name: wl_node_9, dist: delta, value: 10.0, transform: identity, init: 10.0}
+  - { name: wl_node_10, dist: delta, value: 10.5, transform: identity, init: 10.5}
+  - { name: wl_node_11, dist: delta, value: 11.0, transform: identity, init: 11.0}
+  - { name: wl_node_12, dist: delta, value: 11.5, transform: identity, init: 11.5}
 
-  # Refractive index (real part) at wavelength nodes
-  - {name: n_0, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_1, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_2, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_3, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_4, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_5, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_6, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
-  - {name: n_7, dist: uniform, low: 0.4, high: 3.0, transform: logit, init: 0}
 
-  # Extinction coefficient (imaginary part) at wavelength nodes
-  - {name: log_10_k_0, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_1, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_2, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_3, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_4, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_5, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_6, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_k_7, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
+  - { name: n_0, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_1, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_2, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_3, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_4, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_5, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_6, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_7, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_8, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_9, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_10, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_11, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_12, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+
+  - { name: log_10_k_0, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_1, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_2, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_3, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_4, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_5, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_6, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_7, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_8, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_9, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_10, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_11, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_12, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
 
 # ----------------------------------------------------------------------------------
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  engine: jaxns
+  engine: dynesty
 
   # NUTS / HMC settings
   nuts:
@@ -181,10 +193,10 @@ sampling:
 
   # Dynesty settings
   dynesty:
-    nlive: 100
+    nlive: 1000
     bound: multi
     sample: auto
-    dlogz: 1.0
+    dlogz: 0.1
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -208,5 +220,5 @@ sampling:
 # ----------------------------------------------------------------------------------
 runtime:
   platform: gpu
-  cuda_visible_devices: 1
+  cuda_visible_devices: 0
   threads: 1

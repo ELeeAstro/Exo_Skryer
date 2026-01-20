@@ -6,7 +6,6 @@ opacity_cia.py
 from typing import Dict
 
 import jax.numpy as jnp
-import jax
 
 from . import build_opacities as XS
 
@@ -44,76 +43,6 @@ def zero_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
     # Use shape directly without jnp.size() for JIT compatibility
     shape = (state["nlay"], state["nwl"])
     return jnp.zeros(shape)
-
-
-def _interpolate_sigma(layer_temperatures: jnp.ndarray) -> jnp.ndarray:
-    """Interpolate CIA cross-sections to atmospheric layer temperatures.
-
-    This function retrieves pre-loaded CIA cross-section tables from the opacity
-    registry and interpolates them to the specified layer temperatures using
-    log-log linear interpolation. The interpolation is performed in log₁₀ space
-    for both temperature and cross-section to better capture the exponential
-    temperature dependence typical of CIA processes.
-
-    Parameters
-    ----------
-    layer_temperatures : `~jax.numpy.ndarray`, shape (nlay,)
-        Atmospheric layer temperatures in Kelvin.
-
-    Returns
-    -------
-    sigma_interp : `~jax.numpy.ndarray`, shape (nspecies, nlay, nwl)
-        Interpolated CIA cross-sections in linear space with units of
-        cm⁵ molecule⁻². The first axis corresponds to different CIA pairs
-        (e.g., H2-He, H2-H2), the second to atmospheric layers, and the
-        third to wavelength points.
-    """
-    sigma_cube = XS.cia_sigma_cube()
-    log_temperature_grids = XS.cia_log10_temperature_grids()
-    temperature_grids = XS.cia_temperature_grids()
-
-    # Convert to log10 space for interpolation
-    log_t_layers = jnp.log10(layer_temperatures)
-
-    def _interp_one_species(sigma_2d, log_temp_grid, temp_grid):
-        """Interpolate log10 cross-sections for a single CIA species.
-
-        Parameters
-        ----------
-        sigma_2d : `~jax.numpy.ndarray`, shape (nT, nwl)
-            Log10 CIA cross-sections.
-        log_temp_grid : `~jax.numpy.ndarray`, shape (nT,)
-            Log10 temperature grid.
-        temp_grid : `~jax.numpy.ndarray`, shape (nT,)
-            Temperature grid in Kelvin (for min temp check).
-
-        Returns
-        -------
-        s_interp : `~jax.numpy.ndarray`, shape (nlay, nwl)
-            Log10 cross-sections interpolated to `layer_temperatures`.
-        """
-        # Find temperature bracket indices and weights in log space
-        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
-        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-        t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-        # Linear interpolation between temperature brackets
-        s_t0 = sigma_2d[t_idx, :]
-        s_t1 = sigma_2d[t_idx + 1, :]
-        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
-
-        # Set cross sections to very small value below minimum temperature
-        min_temp = temp_grid[0]
-        below_min = layer_temperatures < min_temp
-        tiny = jnp.array(-199.0, dtype=s_interp.dtype)
-        s_interp = jnp.where(below_min[:, None], tiny, s_interp)
-
-        return s_interp
-
-    # Vectorize over all CIA species
-    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids, temperature_grids)
-    return 10.0 ** sigma_log.astype(jnp.float64)
 
 
 def _compute_pair_weight(
@@ -223,18 +152,43 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("CIA wavelength grid must match the forward-model master grid.")
 
-    sigma_values = _interpolate_sigma(layer_temperatures)  # (nspecies, nlay, nwl)
     species_names = XS.cia_species_names()
     keep_indices = [i for i, name in enumerate(species_names) if name.strip() != "H-"]
     if not keep_indices:
         return zero_cia_opacity(state, params)
 
-    # Compute pair weights for each CIA species (string ops happen once at trace time)
-    pair_weights = jnp.stack(
-        [_compute_pair_weight(species_names[i], layer_count, layer_vmr) for i in keep_indices],
-        axis=0,
-    )  # (nspecies_keep, nlay)
+    sigma_cube = XS.cia_sigma_cube()  # (nspecies, nT, nwl) in log10
+    log_temperature_grids = XS.cia_log10_temperature_grids()
+    temperature_grids = XS.cia_temperature_grids()
+    log_t_layers = jnp.log10(layer_temperatures)
 
-    normalization = pair_weights * (number_density**2 / density)[None, :]  # (nspecies_keep, nlay)
-    sigma_keep = sigma_values[keep_indices, :, :]  # (nspecies_keep, nlay, nwl)
-    return jnp.sum(normalization[:, :, None] * sigma_keep, axis=0)  # (nlay, nwl)
+    weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)
+    out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float64)
+
+    # Accumulate species one-by-one to avoid materializing (n_species, nlay, nwl).
+    # Use a Python loop so CIA pair parsing and vmr dict lookups happen at trace time.
+    for spec_idx in keep_indices:
+        sigma_log_table = sigma_cube[spec_idx]               # (nT, nwl)
+        log_temp_grid = log_temperature_grids[spec_idx]      # (nT,)
+        temp_grid = temperature_grids[spec_idx]              # (nT,)
+
+        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
+        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+        t_weight = jnp.clip(t_weight, 0.0, 1.0)
+
+        s_t0 = sigma_log_table[t_idx, :]
+        s_t1 = sigma_log_table[t_idx + 1, :]
+        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
+
+        min_temp = temp_grid[0]
+        below_min = layer_temperatures < min_temp
+        tiny = jnp.array(-199.0, dtype=s_interp.dtype)
+        s_interp = jnp.where(below_min[:, None], tiny, s_interp)
+
+        sigma_val = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl)
+        pair_weight = _compute_pair_weight(species_names[spec_idx], layer_count, layer_vmr)  # (nlay,)
+        normalization = pair_weight * weights_nd2_over_rho  # (nlay,)
+        out = out + normalization[:, None] * sigma_val
+
+    return out

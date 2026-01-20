@@ -63,6 +63,7 @@ _BAND_BOXCAR_CACHE: jnp.ndarray | None = None  # Boxcar detection flags for each
 _MODE_TO_FILE = {
     "S36": "Spitzer_irac1_bandpass.dat",
     "S45": "Spitzer_irac2_bandpass.dat",
+    "MIRI_4A": "JWST_MIRI_F1800W.dat",
 }
 
 
@@ -233,10 +234,16 @@ def load_bandpass_registry(
                 wl_slice, filter_wl, filter_throughput, left=0.0, right=0.0
             )
 
-        # Norm = ∫ w(λ) dλ over the actual slice; keeps numerator/denominator consistent
+        # Norm calculation depends on filter type:
+        # - Boxcar: ∫ dλ (simple width, already handled by integration)
+        # - Non-boxcar: ∫ T(λ) λ dλ (photon-weighted for energy-counting detectors)
         if wl_slice.size > 1:
-            #norm = np.trapezoid(weights_slice, x=wl_slice)
-            norm = simpson(weights_slice, x=wl_slice)
+            if final_method.lower() == "boxcar":
+                # Boxcar: simple integration ∫ w(λ) dλ = ∫ 1 dλ
+                norm = simpson(weights_slice, x=wl_slice)
+            else:
+                # Non-boxcar filters: photon-weighted ∫ T(λ) λ dλ
+                norm = simpson(weights_slice * wl_slice, x=wl_slice)
         else:
             norm = 1.0
 

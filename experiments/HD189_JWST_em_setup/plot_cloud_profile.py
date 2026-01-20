@@ -5,11 +5,15 @@ plot_cloud_profile.py
 
 Overview:
     Plot the retrieved vertical cloud mass mixing ratio profile (q_c) for the
-    WASP-17b JWST transmission setup. The script reads posterior samples from
-    posterior.nc (ArviZ format), reconstructs the analytic cloud profile for
-    each draw using the same equations as exo_skryer.opacity_cloud.direct_nk,
-    and summarizes the median plus ±1σ (16th/84th) and ±2σ (2.5th/97.5th)
-    envelopes versus pressure.
+    HD189733b JWST emission setup. The script reads posterior samples from
+    posterior.nc (ArviZ format), reconstructs the cloud profile for each draw
+    using the same equations as exo_skryer.vert_cloud, and summarizes the median
+    plus ±1σ (16th/84th) and ±2σ (2.5th/97.5th) envelopes versus pressure.
+
+    Supports multiple cloud profile types from vert_cloud.py:
+    - slab_profile: Uniform slab between P_top and P_bot
+    - exponential_decay_profile: Exponential decay with hard base cutoff
+    - const_profile: Constant q_c throughout atmosphere
 
 Usage:
     python plot_cloud_profile.py \
@@ -96,27 +100,114 @@ def _flatten_samples(data_array) -> np.ndarray:
     return arr.reshape(-1)
 
 
-def _compute_q_profiles(
-    log10_q0: np.ndarray,
-    log10_H: np.ndarray,
+def _compute_slab_profiles(
+    log10_q_c: np.ndarray,
+    log10_p_top_slab: np.ndarray,
+    log10_dp_slab: np.ndarray,
+    p_lay: np.ndarray,
+) -> np.ndarray:
+    """Compute slab cloud profiles matching vert_cloud.slab_profile.
+
+    Parameters
+    ----------
+    log10_q_c : (n_draw,)
+        Log10 cloud mass mixing ratio inside the slab.
+    log10_p_top_slab : (n_draw,)
+        Log10 pressure at top of slab in bar.
+    log10_dp_slab : (n_draw,)
+        Log10 pressure extent of slab (P_bot = P_top * 10^dp).
+    p_lay : (nlay,)
+        Layer pressures in dyne cm^-2.
+
+    Returns
+    -------
+    q_profiles : (n_draw, nlay)
+        Cloud mass mixing ratio profiles.
+    """
+    q_c_slab = np.power(10.0, log10_q_c)  # (n_draw,)
+
+    # Slab boundaries in pressure (bars -> dyne cm^-2)
+    P_top = np.power(10.0, log10_p_top_slab) * bar  # (n_draw,)
+    P_bot = np.power(10.0, log10_p_top_slab + log10_dp_slab) * bar  # (n_draw,)
+
+    # Broadcast: p_lay (nlay,) vs P_top/P_bot (n_draw,)
+    # Result: (n_draw, nlay)
+    p_lay_2d = p_lay[None, :]  # (1, nlay)
+    P_top_2d = P_top[:, None]  # (n_draw, 1)
+    P_bot_2d = P_bot[:, None]  # (n_draw, 1)
+
+    # Slab mask: 1 inside [P_top, P_bot], 0 outside
+    slab_mask = (p_lay_2d >= P_top_2d) & (p_lay_2d <= P_bot_2d)
+
+    q_profiles = q_c_slab[:, None] * slab_mask
+    return q_profiles
+
+
+def _compute_exponential_profiles(
+    log10_q_c: np.ndarray,
+    log10_alpha_cld: np.ndarray,
     log10_p_base: np.ndarray,
     p_lay: np.ndarray,
-    width_base_dex: float,
 ) -> np.ndarray:
-    q0 = np.power(10.0, log10_q0)
-    H_cld = np.power(10.0, log10_H)
-    alpha = 1.0 / np.maximum(H_cld, 1e-12)
-    p_base = np.power(10.0, log10_p_base) * bar
+    """Compute exponential decay profiles matching vert_cloud.exponential_decay_profile.
 
-    d_base = max(width_base_dex * np.log(10.0), 1e-12)
+    Parameters
+    ----------
+    log10_q_c : (n_draw,)
+        Log10 cloud mass mixing ratio at base pressure.
+    log10_alpha_cld : (n_draw,)
+        Log10 pressure power-law exponent.
+    log10_p_base : (n_draw,)
+        Log10 base pressure in bar.
+    p_lay : (nlay,)
+        Layer pressures in dyne cm^-2.
 
-    logP = np.log(np.maximum(p_lay, 1e-30))[None, :]  # (1, nlay)
-    logPb = np.log(np.maximum(p_base, 1e-30))[:, None]  # (n_draw, 1)
+    Returns
+    -------
+    q_profiles : (n_draw, nlay)
+        Cloud mass mixing ratio profiles.
+    """
+    q_c_0 = np.power(10.0, log10_q_c)  # (n_draw,)
+    alpha = np.power(10.0, log10_alpha_cld)  # (n_draw,)
+    p_base = np.power(10.0, log10_p_base) * bar  # (n_draw,)
 
-    S_base = 0.5 * (1.0 - np.tanh((logP - logPb) / d_base))
-    scale = (p_lay[None, :] / np.maximum(p_base[:, None], 1e-30)) ** alpha[:, None]
-    q_profiles = q0[:, None] * scale * S_base
-    return np.clip(q_profiles, 0.0, None)
+    p_lay_2d = p_lay[None, :]  # (1, nlay)
+    p_base_2d = np.maximum(p_base[:, None], 1e-30)  # (n_draw, 1)
+    alpha_2d = alpha[:, None]  # (n_draw, 1)
+    q_c_0_2d = q_c_0[:, None]  # (n_draw, 1)
+
+    # Hard cutoff: clouds only for P < P_base
+    cloud_mask = p_lay_2d < p_base_2d
+
+    # Exponential profile
+    q_c_profile = q_c_0_2d * (p_lay_2d / p_base_2d) ** alpha_2d
+
+    q_profiles = np.where(cloud_mask, q_c_profile, 0.0)
+    return q_profiles
+
+
+def _compute_const_profiles(
+    log10_q_c: np.ndarray,
+    p_lay: np.ndarray,
+) -> np.ndarray:
+    """Compute constant profiles matching vert_cloud.const_profile.
+
+    Parameters
+    ----------
+    log10_q_c : (n_draw,)
+        Log10 cloud mass mixing ratio.
+    p_lay : (nlay,)
+        Layer pressures in dyne cm^-2.
+
+    Returns
+    -------
+    q_profiles : (n_draw, nlay)
+        Cloud mass mixing ratio profiles (constant at all layers).
+    """
+    q_c = np.power(10.0, log10_q_c)  # (n_draw,)
+    nlay = len(p_lay)
+    q_profiles = np.broadcast_to(q_c[:, None], (len(q_c), nlay)).copy()
+    return q_profiles
 
 
 def main() -> None:
@@ -135,32 +226,66 @@ def main() -> None:
     physics_cfg = cfg.get("physics", {})
     nlay = int(physics_cfg.get("nlay", 99))
 
+    # Get cloud profile type from config
+    vert_cloud = physics_cfg.get("vert_cloud", "exponential_decay_profile")
+    print(f"[plot_cloud_profile] Using vert_cloud model: {vert_cloud}")
+
     p_bot_bar = params_lookup.get("p_bot")
     p_top_bar = params_lookup.get("p_top")
     if p_bot_bar is None or p_top_bar is None:
         raise KeyError("Both p_bot and p_top delta parameters must be defined in the config.")
     p_lay = _build_layer_pressures(p_bot_bar, p_top_bar, nlay)
 
-    width_base_dex = params_lookup.get("width_base_dex", 0.25)
-
     posterior = az.from_netcdf(posterior_path).posterior
-    required = ["log_10_q_c_0", "log_10_H_cld", "log_10_p_base"]
-    missing = [name for name in required if name not in posterior]
-    if missing:
-        raise KeyError(f"Posterior variables missing: {', '.join(missing)}")
 
-    log10_q0 = _flatten_samples(posterior["log_10_q_c_0"].values)
-    log10_H = _flatten_samples(posterior["log_10_H_cld"].values)
-    log10_p_base = _flatten_samples(posterior["log_10_p_base"].values)
-    if not (log10_q0.size == log10_H.size == log10_p_base.size):
-        raise ValueError("Posterior arrays for cloud parameters must have matching sizes.")
+    # Compute profiles based on cloud model type
+    if vert_cloud == "slab_profile":
+        required = ["log_10_q_c", "log_10_p_top_slab", "log_10_dp_slab"]
+        missing = [name for name in required if name not in posterior]
+        if missing:
+            raise KeyError(f"Posterior variables missing for slab_profile: {', '.join(missing)}")
 
-    q_profiles = _compute_q_profiles(log10_q0, log10_H, log10_p_base, p_lay, width_base_dex)
+        log10_q_c = _flatten_samples(posterior["log_10_q_c"].values)
+        log10_p_top_slab = _flatten_samples(posterior["log_10_p_top_slab"].values)
+        log10_dp_slab = _flatten_samples(posterior["log_10_dp_slab"].values)
+
+        q_profiles = _compute_slab_profiles(log10_q_c, log10_p_top_slab, log10_dp_slab, p_lay)
+
+    elif vert_cloud == "exponential_decay_profile":
+        required = ["log_10_q_c", "log_10_alpha_cld", "log_10_p_base"]
+        missing = [name for name in required if name not in posterior]
+        if missing:
+            raise KeyError(f"Posterior variables missing for exponential_decay_profile: {', '.join(missing)}")
+
+        log10_q_c = _flatten_samples(posterior["log_10_q_c"].values)
+        log10_alpha_cld = _flatten_samples(posterior["log_10_alpha_cld"].values)
+        log10_p_base = _flatten_samples(posterior["log_10_p_base"].values)
+
+        q_profiles = _compute_exponential_profiles(log10_q_c, log10_alpha_cld, log10_p_base, p_lay)
+
+    elif vert_cloud == "const_profile":
+        required = ["log_10_q_c"]
+        missing = [name for name in required if name not in posterior]
+        if missing:
+            raise KeyError(f"Posterior variables missing for const_profile: {', '.join(missing)}")
+
+        log10_q_c = _flatten_samples(posterior["log_10_q_c"].values)
+        q_profiles = _compute_const_profiles(log10_q_c, p_lay)
+
+    elif vert_cloud in ("no_cloud", "None", None):
+        print("[plot_cloud_profile] No cloud model configured, nothing to plot.")
+        return
+
+    else:
+        raise ValueError(f"Unknown vert_cloud model: {vert_cloud}")
+
+    # Compute quantiles
     q16, q50, q84 = np.quantile(q_profiles, [0.16, 0.5, 0.84], axis=0)
     q025, q975 = np.quantile(q_profiles, [0.025, 0.975], axis=0)
 
     p_lay_bar = p_lay / bar
 
+    # Create plot
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -172,7 +297,7 @@ def main() -> None:
         q975,
         color="tab:blue",
         alpha=0.15,
-        label="q_c ±2σ",
+        label=r"$q_c$ ±2σ",
     )
     ax.fill_betweenx(
         p_lay_bar,
@@ -180,13 +305,13 @@ def main() -> None:
         q84,
         color="tab:blue",
         alpha=0.35,
-        label="q_c ±1σ",
+        label=r"$q_c$ ±1σ",
     )
-    ax.plot(q50, p_lay_bar, color="tab:blue", linewidth=2.0, label="Median q_c")
+    ax.plot(q50, p_lay_bar, color="tab:blue", linewidth=2.0, label=r"Median $q_c$")
 
-    ax.set_xlabel("Cloud mass mixing ratio q_c")
+    ax.set_xlabel(r"Cloud mass mixing ratio $q_c$")
     ax.set_ylabel("Pressure [bar]")
-    ax.set_title("WASP-17b Cloud Vertical Profile")
+    ax.set_title(f"HD189733b Cloud Vertical Profile ({vert_cloud})")
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
 

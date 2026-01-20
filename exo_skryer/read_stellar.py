@@ -59,6 +59,9 @@ def _band_average(
     flux_native: np.ndarray,
     edges: np.ndarray,
 ) -> np.ndarray:
+    # Use log10-space interpolation for stellar flux
+    log10_flux_native = np.log10(flux_native)
+
     out = np.empty(edges.size - 1, dtype=float)
     for i in range(out.size):
         left = edges[i]
@@ -69,8 +72,10 @@ def _band_average(
             fl_seg = flux_native[mask]
         else:
             wl_seg = np.array([left, right], dtype=float)
-            fl_seg = np.interp(wl_seg, wl_native, flux_native, left=flux_native[0], right=flux_native[-1])
-        out[i] = simpson(fl_seg, x=wl_seg) / (right - left)   
+            # Interpolate in log10-space, then convert back
+            log10_fl_seg = np.interp(wl_seg, wl_native, log10_flux_native, left=log10_flux_native[0], right=log10_flux_native[-1])
+            fl_seg = 10.0 ** log10_fl_seg
+        out[i] = simpson(fl_seg, x=wl_seg) / (right - left)
         #out[i] = np.trapezoid(fl_seg, wl_seg) / (right - left)
     return out
 
@@ -95,11 +100,14 @@ def read_stellar_spectrum(
         edges = _compute_bin_edges(lam_master)
         flux_master = _band_average(wl_native, flux_native, edges)
     else:
-        flux_master = np.interp(
+        # Interpolate in log10-space for better accuracy across orders of magnitude
+        log10_flux_native = np.log10(flux_native)
+        log10_flux_master = np.interp(
             lam_master,
             wl_native,
-            flux_native,
-            left=flux_native[0],
-            right=flux_native[-1],
+            log10_flux_native,
+            left=log10_flux_native[0],
+            right=log10_flux_native[-1],
         )
+        flux_master = 10.0 ** log10_flux_master
     return jnp.asarray(flux_master)

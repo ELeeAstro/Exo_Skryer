@@ -8,7 +8,9 @@ median/credible bands together with observed HD 189 JWST data.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+import pickle
 from pathlib import Path
 from typing import Dict, List
 
@@ -19,9 +21,6 @@ import yaml
 import arviz as az
 from types import SimpleNamespace
 from scipy.integrate import simpson
-
-from jax import config as jax_config
-jax_config.update("jax_enable_x64", True)
 
 _CONST_CACHE = {}
 
@@ -54,6 +53,47 @@ def _read_cfg(path: Path):
     with path.open("r", encoding="utf-8") as f:
         y = yaml.safe_load(f)
     return _to_ns(y)
+
+
+def _configure_runtime_from_cfg(cfg) -> None:
+    runtime_cfg = getattr(cfg, "runtime", None)
+    if runtime_cfg is None:
+        return
+
+    # Set runtime environment FIRST, before any other imports or function calls
+    # This MUST happen before JAX/CUDA initialization
+    platform = str(getattr(runtime_cfg, "platform", "cpu")).lower()
+
+    if platform == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        xla_flags = (
+            f"--xla_cpu_multi_thread_eigen=true "
+            f"--xla_cpu_enable_fast_math=true "
+            f"--xla_cpu_use_mkl_dnn=true "
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+        print("[info] XLA CPU: fast_math, MKL-DNN enabled")
+    else:
+        cuda_devices = str(getattr(runtime_cfg, "cuda_visible_devices", ""))
+        if cuda_devices:
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+        os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+        os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
+        tf_gpu_allocator = getattr(runtime_cfg, "tf_gpu_allocator", None)
+        if tf_gpu_allocator:
+            os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
+
+        xla_flags = (
+            "--xla_gpu_enable_latency_hiding_scheduler=true "
+            "--xla_gpu_enable_highest_priority_async_stream=true "
+            "--xla_gpu_enable_fast_min_max=true "
+            "--xla_gpu_deterministic_ops=false"
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+
+        print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
+        print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
 
 
 def _resolve_path_relative(path_str: str, exp_dir: Path) -> Path:
@@ -233,18 +273,23 @@ def _recover_planet_flux(
     return flux_ratio * scale
 
 
-def plot_emission_band(config_path, outname="model_emission", max_samples=2000, seed=123, show_plot=True):
+def plot_emission_band(config_path, outname="model_emission", max_samples=2000, seed=123, show_plot=True, use_dynesty=False):
     cfg_path = Path(config_path).resolve()
     exp_dir = cfg_path.parent
     repo_root = (exp_dir / "../..").resolve()
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
+
+    cfg = _read_cfg(cfg_path)
+    _configure_runtime_from_cfg(cfg)
+    from jax import config as jax_config
+    jax_config.update("jax_enable_x64", True)
+
     from exo_skryer.build_model import build_forward_model
     from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
     from exo_skryer.registry_bandpass import load_bandpass_registry
     from exo_skryer.read_stellar import read_stellar_spectrum
 
-    cfg = _read_cfg(cfg_path)
     lam_obs, dlam_obs, y_obs, dy_obs, resp_obs = _load_observed(exp_dir, cfg)
     lam_obs = np.asarray(lam_obs, dtype=float)
     dlam_obs = np.asarray(dlam_obs, dtype=float)
@@ -272,8 +317,67 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     params_cfg = getattr(cfg, "params", [])
     draws, N_total = _build_param_draws_from_idata(idata.posterior, params_cfg)
 
-    # Compute median parameters for single model evaluation
+    # Compute median parameters
     theta_median = {name: float(np.median(arr)) for name, arr in draws.items()}
+
+    # Find highest likelihood sample
+    theta_maxlike = None
+
+    # Try to use dynesty results if requested or available
+    if use_dynesty:
+        dynesty_path = exp_dir / "dynesty_results.pkl"
+        if dynesty_path.exists():
+            print(f"\nLoading dynesty results from {dynesty_path}")
+            with open(dynesty_path, "rb") as f:
+                dynesty_results = pickle.load(f)
+
+            # Extract samples and log-likelihoods
+            samples = dynesty_results['samples']
+            logl = dynesty_results['logl']
+
+            # Find the sample with highest likelihood
+            max_idx = np.argmax(logl)
+            max_logl = logl[max_idx]
+            best_sample = samples[max_idx]
+
+            print(f"Found highest likelihood sample from dynesty (index {max_idx}, log-likelihood = {max_logl:.2f})")
+
+            # Map samples to parameter names
+            # Dynesty samples are in the same order as the free parameters in the config
+            free_params = [p for p in params_cfg if not _is_fixed_param(p)]
+            if len(best_sample) != len(free_params):
+                print(f"Warning: Sample size {len(best_sample)} doesn't match free params {len(free_params)}")
+
+            theta_maxlike = {}
+            for i, p in enumerate(free_params):
+                name = getattr(p, "name", None)
+                if name and i < len(best_sample):
+                    theta_maxlike[name] = float(best_sample[i])
+
+            # Add fixed parameters
+            for p in params_cfg:
+                name = getattr(p, "name", None)
+                if name and _is_fixed_param(p):
+                    val = _fixed_value_param(p)
+                    if val is not None:
+                        theta_maxlike[name] = float(val)
+        else:
+            print(f"\nWarning: dynesty_results.pkl not found at {dynesty_path}, falling back to arviz method")
+            use_dynesty = False
+
+    # Fall back to arviz log_likelihood if not using dynesty
+    if not use_dynesty and theta_maxlike is None:
+        if hasattr(idata, 'log_likelihood'):
+            ll_data = idata.log_likelihood
+            ll_var = list(ll_data.data_vars.keys())[0]
+            ll_array = ll_data[ll_var].values
+            ll_total = ll_array.sum(axis=-1)
+            ll_flat = ll_total.reshape(-1)
+            max_idx = np.argmax(ll_flat)
+            theta_maxlike = {name: float(arr[max_idx]) for name, arr in draws.items()}
+            print(f"\nUsing highest likelihood sample from arviz (index {max_idx}, log-likelihood = {ll_flat[max_idx]:.2f})")
+        else:
+            print("\nWarning: Log-likelihood not found in posterior, will only plot median model")
 
     lam = lam_obs
     dlam = dlam_obs
@@ -286,9 +390,16 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     is_brown_dwarf = emission_mode == "brown_dwarf" or stellar_flux_np is None
 
     # Compute median model
-    result = fm(theta_median)
-    h_med = np.asarray(result["hires"], dtype=float)
-    q_med = np.asarray(result["binned"], dtype=float)
+    result_med = fm(theta_median)
+    h_med = np.asarray(result_med["hires"], dtype=float)
+    q_med = np.asarray(result_med["binned"], dtype=float)
+
+    # Compute highest likelihood model
+    h_maxlike = q_maxlike = pf_maxlike = Tb_maxlike = None
+    if theta_maxlike is not None:
+        result_maxlike = fm(theta_maxlike)
+        h_maxlike = np.asarray(result_maxlike["hires"], dtype=float)
+        q_maxlike = np.asarray(result_maxlike["binned"], dtype=float)
 
     # Compute planet flux and brightness temperature for median model
     pf_med = Tb_med = None
@@ -302,10 +413,27 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
             # Brown dwarf - hires is already planet flux
             pf_med = h_med
 
+    # Compute planet flux and brightness temperature for highest likelihood model
+    if theta_maxlike is not None and "R_p" in theta_maxlike:
+        R_p_maxlike = float(theta_maxlike["R_p"])
+        if stellar_flux_np is not None and "R_s" in theta_maxlike:
+            # Planet with stellar companion - convert ratio to flux
+            R_s_maxlike = float(theta_maxlike["R_s"])
+            pf_maxlike = _recover_planet_flux(h_maxlike, stellar_flux_np, R_p_maxlike, R_s_maxlike)
+        elif is_brown_dwarf:
+            # Brown dwarf - hires is already planet flux
+            pf_maxlike = h_maxlike
+
+        if pf_maxlike is not None:
+            Tb_maxlike = _flux_to_brightness_temperature(pf_maxlike, hires)
+
     # Convert to percent (only for planets with stellar companion)
     if not is_brown_dwarf:
         q_med *= 100.0
         h_med *= 100.0
+        if q_maxlike is not None:
+            q_maxlike *= 100.0
+            h_maxlike *= 100.0
 
     # Compute brightness temperature from median planet flux
     if pf_med is not None:
@@ -315,7 +443,9 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
         if stellar_flux_np is not None and "R_s" in theta_median:
             # Planet with stellar companion
             R_s_med = float(theta_median["R_s"])
-            interp_stellar = np.interp(lam, hires, stellar_flux_np)
+            # Interpolate stellar flux in log10 space for accuracy across orders of magnitude
+            log10_stellar = np.log10(stellar_flux_np)
+            interp_stellar = 10.0 ** np.interp(lam, hires, log10_stellar)
             obs_flux = _recover_planet_flux(y_obs, interp_stellar, R_p_med, R_s_med)
         else:
             # Brown dwarf - observed data is already in flux units
@@ -347,17 +477,19 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     if not is_brown_dwarf:
         # Flux ratio plot
         fig_ratio, ax_ratio = plt.subplots(figsize=(8, 4.5))
-        ax_ratio.plot(lam, q_med, lw=1, label="Median model", color=palette[4], alpha=0.7, rasterized=True)
+        ax_ratio.plot(lam, q_med, lw=1.5, label="Median model", color=palette[4], alpha=0.8, rasterized=True)
+        if q_maxlike is not None:
+            ax_ratio.plot(lam, q_maxlike, lw=1.5, label="Highest likelihood", color=palette[1], alpha=0.8, rasterized=True, linestyle='--')
         ax_ratio.plot(lam, y_obs * 100.0, lw=2, label="Observed", color="black", zorder=3)
         ax_ratio.set_xscale("log")
         ax_ratio.set_yscale("log")
         ax_ratio.set_xlabel("Wavelength [µm]", fontsize=14)
         ax_ratio.set_ylabel(r"$F_{\rm p}/F_{\star}$ [%]", fontsize=14)
-        tick_locs = np.array([0.3, 0.5, 0.7, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0])
+        tick_locs = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0])
         ax_ratio.set_xticks(tick_locs)
         ax_ratio.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
         ax_ratio.tick_params(axis="y", labelsize=12)
-        ax_ratio.set_xlim(0.3, 6.0)
+        ax_ratio.set_xlim(1.0, 6.0)
         ax_ratio.grid(False)
         ax_ratio.legend()
         fig_ratio.tight_layout()
@@ -365,32 +497,87 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
         fig_ratio.savefig(exp_dir / f"{outname}.pdf")
 
     if pf_med is not None:
-        # Planet flux figure (median only, no 1-sigma bands)
+        # Compute binned planet flux from forward model results
+        # The binned spectrum from forward model is at observed wavelengths
+        binned_pf_med = None
+        binned_pf_maxlike = None
+
+        if is_brown_dwarf:
+            # For brown dwarfs, the binned result is already in planet flux units
+            binned_pf_med = q_med
+            if q_maxlike is not None:
+                binned_pf_maxlike = q_maxlike
+        else:
+            # For planets, need to convert ratio to flux
+            if "R_p" in theta_median and "R_s" in theta_median:
+                R_p_med = float(theta_median["R_p"])
+                R_s_med = float(theta_median["R_s"])
+                interp_stellar = 10.0 ** np.interp(lam, hires, np.log10(stellar_flux_np))
+                binned_pf_med = _recover_planet_flux(q_med / 100.0, interp_stellar, R_p_med, R_s_med)
+
+                if q_maxlike is not None and "R_p" in theta_maxlike and "R_s" in theta_maxlike:
+                    R_p_maxlike = float(theta_maxlike["R_p"])
+                    R_s_maxlike = float(theta_maxlike["R_s"])
+                    binned_pf_maxlike = _recover_planet_flux(q_maxlike / 100.0, interp_stellar, R_p_maxlike, R_s_maxlike)
+
+        # Binned spectrum plot (model at observed wavelengths)
+        if binned_pf_med is not None:
+            fig_binned, ax_binned = plt.subplots(figsize=(8, 4.5))
+            ax_binned.plot(lam, binned_pf_med, lw=1.5, label="Median model (binned)",
+                          color=palette[4], alpha=0.8)
+            if binned_pf_maxlike is not None:
+                ax_binned.plot(lam, binned_pf_maxlike, '--', lw=1.5, label="Highest likelihood (binned)",
+                              color=palette[1], alpha=0.8)
+            if obs_flux is not None:
+                ax_binned.plot(lam, obs_flux, lw=2, label="Observed", color="black", zorder=3)
+            ax_binned.set_xscale("log")
+            ax_binned.set_yscale("log")
+
+            ax_binned.set_xlabel(r"Wavelength [$\mu$m]", fontsize=14)
+            ax_binned.set_ylabel(r"Flux [erg s$^{-1}$ cm$^{2}$ cm$^{-1}$]", fontsize=14)
+            tick_locs = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0])
+            ax_binned.set_xticks(tick_locs)
+            ax_binned.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
+            ax_binned.tick_params(axis="y", labelsize=12)
+            ax_binned.set_xlim(0.9, 5.2)
+            # Adjust y-range here by uncommenting and modifying:
+            ax_binned.set_ylim(10**-10, 10**-7)  # Example: adjust these values as needed
+            ax_binned.grid(False)
+            ax_binned.legend()
+            fig_binned.tight_layout()
+            fig_binned.savefig(exp_dir / f"{outname}_binned_spectrum.png", dpi=300)
+            fig_binned.savefig(exp_dir / f"{outname}_binned_spectrum.pdf")
+
+        # High-resolution planet flux figure (median and highest likelihood)
         fig_flux, ax_flux = plt.subplots(figsize=(8, 4.5))
-        ax_flux.plot(hires, pf_med, lw=1, label="Median model", color=palette[4], alpha=0.7, rasterized=True)
+        ax_flux.plot(hires, pf_med, lw=1.5, label="Median model (high-res)", color=palette[4], alpha=0.8, rasterized=True)
+        if pf_maxlike is not None:
+            ax_flux.plot(hires, pf_maxlike, lw=1.5, label="Highest likelihood (high-res)", color=palette[1], alpha=0.8, rasterized=True, linestyle='--')
         if obs_flux is not None:
-            ax_flux.plot(lam, obs_flux, lw=2, label="Observed", color="black", zorder=3)
+            ax_flux.plot(lam, obs_flux, 'o', markersize=6, label="Observed", color="black", zorder=3)
         ax_flux.set_xscale("log")
         ax_flux.set_yscale("log")
- 
+
         ax_flux.set_xlabel(r"Wavelength [$\mu$m]", fontsize=14)
         ax_flux.set_ylabel(r"Flux [erg s$^{-1}$ cm$^{2}$ cm$^{-1}$]", fontsize=14)
-        tick_locs = np.array([0.6, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0])
+        tick_locs = np.array([1.0, 1.5, 2.0, 3.0, 4.0, 5.0])
         ax_flux.set_xticks(tick_locs)
         ax_flux.set_xticklabels([f"{t:g}" for t in tick_locs], fontsize=12)
         ax_flux.tick_params(axis="y", labelsize=12)
-        ax_flux.set_xlim(0.6,5.0)
+        ax_flux.set_xlim(1.0,5.1)
         # Adjust y-range here by uncommenting and modifying:
-        ax_flux.set_ylim(10**-12, 10**-7)  # Example: adjust these values as needed
+        ax_flux.set_ylim(10**-10, 10**-7)  # Example: adjust these values as needed
         ax_flux.grid(False)
         ax_flux.legend()
         fig_flux.tight_layout()
         fig_flux.savefig(exp_dir / f"{outname}_planet_flux.png", dpi=300)
         fig_flux.savefig(exp_dir / f"{outname}_planet_flux.pdf")
 
-        # Brightness temperature figure (median only, no 1-sigma bands)
+        # Brightness temperature figure (median and highest likelihood)
         fig_tb, ax_tb = plt.subplots(figsize=(8, 4.5))
-        ax_tb.plot(hires, Tb_med, lw=1, label="Median model", color=palette[4], alpha=0.7, rasterized=True)
+        ax_tb.plot(hires, Tb_med, lw=1.5, label="Median model", color=palette[4], alpha=0.8, rasterized=True)
+        if Tb_maxlike is not None:
+            ax_tb.plot(hires, Tb_maxlike, lw=1.5, label="Highest likelihood", color=palette[1], alpha=0.8, rasterized=True, linestyle='--')
         if Tb_obs is not None:
             ax_tb.plot(lam, Tb_obs, lw=2, label="Observed", color="black", zorder=3)
         ax_tb.set_xscale("log")
@@ -443,6 +630,8 @@ def main():
     ap.add_argument("--max-samples", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=123)
     ap.add_argument("--no-show", action="store_true")
+    ap.add_argument("--use-dynesty", action="store_true",
+                    help="Use dynesty_results.pkl for highest likelihood sample (more accurate)")
     args = ap.parse_args()
     plot_emission_band(
         args.config,
@@ -450,6 +639,7 @@ def main():
         max_samples=args.max_samples,
         seed=args.seed,
         show_plot=not args.no_show,
+        use_dynesty=args.use_dynesty,
     )
 
 

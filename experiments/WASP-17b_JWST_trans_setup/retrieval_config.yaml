@@ -27,18 +27,18 @@ physics:
 
 opac:
 
-  wl_master: wl_R10000.txt
-  full_grid: False
+  wl_master: wl_R20000.txt
+  full_grid: True
   ck: False
   ck_mix: RORR
 
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_R10000.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_R10000.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_R10000.npz}      
-    - {species: Na, path: ../../opac_data/lbl/Na_R10000.npz}  
-    - {species: K, path: ../../opac_data/lbl/K_R10000.npz}
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
+    - {species: CO2, path: ../../opac_data/lbl/CO2_R20000.npz}
+    - {species: CO, path: ../../opac_data/lbl/CO_R20000.npz}
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}      
+    - {species: Na, path: ../../opac_data/lbl/Na_R20000.npz}  
+    - {species: K, path: ../../opac_data/lbl/K_R20000.npz}
   ray:
     - {species: H2}
     - {species: He}

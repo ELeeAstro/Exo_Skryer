@@ -136,30 +136,27 @@ def Barstow(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
 def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a modified Milne temperature profile with stretched exponential transition.
 
-    This profile uses a modified Milne approximation where the Hopf function
-    is replaced by a pressure-dependent parameter q(p) that transitions
-    smoothly from a skin temperature regime to the standard Milne value
-    using a stretched exponential function: exp(-((p/p_0)^beta)).
+    This profile uses a grey optical depth model with a stretched exponential
+    transition from a skin temperature at low pressure to the standard Milne
+    profile at high pressure.
 
     Parameters
     ----------
     p_lev : `~jax.numpy.ndarray`, shape (nlev,)
-        Pressure at atmospheric levels.
+        Pressure at atmospheric levels in dyne cm⁻².
     params : dict[str, `~jax.numpy.ndarray`]
         Parameter dictionary containing:
 
-        - `log_10_g` : float
-            Log₁₀ surface gravity in cm s⁻².
         - `T_int` : float
             Internal temperature in Kelvin.
-        - `log_10_k_ir` : float
-            Log₁₀ infrared opacity in cm² g⁻¹.
+        - `log_10_tau_ref` : float
+            Log₁₀ infrared optical depth at reference pressure (1 bar, dimensionless).
         - `T_ratio` : float
-            Ratio between the skin temperature and internal temperature (T_skin/T_int).
-        - `log_10_p_0` : float
-            Log₁₀ reference pressure in bar for the stretched exponential.
+            Skin-to-internal temperature ratio (T_skin / T_int, dimensionless).
+        - `log_10_p_t` : float
+            Log₁₀ transition pressure in bar.
         - `beta` : float
-            Stretching exponent (0 < beta <= 1; beta=1 is pure exponential, beta=0.55 typical).
+            Stretching exponent for transition (0 < beta <= 1, dimensionless).
 
     Returns
     -------
@@ -168,27 +165,27 @@ def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[
     T_lay : `~jax.numpy.ndarray`, shape (nlev-1,)
         Temperature at layer midpoints in Kelvin.
     """
+
     g = 10.0**params["log_10_g"]
     T_int = params["T_int"]
     k_ir = 10.0**params["log_10_k_ir"]
     T_ratio = params["T_ratio"]
-    p_t = 10.0**params["log_10_p_t"]
+    p_t = (10.0**params["log_10_p_t"]) * bar
     beta = params["beta"]
 
     tau_ir = k_ir / g * p_lev
 
     q_inf = 0.710446
-    q0 = (4.0/3.0) * (T_ratio)**4
+    q0 = (4.0 / 3.0) * (T_ratio**4)
 
-    dq = q0 - q_inf
-    # Stretched exponential: sig = exp(-((p/p_0)^beta))
-    sig = jnp.exp(-(((p_lev/bar) / p_t)**beta))
-    q = q_inf + dq * sig
+    sig = jnp.exp(-((p_lev / p_t) ** beta))
+    q = q_inf + (q0 - q_inf) * sig
 
-    T_lev = ((0.75 * T_int**4) * (q + tau_ir))**0.25
+    T_lev = (0.75 * T_int**4 * (q + tau_ir)) ** 0.25
 
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
+
 
 
 def Milne(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:

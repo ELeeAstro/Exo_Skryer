@@ -308,15 +308,17 @@ def F18_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> 
         Parameter dictionary containing:
 
         - `log_10_cld_r` : float
-            Log₁₀ particle radius in microns.
+            Log₁₀ geometric-mean particle radius `r_g` in microns.
         - `cld_Q0` : float
             Extinction-efficiency scale factor.
         - `cld_a` : float
             Power-law exponent controlling the small-particle regime.
-        - `cld_rho` : float, optional
-            Cloud bulk density in g cm⁻³ (defaults to 1.0).
-        - `Q1` : float, optional
-            Q1 scale factor (defaults to 1.0).
+        - `cld_sigma` : float
+            Lognormal geometric standard deviation (dimensionless).
+        - `cld_rho` : float
+            Cloud bulk density in g cm⁻³.
+        - `cld_Q1` : float
+            Extinction-efficiency scale factor.
             
     Returns
     -------
@@ -330,19 +332,25 @@ def F18_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> 
     wl = state["wl"]
     q_c_lay = state["q_c_lay"]  # (nlay,)
 
-    r = 10.0**params["log_10_cld_r"]
+    r_g = 10.0**params["log_10_cld_r"]
     Q0 = params["cld_Q0"]
     a = params["cld_a"]
-    cld_rho = params.get("cld_rho", 1.0)  # Cloud bulk density, defaults to 1.0 g/cm³
-    Q1 = params.get("cld_Q1", 1.0)  # Q1 parameter, defaults to 1.0 
+    cld_rho = params["cld_rho"]  # Cloud bulk density (g/cm^3)
+    Q1 = params["cld_Q1"]
+    sig = params["cld_sigma"]
 
     # Compute size parameter and extinction efficiency
-    x = (2.0 * jnp.pi * r) / wl  # (nwl,)
-    Qext = Q1 / (Q0 * x**-a + x**0.2)  # (nwl,)
+    lnsig2 = jnp.log(sig) ** 2
+    r_eff = r_g * jnp.exp(2.5 * lnsig2)
+
+    x = (2.0 * jnp.pi * r_eff) / wl # (nwl,)
+    x = jnp.maximum(x, 1e-30)
+    Qext = Q1 / (Q0 * x ** (-a) + x**0.2)  # (nwl,)
+
 
     # Compute cloud opacity using vertical profile
     # q_c_lay: (nlay,), Qext: (nwl,) -> k_cld: (nlay, nwl)
-    k_cld = (3.0 * q_c_lay[:, None] * Qext[None, :]) / (4.0 * cld_rho * (r * 1e-4))
+    k_cld = (3.0 * q_c_lay[:, None] * Qext[None, :]) / (4.0 * cld_rho * (r_eff * 1e-4)) 
 
     ssa = jnp.zeros_like(k_cld)
     g = jnp.zeros_like(k_cld)
@@ -381,8 +389,8 @@ def direct_nk(
             Log₁₀ imaginary refractive-index nodes.
         - `log_10_cld_r` : float
             Log₁₀ particle radius in microns.
-        - `cld_rho` : float, optional
-            Cloud bulk density in g cm⁻³ (defaults to 1.0).
+        - `cld_rho` : float
+            Cloud bulk density in g cm⁻³.
 
     Returns
     -------
@@ -400,7 +408,7 @@ def direct_nk(
     # Retrieved / configured knobs
     # -----------------------------
     r_eff = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
-    cld_rho = params.get("cld_rho", 1.0)  # Cloud bulk density, defaults to 1.0 g/cm³
+    cld_rho = params["cld_rho"]  # Cloud bulk density, defaults to 1.0 g/cm³
 
     # Keep n positive for scattering math sanity (doesn't forbid n<1)
     n_floor = 1e-6
@@ -478,8 +486,8 @@ def given_nk(
 
         - `log_10_cld_r` : float
             Log₁₀ particle radius in microns.
-        - `cld_rho` : float, optional
-            Cloud bulk density in g cm⁻³ (defaults to 1.0).
+        - `cld_rho` : float
+            Cloud bulk density in g cm⁻³.
 
     Returns
     -------
@@ -509,7 +517,7 @@ def given_nk(
     # Retrieved / configured knobs
     # -----------------------------
     r_eff = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
-    cld_rho = params.get("cld_rho", 1.0)  # Cloud bulk density, defaults to 1.0 g/cm³
+    cld_rho = params["cld_rho"]  # Cloud bulk density, defaults to 1.0 g/cm³
 
     # -----------------------------
     # Compute optical properties

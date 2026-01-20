@@ -165,11 +165,18 @@ def save_observed_data_csv(
     y: np.ndarray,
     dy: np.ndarray,
     response_mode: np.ndarray | None = None,
+    offset_group: np.ndarray | None = None,
     stem: str = "observed_data",
 ) -> Path:
     """
-    Save observed data as CSV with columns: lam,dlam,y,dy
+    Save observed data as CSV with columns: lam,dlam,y,dy,response_mode,offset_group
     Values are written with full float precision; NaNs are allowed.
+
+    Parameters
+    ----------
+    offset_group : np.ndarray | None
+        Optional instrument offset group labels for each data point.
+        If provided, adds 6th column to output CSV.
     """
     import csv
 
@@ -194,11 +201,29 @@ def save_observed_data_csv(
     else:
         response_mode = np.full(lam.shape, "", dtype=object)
 
+    if offset_group is not None:
+        offset_group = np.asarray(offset_group)
+        if offset_group.shape != lam.shape:
+            raise ValueError(
+                "offset_group must match observed shapes; got "
+                f"{offset_group.shape} vs {lam.shape}"
+            )
+        # Only include offset_group column if it has meaningful values (not all __no_offset__)
+        unique_groups = np.unique(offset_group)
+        include_offset = not (len(unique_groups) == 1 and unique_groups[0] == "__no_offset__")
+    else:
+        offset_group = np.full(lam.shape, "", dtype=object)
+        include_offset = False
+
     out = outdir / f"{stem}.csv"
     with out.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["lam_um", "dlam_um", "depth", "depth_sigma", "response_mode"])
-        # write with repr precision to avoid losing info
-        for a, b, c, d, m in zip(lam, dlam, y, dy, response_mode):
-            w.writerow([repr(float(a)), repr(float(b)), repr(float(c)), repr(float(d)), str(m)])
+        if include_offset:
+            w.writerow(["lam_um", "dlam_um", "depth", "depth_sigma", "response_mode", "offset_group"])
+            for a, b, c, d, m, g in zip(lam, dlam, y, dy, response_mode, offset_group):
+                w.writerow([repr(float(a)), repr(float(b)), repr(float(c)), repr(float(d)), str(m), str(g)])
+        else:
+            w.writerow(["lam_um", "dlam_um", "depth", "depth_sigma", "response_mode"])
+            for a, b, c, d, m in zip(lam, dlam, y, dy, response_mode):
+                w.writerow([repr(float(a)), repr(float(b)), repr(float(c)), repr(float(d)), str(m)])
     return out

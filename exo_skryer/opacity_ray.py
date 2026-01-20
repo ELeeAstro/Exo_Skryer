@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Dict
 
 import jax.numpy as jnp
-
 from . import registry_ray as XR
 
 __all__ = [
@@ -86,16 +85,12 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
         raise ValueError("Rayleigh wavelength grid must match forward-model grid.")
 
     sigma_log = jnp.asarray(XR.ray_sigma_table(), dtype=jnp.float64)
-    sigma_values = 10.0**sigma_log
+    sigma_values = 10.0**sigma_log  # (n_species, nwl)
     species_names = XR.ray_species_names()
-
-    # Direct lookup - species names must match VMR keys exactly
-    # VMR values are already JAX arrays, no need to wrap
-    mixing_ratios = jnp.stack(
-        [jnp.broadcast_to(layer_vmr[name], (layer_count,)) for name in species_names],
-        axis=0,
-    )
-
-    # Use einsum to avoid transpose: (n_species, nwl) x (n_species, nlay) -> (nlay, nwl)
-    sigma_weighted = jnp.einsum('sw,sl->lw', sigma_values, mixing_ratios)
+    # Accumulate directly into (nlay, nwl) without materializing (n_species, nlay).
+    # Use a Python loop so species-name dict lookups happen at trace time (no dynamic indexing).
+    sigma_weighted = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=sigma_values.dtype)
+    for i, name in enumerate(species_names):
+        vmr_i = jnp.broadcast_to(layer_vmr[name], (layer_count,))  # (nlay,)
+        sigma_weighted = sigma_weighted + vmr_i[:, None] * sigma_values[i][None, :]
     return (number_density[:, None] * sigma_weighted) / density[:, None]

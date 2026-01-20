@@ -11,8 +11,7 @@ import jax.numpy as jnp
 
 from .data_constants import amu, kb, bar
 from .rate_jax import RateJAX, get_nasa9_cache
-
-
+from .vert_mu import compute_mu
 
 # Solar reference abundances (relative to H) - Asplund et al. (2021)
 solar_H = 1.0
@@ -362,7 +361,6 @@ def quench_approx(
     vmr_eq = rate.solve_profile(T_lay, p_lay / bar)
 
     # Compute mean molecular weight (needed for mixing timescale)
-    from .vert_mu import compute_mu
     mu_bar = compute_mu(vmr_eq)
 
     # Compute mixing timescale (same for all species)

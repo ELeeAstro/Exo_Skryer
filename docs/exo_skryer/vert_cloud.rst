@@ -29,6 +29,22 @@ A zero cloud profile can be defined, which is useful should custom methods be re
      vert_cloud: no_cloud
 
 
+Constant Uniform Slab
+---------------------
+
+A constant slab profile across the entire pressure domain can be given.
+
+.. math::
+
+  q_{\rm c}(p) = q_{\rm c, slab}
+
+**Example YAML Configuration:**
+
+.. code-block:: yaml
+
+   physics:
+     vert_cloud: const_profile
+
 
 Slab Profile
 ------------

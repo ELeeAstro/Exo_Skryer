@@ -39,7 +39,79 @@ __all__ = [
 ]
 
 
-LOG_FLOOR = -1e100  # finite "invalid" logL for PyMultiNest stability
+LOG_FLOOR = -1e300  # finite "invalid" logL for PyMultiNest stability
+
+
+def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool]:
+    """
+    Extract offset parameters and build mapping to data points.
+
+    Returns
+    -------
+    offset_param_names : List[str]
+        Names of offset parameters in order (matching offset_group_names).
+    offset_group_idx : jnp.ndarray
+        Integer array mapping each data point to its offset parameter index.
+    has_offsets : bool
+        Whether any offset parameters are defined.
+    """
+    group_names = obs.get("offset_group_names", np.array(["__no_offset__"]))
+    group_idx = obs.get("offset_group_idx", np.zeros(len(obs["y"]), dtype=int))
+
+    # Find offset parameters by naming convention "offset_<group_name>"
+    param_map: Dict[str, str] = {}  # group_name -> param_name
+    for p in cfg.params:
+        name = p.name
+        if name.startswith("offset_"):
+            group_name = name[7:]  # strip "offset_" prefix
+            param_map[group_name] = name
+
+    # Check if we have any real offset groups (not __no_offset__)
+    real_groups = [g for g in group_names if g != "__no_offset__"]
+    has_offsets = len(real_groups) > 0 and len(param_map) > 0
+
+    if has_offsets:
+        # Validate all groups have corresponding offset parameters
+        for g in real_groups:
+            if g not in param_map:
+                raise ValueError(
+                    f"Offset group '{g}' found in data but no 'offset_{g}' parameter defined in YAML"
+                )
+
+        # Build offset_param_names in same order as group_names
+        offset_param_names = [param_map[g] for g in group_names if g in param_map]
+
+        # Reindex: map group_idx to offset_param_names order
+        name_to_idx = {param_map[g]: i for i, g in enumerate(group_names) if g in param_map}
+        reindexed = np.zeros_like(group_idx)
+        for i, g in enumerate(group_names):
+            if g in param_map:
+                reindexed[group_idx == i] = name_to_idx[param_map[g]]
+        offset_group_idx = jnp.asarray(reindexed, dtype=jnp.int32)
+    else:
+        offset_param_names = []
+        offset_group_idx = jnp.zeros(len(obs["y"]), dtype=jnp.int32)
+
+    return offset_param_names, offset_group_idx, has_offsets
+
+
+def _prior_center_theta0(cfg, param_names: List[str]) -> np.ndarray:
+    """Compute prior-centered initial point for warmup compilation."""
+    theta0 = np.zeros((len(param_names),), dtype=np.float64)
+    name_to_param = {p.name: p for p in cfg.params}
+    for i, name in enumerate(param_names):
+        p = name_to_param[name]
+        dist = str(getattr(p, "dist", "")).lower()
+        if dist == "uniform":
+            lo, hi = float(p.low), float(p.high)
+            theta0[i] = 0.5 * (lo + hi)
+        elif dist in ("gaussian", "normal"):
+            theta0[i] = float(p.mu)
+        elif dist == "lognormal":
+            theta0[i] = float(np.exp(p.mu))
+        else:
+            raise ValueError(f"Unsupported distribution '{dist}' for warmup")
+    return theta0
 
 
 def build_prior_transform_pymultinest(cfg) -> Tuple[Callable, List[str]]:
@@ -123,6 +195,9 @@ def build_loglikelihood_pymultinest(cfg, obs: dict, fm: Callable, param_names: L
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
 
+    # Extract offset parameters
+    offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
+
     # Collect delta params once
     delta_dict: Dict[str, float] = {}
     for p in cfg.params:
@@ -159,7 +234,15 @@ def build_loglikelihood_pymultinest(cfg, obs: dict, fm: Callable, param_names: L
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def valid_ll(_):
-            r = y_obs - mu
+            # Apply instrument offsets if defined (offset params are in ppm)
+            if has_offsets:
+                offset_values = jnp.array([params[n] for n in offset_param_names])
+                offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
+                y_shifted = y_obs - offset_vec
+            else:
+                y_shifted = y_obs
+
+            r = y_shifted - mu
 
             # 'c' is guaranteed present: either in YAML (sampled/delta) or injected default
             c = params["c"]  # log10(sigma_jit)
@@ -171,12 +254,12 @@ def build_loglikelihood_pymultinest(cfg, obs: dict, fm: Callable, param_names: L
             logC = -jnp.log(sig_eff) - 0.5 * jnp.log(2.0 * jnp.pi)
             ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
-            return jnp.where(jnp.isfinite(ll), ll, -jnp.inf)
+            return jnp.where(jnp.isfinite(ll), ll, jnp.asarray(LOG_FLOOR))
 
-        return jax.lax.cond(valid_mu, valid_ll, lambda _: -jnp.inf, operand=None)
+        return jax.lax.cond(valid_mu, valid_ll, lambda _: jnp.asarray(LOG_FLOOR), operand=None)
 
-    # Warm up compilation once (important for PyMultiNest)
-    theta0 = np.zeros((len(param_names),), dtype=np.float64)
+    # Warmup compilation with prior-centered theta
+    theta0 = _prior_center_theta0(cfg, param_names)
     _ = float(loglike_jax(jnp.asarray(theta0)))
 
     def loglikelihood(cube, ndim, nparams):

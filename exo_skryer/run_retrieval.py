@@ -60,23 +60,18 @@ def main() -> None:
     # Configure platform-specific settings
     if platform == "cpu":
         # CPU: Multi-threading + fast math + MKL-DNN
-        n_threads = int(getattr(cfg.runtime, "threads", 1))
-        xla_flags = (
-            f"--xla_cpu_multi_thread_eigen=true "
-            f"intra_op_parallelism_threads={n_threads} "
-            f"--xla_cpu_enable_fast_math=true "
-            f"--xla_cpu_use_mkl_dnn=true "
-            f"--xla_force_host_platform_device_count={n_threads}"
-        )
-        os.environ["XLA_FLAGS"] = xla_flags
-        print(f"[info] Platform: CPU ({n_threads} threads)")
-        print(f"[info] XLA CPU: fast_math, MKL-DNN enabled")
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        print("[info] Platform: CPU")
     else:
         # GPU: Set CUDA device and optimization flags
         cuda_devices = str(cfg.runtime.cuda_visible_devices)
         os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
         os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
         os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
+        tf_gpu_allocator = getattr(cfg.runtime, "tf_gpu_allocator", None)
+        if tf_gpu_allocator:
+            os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
 
         # XLA GPU optimization flags
         xla_flags = (

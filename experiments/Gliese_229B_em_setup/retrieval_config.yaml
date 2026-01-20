@@ -6,7 +6,7 @@ data:
 
 physics:
 
-  nlay: 101
+  nlay: 99
 
   vert_Tp: Milne_modified
   vert_alt: hypsometric_variable_g_pref
@@ -26,19 +26,18 @@ physics:
 
 opac:
 
-  wl_master: wl_R10000.txt
-  full_grid: True
+  wl_master: wl_R20000.txt
+  full_grid: False
   ck: False
   ck_mix: RORR
 
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}     
-    - {species: CO, path: ../../opac_data/lbl/CO_R10000.npz} 
-    - {species: CO2, path: ../../opac_data/lbl/CO2_R10000.npz} 
-    - {species: CH4, path: ../../opac_data/lbl/CH4_R10000.npz}
-    - {species: NH3, path: ../../opac_data/lbl/NH3_R10000.npz}      
-    - {species: Na, path: ../../opac_data/lbl/Na_R10000.npz}
-    - {species: K, path: ../../opac_data/lbl/K_R10000.npz}  
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}     
+    - {species: CO, path: ../../opac_data/lbl/CO_R20000.npz} 
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}
+    - {species: NH3, path: ../../opac_data/lbl/NH3_R20000.npz}      
+    - {species: Na, path: ../../opac_data/lbl/Na_R20000.npz}
+    - {species: K, path: ../../opac_data/lbl/K_R20000.npz}  
 
   ray:
     - {species: H2}
@@ -54,30 +53,30 @@ params:
   - { name: D,   dist: delta,   value: 10.0, transform: identity, init: 10.0}
   - { name: p_bot, dist: delta,   value: 1000.0,  transform: identity, init: 1000.0 }
   - { name: p_top, dist: delta,   value: 1e-4, transform: identity, init: 1e-4}
-  - { name: log_10_p_ref, dist: delta,   value: 0.0, transform: identity, init: 0.0}
+  - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
+  - { name: R_p, dist: delta, value: 1.0,  transform: identity, init: 1.0}
 
-  - { name: log_10_g,  dist: uniform, low: 4.0,   high: 5.5,  transform: logit, init: 5.0}
-  - { name: R_p, dist: uniform, low: 0.5,   high: 2.0,  transform: logit, init: 1.0}
-  #- { name: M_p, dist: uniform, low: 1.0,   high: 80.0,  transform: logit, init: 1.0}
-  - { name: c, dist: uniform, low: -14.63,   high: -7.66,  transform: logit, init: 1.0}
+    #- { name: log_10_g,  dist: uniform, low: 4.0,   high: 6.0,  transform: logit, init: 5.0}
+  - { name: f_p, dist: uniform, low: 0.1,   high: 5.0,  transform: logit, init: 1.0}
+  - { name: M_p, dist: uniform, low: 1.0,   high: 80.0,  transform: logit, init: 1.0}
+  - { name: c, dist: uniform, low: -15.63,   high: -6.66,  transform: logit, init: 1.0}
 
-  - { name: T_skin, dist: uniform, low: 50.0,   high: 500.0, transform: logit, init: 400.0 }
-  - { name: T_int, dist: uniform, low: 700.0,   high: 1200.0, transform: logit, init: 1000.0 }
-  - { name: log_10_k_ir, dist: uniform, low: -4,   high: 4,  transform: logit, init: -1}
-  - { name: log_10_p_t, dist: uniform, low: -3,   high: 2,  transform: logit, init: 0}
-  - { name: beta, dist: uniform, low: 0.1,   high: 2.0,  transform: logit, init: 0.5}
+  - { name: T_ratio, dist: uniform, low: 0.1,   high: 0.9, transform: logit, init: 0.5 }
+  - { name: T_int, dist: uniform, low: 500.0,   high: 1500.0, transform: logit, init: 1000.0 }
+  - { name: log_10_k_ir, dist: uniform, low: -4,   high: 0,  transform: logit, init: -1}
+  - { name: log_10_p_t, dist: uniform, low: -2,   high: 3,  transform: logit, init: 0}
+  - { name: beta, dist: uniform, low: 0.01,   high: 1.0,  transform: logit, init: 0.5}
 
-  - { name: log_10_f_H2O, dist: uniform, low: -9,   high: -2,  transform: logit, init: -3}
-  - { name: log_10_f_CO, dist: uniform, low: -9,   high: -2,  transform: logit, init: -5}
-  - { name: log_10_f_CO2, dist: uniform, low: -9,   high: -2,  transform: logit, init: -5}
-  - { name: log_10_f_CH4, dist: uniform, low: -9,   high: -2,  transform: logit, init: -3}
-  - { name: log_10_f_NH3, dist: uniform, low: -9,   high: -2,  transform: logit, init: -3}    
-  - { name: log_10_f_Na, dist: uniform, low: -9,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_K, dist: uniform, low: -9,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}
+  - { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -5}
+  - { name: log_10_f_CH4, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}
+  - { name: log_10_f_NH3, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}    
+  - { name: log_10_f_Na, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
 
 sampling:
 
-  engine: jaxns
+  engine: dynesty
 
   nuts:
     backend: numpyro
@@ -89,7 +88,7 @@ sampling:
   jaxns:
     # ---- core NS config ----
     max_samples: 100000          # hard cap on nested-sampling iterations
-    num_live_points: 1000        # live points (posterior resolution)
+    num_live_points: 100        # live points (posterior resolution)
 
     # Slice sampler hyperparameters
     s: 4                        # slices per dimension (default ~4)
@@ -108,7 +107,7 @@ sampling:
     termination:
       ess: 10000                        # target effective sample size
       evidence_uncert: null            # stop when σ_logZ < 0.3
-      dlogZ: 0.1                     # stop when remaining evidence small
+      dlogZ: 1.0                     # stop when remaining evidence small
       max_samples: 100000             # safety cap for samples
       max_num_likelihood_evaluations: null
       rtol: null
@@ -125,7 +124,48 @@ sampling:
     dlogz_stop: 0
     seed: 42
 
+  # Dynesty settings
+  dynesty:
+    nlive: 1000
+    bound: multi
+    sample: auto
+    dlogz: 0.1
+    maxiter: null
+    maxcall: null
+    bootstrap: 0
+    enlarge: null
+    update_interval: null
+    dynamic: false
+    print_progress: true
+    seed: 42
+
+  # UltraNest settings
+  ultranest:
+    num_live_points: 1000
+    min_num_live_points: 100
+    dlogz: 0.1
+    max_iters: 0
+    verbose: true
+    show_status: true
+
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 1000              # Number of live points
+    evidence_tolerance: 0.1          # dlogZ stopping criterion
+    sampling_efficiency: 0.3         # 0.8 (unimodal), 0.3 (multimodal)
+    n_iter_before_update: 100        # Update interval for proposals
+    null_log_evidence: -1.0e99       # Null evidence (usually leave default)
+    max_modes: 100                   # Maximum number of modes to find
+    mode_tolerance: -1.0e99          # Mode separation tolerance
+    seed: -1                         # Random seed (-1 = random, >=0 for reproducibility)
+    verbose: true                    # Print progress
+    resume: false                     # Resume from previous run if interrupted
+    importance_nested_sampling: false # Use importance nested sampling
+    multimodal: true                 # Enable multimodal mode detection
+    const_efficiency_mode: false     # Constant efficiency mode
+
 runtime:
   platform: gpu           # cpu | gpu | cuda | metal
   cuda_visible_devices: 0  # or "0,1"
   threads: 1
+

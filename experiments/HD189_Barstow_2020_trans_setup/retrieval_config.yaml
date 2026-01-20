@@ -21,13 +21,13 @@ physics:
   vert_alt: variable_g
   vert_chem: constant_vmr
   vert_mu: dynamic
-  vert_cloud: no_cloud
+  vert_cloud: None
 
   # Opacity sources
   opac_line: lbl
   opac_ray: None
   opac_cia: None
-  opac_cloud: powerlaw_cloud
+  opac_cloud: deck_and_powerlaw
   opac_special: None
 
   # Radiative transfer
@@ -66,8 +66,8 @@ params:
   - {name: R_s, dist: delta, value: 0.776484, transform: identity, init: 0.776484}
 
   # Atmospheric boundaries
-  - {name: p_bot, dist: delta, value: 10.0, transform: identity, init: 10.0}
-  - {name: p_top, dist: delta, value: 1e-5, transform: identity, init: 1e-5}
+  - {name: p_bot, dist: delta, value: 1000.0, transform: identity, init: 1000.0}
+  - {name: p_top, dist: delta, value: 1e-8, transform: identity, init: 1e-8}
 
   # Planetary parameters
   - {name: log_10_g, dist: uniform, low: 2.9, high: 3.4, transform: logit, init: 3.0}
@@ -77,19 +77,19 @@ params:
   - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}
 
   # Chemistry parameters
-  - {name: log_10_f_H2O, dist: uniform, low: -8, high: -2, transform: logit, init: -4}
+  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -4}
 
   # Cloud parameters
   - {name: log_10_k_cld_grey, dist: uniform, low: -6.0, high: 6.0, transform: logit, init: -5.0}
   - {name: log_10_k_cld_Ray, dist: uniform, low: -6.0, high: 6.0, transform: logit, init: -3.0}
   - {name: alpha_cld, dist: uniform, low: 0.0, high: 6.0, transform: logit, init: 4.0}
-  - {name: wl_ref_cld, dist: delta, value: 1.0, transform: identity, init: 1.0}
+  - {name: wl_ref_cld, dist: delta, value: 0.3, transform: identity, init: 0.3}
 
 # ----------------------------------------------------------------------------------
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  engine: blackjax_ns
+  engine: dynesty
 
   # NUTS / HMC settings
   nuts:
@@ -102,7 +102,7 @@ sampling:
   # JAXNS settings
   jaxns:
     max_samples: 100000
-    num_live_points: 100
+    num_live_points: 250
     s: 4
     k: 0
     c: null
@@ -110,7 +110,7 @@ sampling:
     difficult_model: false
     parameter_estimation: true
     gradient_guided: false
-    init_efficiency_threshold: 0.05
+    init_efficiency_threshold: 0.1
     verbose: true
 
     termination:
@@ -127,15 +127,15 @@ sampling:
 
   # BlackJAX nested sampling settings
   blackjax_ns:
-    num_live_points: 100
+    num_live_points: 250
     num_inner_steps: 24
     num_delete: 10
-    dlogz_stop: 1
+    dlogz_stop: 1.0
     seed: 42
 
   # Dynesty settings
   dynesty:
-    nlive: 100
+    nlive: 250
     bound: multi
     sample: auto
     dlogz: 1.0
@@ -150,12 +150,28 @@ sampling:
 
   # UltraNest settings
   ultranest:
-    num_live_points: 100
-    min_num_live_points: 100
+    num_live_points: 250
+    min_num_live_points: 250
     dlogz: 1.0
     max_iters: 0
     verbose: true
     show_status: true
+
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 250              # Number of live points
+    evidence_tolerance: 1.0          # dlogZ stopping criterion
+    sampling_efficiency: 0.3         # 0.8 (unimodal), 0.3 (multimodal)
+    n_iter_before_update: 100        # Update interval for proposals
+    null_log_evidence: -1.0e99       # Null evidence (usually leave default)
+    max_modes: 100                   # Maximum number of modes to find
+    mode_tolerance: -1.0e99          # Mode separation tolerance
+    seed: -1                         # Random seed (-1 = random, >=0 for reproducibility)
+    verbose: true                    # Print progress
+    resume: true                     # Resume from previous run if interrupted
+    importance_nested_sampling: false # Use importance nested sampling
+    multimodal: true                 # Enable multimodal mode detection
+    const_efficiency_mode: false     # Constant efficiency mode
 
 # ----------------------------------------------------------------------------------
 # Runtime Section

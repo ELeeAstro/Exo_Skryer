@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -16,6 +17,8 @@ import blackjax
 __all__ = [
     "run_nuts_blackjax"
 ]
+
+LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
 
 
 # ---------------------------------------------------------------------
@@ -209,6 +212,59 @@ def _extract_params(cfg):
     return sampled, delta_dict
 
 
+def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool]:
+    """
+    Extract offset parameters and build mapping to data points.
+
+    Returns
+    -------
+    offset_param_names : List[str]
+        Names of offset parameters in order (matching offset_group_names).
+    offset_group_idx : jnp.ndarray
+        Integer array mapping each data point to its offset parameter index.
+    has_offsets : bool
+        Whether any offset parameters are defined.
+    """
+    group_names = obs.get("offset_group_names", np.array(["__no_offset__"]))
+    group_idx = obs.get("offset_group_idx", np.zeros(len(obs["y"]), dtype=int))
+
+    # Find offset parameters by naming convention "offset_<group_name>"
+    param_map: Dict[str, str] = {}  # group_name -> param_name
+    for p in cfg.params:
+        name = p.name
+        if name.startswith("offset_"):
+            group_name = name[7:]  # strip "offset_" prefix
+            param_map[group_name] = name
+
+    # Check if we have any real offset groups (not __no_offset__)
+    real_groups = [g for g in group_names if g != "__no_offset__"]
+    has_offsets = len(real_groups) > 0 and len(param_map) > 0
+
+    if has_offsets:
+        # Validate all groups have corresponding offset parameters
+        for g in real_groups:
+            if g not in param_map:
+                raise ValueError(
+                    f"Offset group '{g}' found in data but no 'offset_{g}' parameter defined in YAML"
+                )
+
+        # Build offset_param_names in same order as group_names
+        offset_param_names = [param_map[g] for g in group_names if g in param_map]
+
+        # Reindex: map group_idx to offset_param_names order
+        name_to_idx = {param_map[g]: i for i, g in enumerate(group_names) if g in param_map}
+        reindexed = np.zeros_like(group_idx)
+        for i, g in enumerate(group_names):
+            if g in param_map:
+                reindexed[group_idx == i] = name_to_idx[param_map[g]]
+        offset_group_idx = jnp.asarray(reindexed, dtype=jnp.int32)
+    else:
+        offset_param_names = []
+        offset_group_idx = jnp.zeros(len(obs["y"]), dtype=jnp.int32)
+
+    return offset_param_names, offset_group_idx, has_offsets
+
+
 def _build_bijector(dist: str, param) -> Bijector:
     """Build bijector for a parameter based on its distribution."""
     transform = _infer_transform(dist, param)
@@ -249,8 +305,9 @@ def _build_logprior_u(sampled_params, bijectors, priors_tuple):
     return logprior_u
 
 
-def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm):
-    """Build log-likelihood in u-space."""
+def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm,
+                    offset_param_names, offset_group_idx, has_offsets):
+    """Build log-likelihood in u-space with offset support."""
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
 
@@ -262,7 +319,16 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm):
 
         # Compute forward model
         mu = fm(theta_map)
-        res = y_obs - mu
+
+        # Apply instrument offsets if defined (offset params are in ppm)
+        if has_offsets:
+            offset_values = jnp.array([theta_map[n] for n in offset_param_names])
+            offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
+            y_shifted = y_obs - offset_vec
+        else:
+            y_shifted = y_obs
+
+        res = y_shifted - mu
         sig = jnp.clip(dy_obs, 1e-300, jnp.inf)
         is_finite = jnp.all(jnp.isfinite(mu))
 
@@ -273,7 +339,7 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm):
             return jnp.sum(logC - 0.5 * (r * r))
 
         def _bad(_):
-            return -jnp.inf
+            return jnp.asarray(LOG_FLOOR)
 
         return lax.cond(is_finite, _ok, _bad, operand=None)
 
@@ -312,8 +378,10 @@ def _run_blackjax_single_chain(
         st, info = kernel(rng, st)
         return st, st  # carry state, collect state
 
+    # Split key to avoid reusing warmup key for sampling
+    key, sample_key = jax.random.split(key)
     # Independent keys for each draw
-    keys = jax.random.split(key, int(draws))
+    keys = jax.random.split(sample_key, int(draws))
 
     # Run the chain with lax.scan (fully JITted loop)
     _, states = jax.lax.scan(one_step, state, keys)
@@ -370,6 +438,9 @@ def run_nuts_blackjax(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nd
     sampled_params, delta_dict = _extract_params(cfg)
     sampled_names = [p.name for p in sampled_params]
 
+    # Extract offset parameters
+    offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
+
     # Build bijectors
     bijectors = [_build_bijector(str(getattr(p, "dist", "")).lower(), p) for p in sampled_params]
 
@@ -384,7 +455,8 @@ def run_nuts_blackjax(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nd
 
     # Build log-functions
     logprior_u = _build_logprior_u(sampled_params, bijectors, priors_tuple)
-    loglik_u = _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm)
+    loglik_u = _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm,
+                               offset_param_names, offset_group_idx, has_offsets)
 
     def logprob(u):
         return loglik_u(u) + logprior_u(u)

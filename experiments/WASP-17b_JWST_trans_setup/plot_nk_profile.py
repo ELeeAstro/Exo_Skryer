@@ -41,6 +41,10 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 
+
+from jax import config as jax_config
+jax_config.update("jax_enable_x64", True)
+
 import arviz as az
 import jax
 import jax.numpy as jnp
@@ -82,8 +86,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).with_name("nk_profile.png"),
-        help="Output figure path (default: nk_profile.png next to config)",
+        default=Path(__file__).with_name("nk_profile.pdf"),
+        help="Output figure path (default: nk_profile.pdf next to config)",
     )
     parser.add_argument(
         "--max-draws",
@@ -231,6 +235,32 @@ def _compute_quantiles(data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.nda
     return q16, q50, q84
 
 
+def _format_chemical_label(name: str, suffix: str = "") -> str:
+    """Format chemical formula with LaTeX subscripts for numbers.
+
+    Parameters
+    ----------
+    name : str
+        Chemical formula (e.g., 'SiO2', 'Al2O3')
+    suffix : str, optional
+        Additional text to append in the same math mode (e.g., 'n', 'k')
+
+    Examples
+    --------
+        _format_chemical_label('SiO2') -> '$SiO_2$'
+        _format_chemical_label('SiO2', 'n') -> '$SiO_2$ $n$'
+        _format_chemical_label('Al2O3', 'k') -> '$Al_2O_3$ $k$'
+    """
+    import re
+    # Replace digits with subscripts
+    formatted = re.sub(r'(\d+)', r'_{\1}', name)
+    # Wrap in math mode
+    if suffix:
+        return f'${formatted}$ ${suffix}$'
+    else:
+        return f'${formatted}$'
+
+
 def _load_nk_file(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     if not path.exists():
         raise FileNotFoundError(f"nk data file not found: {path}")
@@ -308,6 +338,7 @@ def _plot_profiles(
         color=SEABORN_BLUE,
         alpha=0.25,
         label="$k$ ±1σ",
+        rasterized=True,
     )
     ax_k.scatter(
         wl_nodes,
@@ -344,6 +375,7 @@ def _plot_profiles(
             color=SEABORN_ORANGE,
             alpha=0.25,
             label="$n$ ±1σ",
+            rasterized=True,
         )
         n_node_lo, n_node_mid, n_node_hi = n_profile["node_stats"]  # type: ignore[index]
         n_wl_nodes = n_profile["wl_nodes"]  # type: ignore[assignment]
@@ -384,17 +416,19 @@ def _plot_profiles(
             color=SEABORN_ORANGE,
             alpha=0.25,
             label="$n$ ±1σ",
+            rasterized=True,
         )
 
     if overlay is not None:
         wl_ref, n_ref, k_ref, label = overlay
+        # Format the label with subscripts for the legend
         ax_n.plot(
             wl_ref,
             n_ref,
             color="tab:green",
             linestyle="-.",
             linewidth=1.5,
-            label=f"{label} $n$",
+            label=_format_chemical_label(label, 'n'),
         )
         pos_mask = k_ref > 0.0
         if np.any(pos_mask):
@@ -404,7 +438,7 @@ def _plot_profiles(
                 color="tab:green",
                 linestyle="-.",
                 linewidth=1.5,
-                label=f"{label} $k$",
+                label=_format_chemical_label(label, 'k'),
             )
         else:
             print(f"[plot_nk_profile] Overlay k values for {label} are non-positive; skipping.")
@@ -415,8 +449,8 @@ def _plot_profiles(
     ax_n.tick_params(axis="both", labelsize=14)
     ax_k.tick_params(axis="both", labelsize=14)
     #ax_n.set_title("WASP-17b Cloud Optical Constants (Posterior)")
-    ax_n.legend(loc="best")
-    ax_k.legend(loc="best")
+    ax_n.legend(loc="lower right")
+    ax_k.legend(loc="lower right")
     #ax_n.grid(True, which="both", alpha=0.3)
     #ax_k.grid(True, which="both", alpha=0.3)
 

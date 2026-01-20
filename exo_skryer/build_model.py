@@ -94,7 +94,14 @@ def build_forward_model(
     fixed_params = {}
     for param in cfg.params:
         if param.dist == "delta":
-            fixed_params[param.name] = float(param.value)
+            raw_value = getattr(param, "value", None)
+            if isinstance(raw_value, str):
+                raw_lower = raw_value.strip().lower()
+                if raw_lower in ("true", "false"):
+                    raw_value = (raw_lower == "true")
+                else:
+                    raw_value = float(raw_value)
+            fixed_params[param.name] = jnp.asarray(raw_value)
 
     # Example: number of layers from YAML
     nlay = int(getattr(cfg.physics, "nlay", 99))
@@ -327,12 +334,19 @@ def build_forward_model(
         nwl = wl.shape[0]
 
         # Planet and star radii (R0 is radius at p_bot)
-        R0 = jnp.asarray(full_params["R_p"]) * R_jup
-        R_s = jnp.asarray(full_params["R_s"]) * R_sun
+        R0 = full_params["R_p"] * R_jup
+        R_s = full_params["R_s"] * R_sun
+
+        # Calculate log_10_g from mass and radius if M_p is provided
+        if "M_p" in full_params:
+            M_p = full_params["M_p"] * M_jup  # Convert to g
+            R_p = full_params["R_p"] * R_jup  # Convert to cm
+            g = G * M_p / (R_p ** 2)  # Surface gravity in cm/s^2
+            full_params["log_10_g"] = jnp.log10(g)
 
         # Atmospheric pressure grid
-        p_bot = jnp.asarray(full_params["p_bot"]) * bar
-        p_top = jnp.asarray(full_params["p_top"]) * bar
+        p_bot = full_params["p_bot"] * bar
+        p_top = full_params["p_top"] * bar
         p_lev = jnp.logspace(jnp.log10(p_bot), jnp.log10(p_top), nlev)
 
         # Vertical atmospheric T-p layer structure
@@ -362,7 +376,6 @@ def build_forward_model(
             g_weights = XS.ck_g_weights()
             if g_weights.ndim > 1:
                 g_weights = g_weights[0]
-            g_weights = jnp.asarray(g_weights)
 
             # Get ck_mix option from config
             ck_mix_raw = getattr(cfg.opac, "ck_mix", "RORR")
@@ -401,7 +414,20 @@ def build_forward_model(
         if ck_mix_code is not None:
             state["ck_mix"] = ck_mix_code
 
-        opacity_components = {}
+        if ck:
+            line_zero = zero_ck_opacity(state, full_params)
+        else:
+            line_zero = zero_line_opacity(state, full_params)
+        k_cld_zero, cld_ssa_zero, cld_g_zero = zero_cloud_opacity(state, full_params)
+        opacity_components = {
+            "line": line_zero,
+            "rayleigh": zero_ray_opacity(state, full_params),
+            "cia": zero_cia_opacity(state, full_params),
+            "special": zero_special_opacity(state, full_params),
+            "cloud": k_cld_zero,
+            "cloud_ssa": cld_ssa_zero,
+            "cloud_g": cld_g_zero,
+        }
         if line_opac_kernel is not None:
             opacity_components["line"] = line_opac_kernel(state, full_params)
         if ray_opac_kernel is not None:

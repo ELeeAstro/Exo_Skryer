@@ -45,60 +45,43 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
         - nwl: Number of wavelength bins
         - ng: Number of g-points per wavelength bin
     """
-    sigma_cube = jnp.asarray(XS.ck_sigma_cube(), dtype=jnp.float64)
+    sigma_cube = XS.ck_sigma_cube()
     log_p_grid = XS.ck_log10_pressure_grid()
     log_temperature_grids = XS.ck_log10_temperature_grids()
 
-    # Convert to log10 space for interpolation
     log_p_layers = jnp.log10(layer_pressures_bar)
     log_t_layers = jnp.log10(layer_temperatures)
 
-    # Find pressure bracket indices and weights in log space (same for all species)
-    p_idx = jnp.searchsorted(log_p_grid, log_p_layers) - 1
-    p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
-    p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
-    p_weight = jnp.clip(p_weight, 0.0, 1.0)
+    def _interp_one_layer(log_p: jnp.ndarray, log_t: jnp.ndarray) -> jnp.ndarray:
+        # Pressure bracket indices and weights (shared across species)
+        p_idx = jnp.searchsorted(log_p_grid, log_p) - 1
+        p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
+        p_weight = (log_p - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
+        p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
-    def _interp_one_species(sigma_4d, log_temp_grid):
-        """Interpolate cross-sections for a single species.
+        def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
+            # Temperature bracket indices and weights (species-dependent)
+            t_idx = jnp.searchsorted(log_temp_grid, log_t) - 1
+            t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+            t_weight = (log_t - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+            t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
-        Parameters
-        ----------
-        sigma_4d : `~jax.numpy.ndarray`, shape (nT, nP, nwl, ng)
-            Cross-sections for one species in log₁₀ space.
-        log_temp_grid : `~jax.numpy.ndarray`, shape (nT,)
-            Log10 temperature grid for this species.
+            # Bilinear interpolation in (logT, logP). Indices are scalars here, so outputs are (nwl, ng).
+            s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
+            s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
+            s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
+            s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
 
-        Returns
-        -------
-        s_interp : `~jax.numpy.ndarray`, shape (nlay, nwl, ng)
-            Interpolated cross-sections in log₁₀ space.
-        """
+            s_t0 = (1.0 - p_weight) * s_t0_p0 + p_weight * s_t0_p1
+            s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
+            return (1.0 - t_weight) * s_t0 + t_weight * s_t1
 
-        # Find temperature bracket indices and weights in log space
-        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
-        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-        t_weight = jnp.clip(t_weight, 0.0, 1.0)
+        sigma_log_layer = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)  # (nspec, nwl, ng)
+        return sigma_log_layer.astype(jnp.float64)
 
-        # Get four corners of bilinear interpolation rectangle
-        # Indexing: sigma_4d[temp, pressure, wavelength, g]
-        s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]              # shape: (n_layers, n_wavelength, n_g)
-        s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
-        s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
-        s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
-
-        # Bilinear interpolation: first interpolate in pressure, then temperature
-        # Expand weights to broadcast over wavelength and g dimensions
-        s_t0 = (1.0 - p_weight)[:, None, None] * s_t0_p0 + p_weight[:, None, None] * s_t0_p1
-        s_t1 = (1.0 - p_weight)[:, None, None] * s_t1_p0 + p_weight[:, None, None] * s_t1_p1
-        s_interp = (1.0 - t_weight)[:, None, None] * s_t0 + t_weight[:, None, None] * s_t1
-
-        return s_interp
-
-    # Vectorize over all species
-    sigma_log = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
-    return sigma_log
+    # NOTE: This returns a large (nspec, nlay, nwl, ng) array; callers that care about peak
+    # memory should perform layer-wise interpolation + mixing instead of using this helper.
+    return jax.vmap(_interp_one_layer)(log_p_layers, log_t_layers)
 
 def _get_ck_quadrature(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Extract g-points and quadrature weights for correlated-k integration.
@@ -236,8 +219,6 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
         axis=0,
     )
 
-    sigma_log = _interpolate_sigma_log(layer_pressures / bar, layer_temperatures)
-
     g_points, g_weights = _get_ck_quadrature(state)
 
     # Get mixing method from state (default to RORR).
@@ -249,11 +230,71 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
         # Avoid int() conversion for JIT compatibility
         ck_mix_code = ck_mix_raw
 
-    # Perform mixing based on selected method
-    if ck_mix_code == 2:
-        mixed_sigma = mix_k_tables_pras(sigma_log, mixing_ratios, g_points, g_weights)
-    else:  # Default to RORR
-        mixed_sigma = mix_k_tables_rorr(10.0 ** sigma_log, mixing_ratios, g_points, g_weights)
+    # Layer-wise interpolation + mixing to avoid materializing (n_species, n_layers, n_wl, n_g).
+    sigma_cube = XS.ck_sigma_cube()
+    log_p_grid = XS.ck_log10_pressure_grid()
+    log_temperature_grids = XS.ck_log10_temperature_grids()
+
+    log_p_layers = jnp.log10(layer_pressures / bar)
+    log_t_layers = jnp.log10(layer_temperatures)
+
+    n_species = sigma_cube.shape[0]
+    n_wl = sigma_cube.shape[-2]
+    n_g = sigma_cube.shape[-1]
+
+    def _interp_sigma_log_layer(log_p: jnp.ndarray, log_t: jnp.ndarray) -> jnp.ndarray:
+        p_idx = jnp.searchsorted(log_p_grid, log_p) - 1
+        p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
+        p_weight = (log_p - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
+        p_weight = jnp.clip(p_weight, 0.0, 1.0)
+
+        def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
+            t_idx = jnp.searchsorted(log_temp_grid, log_t) - 1
+            t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+            t_weight = (log_t - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+            t_weight = jnp.clip(t_weight, 0.0, 1.0)
+
+            s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
+            s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
+            s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
+            s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
+
+            s_t0 = (1.0 - p_weight) * s_t0_p0 + p_weight * s_t0_p1
+            s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
+            return (1.0 - t_weight) * s_t0 + t_weight * s_t1
+
+        return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids).astype(jnp.float64)
+
+    def _mix_one_layer(layer_idx: jnp.ndarray, out: jnp.ndarray) -> jnp.ndarray:
+        log_p = log_p_layers[layer_idx]
+        log_t = log_t_layers[layer_idx]
+        sigma_log_layer = _interp_sigma_log_layer(log_p, log_t)  # (nspec, nwl, ng)
+        vmr_layer = mixing_ratios[:, layer_idx]                  # (nspec,)
+
+        if ck_mix_code == 2:
+            mixed = mix_k_tables_pras(
+                sigma_log_layer[:, None, :, :],
+                vmr_layer[:, None],
+                g_points,
+                g_weights,
+            )[0]
+        else:
+            mixed = mix_k_tables_rorr(
+                10.0 ** sigma_log_layer[:, None, :, :],
+                vmr_layer[:, None],
+                g_points,
+                g_weights,
+            )[0]
+
+        out = out.at[layer_idx].set(mixed)
+        return out
+
+    mixed_sigma = lax.fori_loop(
+        0,
+        layer_count,
+        _mix_one_layer,
+        jnp.zeros((layer_count, n_wl, n_g), dtype=jnp.float64),
+    )
 
     # Convert to mass opacity (cm^2 / g)
     total_opacity = mixed_sigma / (layer_mu[:, None, None] * amu)

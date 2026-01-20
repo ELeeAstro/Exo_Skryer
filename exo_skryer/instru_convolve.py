@@ -17,6 +17,7 @@ from .registry_bandpass import (
     bandpass_indices_padded,
     bandpass_norms,
     bandpass_valid_lengths,
+    bandpass_is_boxcar,
 )
 
 __all__ = [
@@ -31,12 +32,19 @@ def _convolve_spectrum_core(
     idx_pad: jnp.ndarray,
     norms: jnp.ndarray,
     valid_lens: jnp.ndarray,
+    is_boxcar: jnp.ndarray,
 ) -> jnp.ndarray:
     """Convolve high-resolution spectrum into observational bins (JIT core).
 
     This function performs the actual convolution calculation using pre-computed
-    padded arrays from the bandpass registry. It uses Simpson's rule integration to
+    padded arrays from the bandpass registry. It uses trapezoidal integration to
     compute the weighted average of the spectrum within each bin.
+
+    For boxcar bins (uniform response), the integration is:
+        bin_i = ∫ F(λ) dλ / ∫ dλ
+
+    For non-boxcar bins (filter throughput curves), the integration is photon-weighted:
+        bin_i = ∫ F(λ) T(λ) λ dλ / ∫ T(λ) λ dλ
 
     Parameters
     ----------
@@ -52,28 +60,32 @@ def _convolve_spectrum_core(
         Padded indices into the high-resolution spectrum array. Maps each
         wavelength sample to its position in `spec`.
     norms : `~jax.numpy.ndarray`, shape (nbin,)
-        Normalization factors for each bin, typically the integrated throughput:
-        ∫ w(λ) dλ over the bin's wavelength range.
+        Normalization factors for each bin:
+        - Boxcar: ∫ dλ
+        - Non-boxcar: ∫ T(λ) λ dλ
     valid_lens : `~jax.numpy.ndarray`, shape (nbin,)
         Number of valid (non-padded) points for each bin.
+    is_boxcar : `~jax.numpy.ndarray`, shape (nbin,)
+        Boolean flags indicating which bins are boxcar (True) vs filter curves (False).
 
     Returns
     -------
     binned_spectrum : `~jax.numpy.ndarray`, shape (nbin,)
-        Convolved spectrum in observational bins. Each element represents:
-        bin_i = ∫ F(λ) w(λ) dλ / ∫ w(λ) dλ
+        Convolved spectrum in observational bins.
     """
     spec_pad = jnp.take(spec, idx_pad, axis=0)  # (nbin, max_len)
 
-    # # Integrate using Simpson's rule with vmap over bins
-    # numerator = jax.vmap(simpson_padded, in_axes=(0, 0, 0))(
-    #     spec_pad * w_pad,  # y: (nbin, max_len)
-    #     wl_pad,            # x: (nbin, max_len)
-    #     valid_lens,        # n_valid: (nbin,)
-    # )
+    # Compute numerator with conditional λ-weighting:
+    # - Boxcar: ∫ F(λ) w(λ) dλ = ∫ F(λ) dλ  (since w=1)
+    # - Non-boxcar: ∫ F(λ) T(λ) λ dλ
+    # Use where() to apply λ-weighting only to non-boxcar bins
+    lambda_weight = jnp.where(
+        is_boxcar[:, None],  # Broadcast to (nbin, 1) then (nbin, max_len)
+        1.0,                  # Boxcar: no λ weighting
+        wl_pad                # Non-boxcar: multiply by λ
+    )
 
-    # Alternative: use trapezoidal integration (commented out)
-    numerator = jnp.trapezoid(spec_pad * w_pad, x=wl_pad, axis=1)  # (nbin,)
+    numerator = jnp.trapezoid(spec_pad * w_pad * lambda_weight, x=wl_pad, axis=1)  # (nbin,)
 
     return numerator / jnp.maximum(norms, 1e-99)
 
@@ -86,6 +98,12 @@ def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
     the observational wavelength grid. The response functions (boxcar, Gaussian,
     filter throughput curves, etc.) are retrieved from the bandpass registry.
 
+    For boxcar bins, the integration is simple averaging:
+        F_bin[i] = ∫ F(λ) dλ / ∫ dλ
+
+    For filter curve bins (non-boxcar), the integration is photon-weighted:
+        F_bin[i] = ∫ F(λ) T(λ) λ dλ / ∫ T(λ) λ dλ
+
     Parameters
     ----------
     spectrum : `~jax.numpy.ndarray`, shape (nwl_hi,)
@@ -95,9 +113,7 @@ def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
     Returns
     -------
     binned_spectrum : `~jax.numpy.ndarray`, shape (nbin,)
-        Convolved spectrum in observational bins. Each element represents the
-        flux integrated over the corresponding instrument response:
-        F_bin[i] = ∫ F(λ) R_i(λ) dλ / ∫ R_i(λ) dλ
+        Convolved spectrum in observational bins.
 
         If no bins are registered (nbin=0), returns an empty array with the
         same dtype as `spectrum`.
@@ -113,6 +129,7 @@ def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
     idx_pad = bandpass_indices_padded()      # (nbin, max_len)
     norms = bandpass_norms()                 # (nbin,)
     valid_lens = bandpass_valid_lengths()    # (nbin,)
+    is_boxcar = bandpass_is_boxcar()         # (nbin,)
 
     return _convolve_spectrum_core(
         spec=spectrum,
@@ -121,4 +138,5 @@ def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
         idx_pad=idx_pad,
         norms=norms,
         valid_lens=valid_lens,
+        is_boxcar=is_boxcar,
     )

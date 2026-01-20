@@ -319,11 +319,11 @@ def plot_Tp_band(
                 Mp = pars["M_p"] * M_jup
                 Rp = pars["R_p"] * R_jup
                 g_val = G * Mp / max(Rp**2, 1e-30)
-                pars["log_g"] = float(np.log10(max(g_val, 1e-30)))
+                pars["log_10_g"] = float(np.log10(max(g_val, 1e-30)))
             else:
                 raise KeyError(
-                    "Parameter samples must include 'log_g' or both 'M_p' and 'R_p' "
-                    "to reconstruct log_g for T(p) evaluation."
+                    "Parameter samples must include 'log_10_g' or both 'M_p' and 'R_p' "
+                    "to reconstruct log_10_g for T(p) evaluation."
                 )
 
         T_lev, T_lay = vert_struct_fn(p_lev, pars)
@@ -351,6 +351,32 @@ def plot_Tp_band(
     T_lev_q50   = np.quantile(T_lev_samples, 0.50,  axis=0)
     T_lev_q97_5 = np.quantile(T_lev_samples, 0.975, axis=0)
 
+    # Optional comparison: standard Milne profile at median parameter values
+    milne_T_lay_median_params = None
+    if model_name == "Milne_modified" and hasattr(vs_mod, "Milne"):
+        median_pars: Dict[str, float] = {}
+        for p_cfg in params_cfg:
+            name = getattr(p_cfg, "name", None)
+            if not name:
+                continue
+            median_pars[name] = float(np.median(param_draws[name][idx]))
+
+        # Ensure log_10_g exists (same reconstruction logic as the sampling loop)
+        if "log_10_g" not in median_pars:
+            if "M_p" in median_pars and "R_p" in median_pars:
+                Mp = median_pars["M_p"] * M_jup
+                Rp = median_pars["R_p"] * R_jup
+                g_val = G * Mp / max(Rp**2, 1e-30)
+                median_pars["log_10_g"] = float(np.log10(max(g_val, 1e-30)))
+            else:
+                raise KeyError(
+                    "Median parameter set must include 'log_10_g' or both 'M_p' and 'R_p' "
+                    "to reconstruct log_10_g for Milne comparison."
+                )
+
+        _, milne_T_lay_median_params = vs_mod.Milne(p_lev, median_pars)
+        milne_T_lay_median_params = np.asarray(milne_T_lay_median_params, dtype=float)
+
     # Save quantiles
     np.savez_compressed(
         exp_dir / f"{outname}_quantiles.npz",
@@ -366,8 +392,8 @@ def plot_Tp_band(
     )
 
     # Plot T–p profile with credible band
-    sns.set_theme(style="whitegrid")
-    palette = sns.color_palette("colorblind", 2)
+    #sns.set_theme(style="whitegrid")
+    palette = sns.color_palette("colorblind", 3)
     fig, ax = plt.subplots(figsize=(5, 6))
 
     # Shaded 95% credible band
@@ -376,20 +402,39 @@ def plot_Tp_band(
         T_lay_q02_5,
         T_lay_q97_5,
         alpha=0.3,
-        label="95% credible band",
+        label=r"2$\sigma$",
         color=palette[0],
     )
     # Median profile (acts as "best-fit" summary)
-    ax.plot(T_lay_q50, p_lay/1e6, lw=2, label="Median T(p)", color=palette[1])
+    ax.plot(T_lay_q50, p_lay/1e6, lw=2, label="Median", color=palette[1])
+
+    if milne_T_lay_median_params is not None:
+        ax.plot(
+            milne_T_lay_median_params,
+            p_lay / 1e6,
+            lw=2,
+            ls="--",
+            label="Milne (median params)",
+            color=palette[2],
+        )
 
     ax.set_yscale("log")
     ax.invert_yaxis()  # low pressures at top
 
-    ax.set_xlabel("Temperature [K]")
-    ax.set_ylabel("Pressure [bar]")
-    ax.set_title(f"T–p structure: {model_name}")
+    ax.set_xlabel(r"Temperature [K]", fontsize=14)
+    ax.set_ylabel(r"pressure [bar]", fontsize=14)
+    ax.tick_params(axis="both", labelsize=12)
 
-    ax.legend()
+    ax.legend(
+        fontsize=12,
+        frameon=True,
+        fancybox=True,
+        framealpha=0.95,
+        borderpad=0.8,
+        labelspacing=0.6,
+        handlelength=2.2,
+        handletextpad=0.8,
+    )
     fig.tight_layout()
 
     png = exp_dir / f"{outname}.png"

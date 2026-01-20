@@ -1,0 +1,158 @@
+data:
+
+  obs: ../../obs_data/WASP-107b_JWST.txt
+  stellar: None
+
+physics:
+
+  nlay: 99
+
+  vert_Tp: Guillot
+  vert_alt: p_ref
+  vert_chem: constant_vmr
+  vert_mu: dynamic
+  vert_cloud: exponential_decay_profile
+
+  opac_line: lbl
+  opac_ray: lbl
+  opac_cia: lbl
+  opac_cloud: F18
+  opac_special: None
+
+  rt_scheme: transit_1d
+  em_scheme: None
+  emission_mode: planet
+  contri_func: False
+
+opac:
+
+  wl_master: wl_R20000.txt
+  full_grid: False
+  ck: False
+  ck_mix: RORR
+
+  line:
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
+    - {species: CO2, path: ../../opac_data/lbl/CO2_R20000.npz}
+    - {species: CO, path: ../../opac_data/lbl/CO_R20000.npz}
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}
+    - {species: NH3, path: ../../opac_data/lbl/NH3_R20000.npz} 
+    - {species: H2S, path: ../../opac_data/lbl/H2S_R20000.npz}
+    - {species: SO2, path: ../../opac_data/lbl/SO2_R20000.npz}
+  ray:
+    - {species: H2}
+    - {species: He}
+  cia:
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+  cloud: None
+
+params:
+
+
+  - { name: R_s, dist: delta,   value: 0.67,  transform: identity, init: 0.67 }
+  - { name: p_bot, dist: delta,   value: 1000.0,  transform: identity, init: 1000.0 }
+  - { name: p_top, dist: delta,   value: 1e-8, transform: identity, init: 1e-8}
+  - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
+
+  - { name: log_10_g,  dist: uniform, low: 2.0,   high: 3.5,  transform: logit, init: 3.0}
+  - { name: R_p, dist: uniform, low: 0.66,   high: 1.22,  transform: logit, init: 1.4}
+
+  - {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
+  - {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
+  - {name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
+  - {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
+  - { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
+  
+  - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_CH4, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_NH3, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_H2S, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_f_SO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+
+  - {name: log_10_q_c, dist: uniform, low: -12, high: 0, transform: logit, init: 0}
+  - {name: log_10_p_base, dist: uniform, low: -8, high: 2, transform: logit, init: 0}
+  - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
+  - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
+
+  - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
+  - {name: cld_Q0, dist: uniform, low: 1.0, high: 40.0, transform: logit, init: 20.0}
+  - {name: cld_Q1, dist: delta, value: 1.0, transform: identity, init: 1.0}
+  - {name: cld_a, dist: uniform, low: 3.0, high: 5.0, transform: logit, init: 4.0}
+  - {name: cld_sigma, dist: uniform, low: 1.0, high: 3.0, transform: logit, init: 2.0}
+  - {name: f_cloud, dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}
+
+sampling:
+
+  engine: dynesty
+
+  nuts:
+    backend: numpyro
+    warmup: 100
+    draws: 100
+    seed: 42
+    chains: 1
+
+  jaxns:
+    # ---- core NS config ----
+    max_samples: 100000          # hard cap on nested-sampling iterations
+    num_live_points: 1000         # live points (posterior resolution)
+
+    # Slice sampler hyperparameters
+    s: 4                         # slices per dimension (default ~4)
+    k: 0                         # phantom samples (0 = off, >0 for hard posteriors)
+    c: null                       # parallel chains (null -> jaxns default, ~20*D)
+    shell_fraction: 0.5          # fraction of shell explored per step (0<sf<=1)
+
+    # Global behaviour flags
+    difficult_model: false       # robust defaults for gnarly posteriors
+    parameter_estimation: true   # tune for good posterior, not just evidence
+    gradient_guided: false       # use gradients for proposals (only if stable)
+    init_efficiency_threshold: 0.1  # >0: initial uniform sampling until eff>thr
+    verbose: true               # print textual progress to CLI
+
+    # ---- termination controls ----
+    termination:
+      ess: 10000                        # target effective sample size
+      evidence_uncert: null            # stop when σ_logZ < 0.3
+      dlogZ: 0.1                     # stop when remaining evidence small
+      max_samples: 100000             # safety cap for samples
+      max_num_likelihood_evaluations: null
+      rtol: null
+      atol: null
+
+    # ---- posterior handling ----
+    posterior_samples: 10000           # equal-weight posterior draws
+    seed: 42                          # RNG seed for JAX
+
+  blackjax_ns:
+    num_live_points: 250
+    num_inner_steps: 45
+    num_delete: 100
+    dlogz_stop: -2
+    seed: 42
+    posterior_samples: 10000      
+
+  # Dynesty settings
+  dynesty:
+    nlive: 1000
+    bound: multi
+    sample: auto
+    dlogz: 0.1
+    maxiter: null
+    maxcall: null
+    bootstrap: 0
+    enlarge: null
+    update_interval: null
+    dynamic: false
+    print_progress: true
+    seed: 42
+
+runtime:
+  platform: gpu           # cpu | gpu | cuda | metal
+  cuda_visible_devices: 0  # or "0,1"
+  threads: 1
+
+

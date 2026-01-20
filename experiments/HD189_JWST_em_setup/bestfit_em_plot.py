@@ -8,6 +8,7 @@ median/credible bands together with observed HD 189 JWST data.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -18,9 +19,6 @@ import seaborn as sns
 import yaml
 import arviz as az
 from types import SimpleNamespace
-
-from jax import config as jax_config
-jax_config.update("jax_enable_x64", True)
 
 _CONST_CACHE = {}
 
@@ -52,6 +50,47 @@ def _read_cfg(path: Path):
     with path.open("r", encoding="utf-8") as f:
         y = yaml.safe_load(f)
     return _to_ns(y)
+
+
+def _configure_runtime_from_cfg(cfg) -> None:
+    runtime_cfg = getattr(cfg, "runtime", None)
+    if runtime_cfg is None:
+        return
+
+    # Set runtime environment FIRST, before any other imports or function calls
+    # This MUST happen before JAX/CUDA initialization
+    platform = str(getattr(runtime_cfg, "platform", "cpu")).lower()
+
+    if platform == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        xla_flags = (
+            f"--xla_cpu_multi_thread_eigen=true "
+            f"--xla_cpu_enable_fast_math=true "
+            f"--xla_cpu_use_mkl_dnn=true "
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+        print("[info] XLA CPU: fast_math, MKL-DNN enabled")
+    else:
+        cuda_devices = str(getattr(runtime_cfg, "cuda_visible_devices", ""))
+        if cuda_devices:
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+        os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+        os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
+        tf_gpu_allocator = getattr(runtime_cfg, "tf_gpu_allocator", None)
+        if tf_gpu_allocator:
+            os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
+
+        xla_flags = (
+            "--xla_gpu_enable_latency_hiding_scheduler=true "
+            "--xla_gpu_enable_highest_priority_async_stream=true "
+            "--xla_gpu_enable_fast_min_max=true "
+            "--xla_gpu_deterministic_ops=false"
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+
+        print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
+        print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
 
 
 def _resolve_path_relative(path_str: str, exp_dir: Path) -> Path:
@@ -185,12 +224,17 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     repo_root = (exp_dir / "../..").resolve()
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
+
+    cfg = _read_cfg(cfg_path)
+    _configure_runtime_from_cfg(cfg)
+    from jax import config as jax_config
+    jax_config.update("jax_enable_x64", True)
+
     from exo_skryer.build_model import build_forward_model
     from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
     from exo_skryer.registry_bandpass import load_bandpass_registry
     from exo_skryer.read_stellar import read_stellar_spectrum
 
-    cfg = _read_cfg(cfg_path)
     lam_obs, dlam_obs, y_obs, dy_obs, resp_obs = _load_observed(exp_dir, cfg)
     lam_obs = np.asarray(lam_obs, dtype=float)
     dlam_obs = np.asarray(dlam_obs, dtype=float)
@@ -287,7 +331,9 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
         )
         R_p_med = float(np.median(R_p_draws[idx]))
         R_s_med = float(np.median(R_s_draws[idx]))
-        interp_stellar = np.interp(lam, hires, stellar_flux_np)
+        # Interpolate stellar flux in log10 space for accuracy across orders of magnitude
+        log10_stellar = np.log10(stellar_flux_np)
+        interp_stellar = 10.0 ** np.interp(lam, hires, log10_stellar)
         obs_flux = _recover_planet_flux(y_obs, interp_stellar, R_p_med, R_s_med)
         if dy_obs is not None:
             unit_scale = _recover_planet_flux(
@@ -315,8 +361,8 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
 
     # Flux ratio plot
     fig_ratio, ax_ratio = plt.subplots(figsize=(8, 4.5))
-    ax_ratio.plot(hires, h_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-    ax_ratio.fill_between(lam, q_lo, q_hi, alpha=0.3, color=palette[1])
+    ax_ratio.plot(hires, h_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4], rasterized=True)
+    ax_ratio.fill_between(lam, q_lo, q_hi, alpha=0.3, color=palette[1], rasterized=True)
     ax_ratio.plot(lam, q_med, lw=2, label="Median", color=palette[1])
     ax_ratio.errorbar(
         lam,
@@ -359,6 +405,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
             alpha=0.7,
             label="Median (hi-res)",
             color=palette[4],
+            rasterized=True,
         )
     if np.any(bin_mask):
         ax_ratio_zoom.fill_between(
@@ -367,6 +414,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
             q_hi[bin_mask],
             alpha=0.3,
             color=palette[1],
+            rasterized=True,
         )
         ax_ratio_zoom.plot(
             lam[bin_mask],
@@ -402,8 +450,8 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     if planet_flux_samples is not None and pf_lo is not None:
         # Planet flux figure
         fig_flux, ax_flux = plt.subplots(figsize=(8, 4.5))
-        ax_flux.plot(hires, pf_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-        ax_flux.fill_between(hires, pf_lo, pf_hi, alpha=0.3, color=palette[1])
+        ax_flux.plot(hires, pf_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4], rasterized=True)
+        ax_flux.fill_between(hires, pf_lo, pf_hi, alpha=0.3, color=palette[1], rasterized=True)
         if obs_flux is not None:
             ax_flux.errorbar(
                 lam,
@@ -444,6 +492,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
                 alpha=0.7,
                 label="Median (hi-res)",
                 color=palette[4],
+                rasterized=True,
             )
             ax_flux_zoom.fill_between(
                 hires[hi_mask],
@@ -451,6 +500,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
                 pf_hi[hi_mask],
                 alpha=0.3,
                 color=palette[1],
+                rasterized=True,
             )
         if np.any(bin_mask) and obs_flux is not None:
             ax_flux_zoom.errorbar(
@@ -480,8 +530,8 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
 
         # Brightness temperature figure
         fig_tb, ax_tb = plt.subplots(figsize=(8, 4.5))
-        ax_tb.plot(hires, Tb_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4])
-        ax_tb.fill_between(hires, Tb_lo, Tb_hi, alpha=0.3, color=palette[1])
+        ax_tb.plot(hires, Tb_med, lw=1.0, alpha=0.7, label="Median (hi-res)", color=palette[4], rasterized=True)
+        ax_tb.fill_between(hires, Tb_lo, Tb_hi, alpha=0.3, color=palette[1], rasterized=True)
         if Tb_obs is not None and Tb_obs_lo is not None and Tb_obs_hi is not None:
             Tb_err = np.vstack(
                 (
@@ -527,6 +577,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
                 alpha=0.7,
                 label="Median (hi-res)",
                 color=palette[4],
+                rasterized=True,
             )
             ax_tb_zoom.fill_between(
                 hires[hi_mask],
@@ -534,6 +585,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
                 Tb_hi[hi_mask],
                 alpha=0.3,
                 color=palette[1],
+                rasterized=True,
             )
         if np.any(bin_mask) and Tb_obs is not None:
             Tb_err_zoom = None

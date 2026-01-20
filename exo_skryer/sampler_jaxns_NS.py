@@ -16,11 +16,9 @@ from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-from jax.nn import sigmoid as _sigmoid
 import numpy as np
 
 import tensorflow_probability.substrates.jax as tfp
-import jaxns
 from jaxns import NestedSampler, TerminationCondition, resample, Model, Prior, summary
 from jaxns.utils import save_results
 
@@ -30,6 +28,67 @@ __all__ = [
     "make_jaxns_model",
     "run_nested_jaxns",
 ]
+
+LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
+
+
+def _extract_offset_params(cfg, obs: dict) -> Tuple[list, jnp.ndarray, bool]:
+    """
+    Extract offset parameters and build mapping to data points.
+
+    Returns
+    -------
+    offset_param_names : list
+        Names of offset parameters in order (matching offset_group_names).
+    offset_group_idx : jnp.ndarray
+        Integer array mapping each data point to its offset parameter index.
+    has_offsets : bool
+        Whether any offset parameters are defined.
+    """
+    from typing import Dict
+    group_names = obs.get("offset_group_names", np.array(["__no_offset__"]))
+    group_idx = obs.get("offset_group_idx", np.zeros(len(obs["y"]), dtype=int))
+
+    # Find offset parameters by naming convention "offset_<group_name>"
+    param_map: Dict[str, str] = {}  # group_name -> param_name
+    for p in cfg.params:
+        name = p.name
+        if name.startswith("offset_"):
+            group_name = name[7:]  # strip "offset_" prefix
+            param_map[group_name] = name
+
+    # Check if we have any real offset groups (not __no_offset__)
+    real_groups = [g for g in group_names if g != "__no_offset__"]
+    has_offsets = len(real_groups) > 0 and len(param_map) > 0
+
+    if has_offsets:
+        # Validate all groups have corresponding offset parameters
+        for g in real_groups:
+            if g not in param_map:
+                raise ValueError(
+                    f"Offset group '{g}' found in data but no 'offset_{g}' parameter defined in YAML"
+                )
+
+        # Build offset_param_names in same order as group_names
+        offset_param_names = [param_map[g] for g in group_names if g in param_map]
+
+        # Reindex: map group_idx to offset_param_names order
+        name_to_idx = {param_map[g]: i for i, g in enumerate(group_names) if g in param_map}
+        reindexed = np.zeros_like(group_idx)
+        for i, g in enumerate(group_names):
+            if g in param_map:
+                reindexed[group_idx == i] = name_to_idx[param_map[g]]
+        offset_group_idx = jnp.asarray(reindexed, dtype=jnp.int32)
+    else:
+        offset_param_names = []
+        offset_group_idx = jnp.zeros(len(obs["y"]), dtype=jnp.int32)
+
+    return offset_param_names, offset_group_idx, has_offsets
+
+
+def _sigmoid(x):
+    """Custom sigmoid: 1 / (1 + exp(-x)), avoids jax.nn import overhead."""
+    return 1.0 / (1.0 + jnp.exp(-x))
 
 
 def make_jaxns_model(cfg, obs: dict, fm) -> Model:
@@ -42,11 +101,15 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
       - bounded uniforms can use "transform: logit" -> latent logistic z, mapped by sigmoid
         Note: if z ~ Logistic(0,1), then sigmoid(z) ~ Uniform(0,1) exactly (CDF transform),
         so this preserves the intended uniform prior while living in an unconstrained latent.
+      - supports instrument offset parameters (offset_<group> in ppm)
     """
 
     # --- observed data closed over in the likelihood ---
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
+
+    # --- extract offset parameters ---
+    offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
 
     # ----------------------------
     # Build delta injection dict
@@ -110,7 +173,7 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
                     # Unconstrained latent + smooth map to (low, high)
                     # z ~ Logistic(0,1) => sigmoid(z) ~ Uniform(0,1) exactly
                     z = yield Prior(tfpd.Logistic(loc=0.0, scale=1.0), name=f"{name}__z")
-                    t = jnp.clip(_sigmoid(z), 1e-12, 1.0 - 1e-12)
+                    t = _sigmoid(z)  # sigmoid output is strictly in (0,1) for finite inputs
                     theta = low + (high - low) * t
                 else:
                     theta = yield Prior(tfpd.Uniform(low=low, high=high), name=name)
@@ -141,17 +204,25 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
 
         return params
 
-    # ----- Gaussian (symmetric) log-likelihood -----
+    # ----- Gaussian (symmetric) log-likelihood with offset support -----
     @jax.jit
     def log_likelihood(theta_map: Dict[str, jnp.ndarray]) -> jnp.ndarray:
         mu = fm(theta_map)  # (N,)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def invalid_ll(_):
-            return -jnp.inf
+            return jnp.asarray(LOG_FLOOR)
 
         def valid_ll(_):
-            r = y_obs - mu  # (N,)
+            # Apply instrument offsets if defined (offset params are in ppm)
+            if has_offsets:
+                offset_values = jnp.array([theta_map[n] for n in offset_param_names])
+                offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
+                y_shifted = y_obs - offset_vec
+            else:
+                y_shifted = y_obs
+
+            r = y_shifted - mu  # (N,)
 
             # 'c' is guaranteed present: either in YAML (sampled/delta) or injected default
             c = theta_map["c"]  # log10(sigma_jit)
@@ -165,7 +236,7 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
             logC = -jnp.log(sig_eff) - 0.5 * jnp.log(2.0 * jnp.pi)
             ll = jnp.sum(logC - 0.5 * (r / sig_eff) ** 2)
 
-            return jnp.where(jnp.isfinite(ll), ll, -jnp.inf)
+            return jnp.where(jnp.isfinite(ll), ll, jnp.asarray(LOG_FLOOR))
 
         return jax.lax.cond(valid_mu, valid_ll, invalid_ll, operand=None)
 

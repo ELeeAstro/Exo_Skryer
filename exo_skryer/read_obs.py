@@ -103,6 +103,19 @@ def read_obs_data(path, base_dir=None):
         response_mode = np.full(wl.shape, "boxcar", dtype="<U16") # use boxcar as default
         print('[info] All bands have been defaulted to boxcar convolution')
 
+    # Parse optional offset_group column (6th column, after response_mode)
+    offset_group_col = numeric_cols + 1
+    if raw.shape[1] > offset_group_col:
+        offset_group = raw[:, offset_group_col].astype("<U32")
+        unique_groups = np.unique(offset_group)
+        print(f'[info] Found {len(unique_groups)} offset groups: {unique_groups.tolist()}')
+    else:
+        # Default: all data in single group (no offset needed)
+        offset_group = np.full(wl.shape, "__no_offset__", dtype="<U32")
+
+    # Build integer index array for efficient JAX operations
+    unique_groups, offset_group_idx = np.unique(offset_group, return_inverse=True)
+
     # Output dictionary values
     obs_dict = {
         "wl": wl,
@@ -110,6 +123,9 @@ def read_obs_data(path, base_dir=None):
         "y": y,
         "dy": dy_sym,
         "response_mode": response_mode,
+        "offset_group": offset_group,
+        "offset_group_idx": offset_group_idx,
+        "offset_group_names": unique_groups,
     }
 
     return obs_dict

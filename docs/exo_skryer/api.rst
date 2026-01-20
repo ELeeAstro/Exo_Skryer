@@ -19,9 +19,6 @@ Reference/API
 .. automodapi:: exo_skryer.build_opacities
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.build_prepared
-    :no-inheritance-diagram:
-
 .. automodapi:: exo_skryer.ck_mix_PRAS
     :no-inheritance-diagram:
 
@@ -134,6 +131,9 @@ Reference/API
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.sampler_numpyro_MCMC
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.sampler_pymultinest_NS
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.vert_alt

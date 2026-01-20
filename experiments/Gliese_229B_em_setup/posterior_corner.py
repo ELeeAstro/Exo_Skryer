@@ -43,9 +43,14 @@ def _infer_scalar_params(data_vars: Iterable) -> List[str]:
     return scalar_names
 
 
+# Derived parameters that can be computed from posterior samples
+DERIVED_PARAMS = {"sqrt_f_p"}
+
+
 def _resolve_var_names(posterior_ds, requested: Sequence[str] | None) -> List[str]:
     if requested:
-        missing = [v for v in requested if v not in posterior_ds.data_vars]
+        # Allow derived parameters in requested list
+        missing = [v for v in requested if v not in posterior_ds.data_vars and v not in DERIVED_PARAMS]
         if missing:
             raise KeyError(f"Variables not found in posterior: {missing}")
         return list(requested)
@@ -74,6 +79,25 @@ def _flatten_param(arr: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unsupported parameter shape {arr.shape}")
 
 
+def _compute_derived_param(
+    posterior_ds,
+    name: str,
+) -> np.ndarray | None:
+    """Compute derived parameters from posterior samples.
+
+    Supported derived parameters:
+        - sqrt_f_p: sqrt(f_p), radius proxy when f_p = (R_p/R_jup)^2
+
+    Returns None if name is not a derived parameter.
+    """
+    if name == "sqrt_f_p":
+        if "f_p" not in posterior_ds.data_vars:
+            raise KeyError("Cannot compute 'sqrt_f_p': 'f_p' not in posterior.")
+        f_p = _flatten_param(np.asarray(posterior_ds["f_p"].values, dtype=float))
+        return np.sqrt(f_p)
+    return None
+
+
 def _build_sample_matrix(
     posterior_ds,
     var_names: List[str],
@@ -81,8 +105,13 @@ def _build_sample_matrix(
 ) -> np.ndarray:
     samples = []
     for name in var_names:
-        arr = posterior_ds[name].values
-        vec = _flatten_param(np.asarray(arr, dtype=float))
+        # Check for derived parameters first
+        derived = _compute_derived_param(posterior_ds, name)
+        if derived is not None:
+            vec = derived
+        else:
+            arr = posterior_ds[name].values
+            vec = _flatten_param(np.asarray(arr, dtype=float))
         if name in log_params:
             if np.any(vec <= 0):
                 raise ValueError(
@@ -208,6 +237,69 @@ def _update_histogram_quantile_styles(
                         line.set_linestyle(":")
 
 
+def _rasterize_scatter_points(fig: plt.Figure, n_params: int) -> None:
+    """
+    Apply rasterization to scatter points in off-diagonal panels to reduce PDF file size.
+    Note: corner.py already sets rasterized=True by default, but we ensure it here.
+    """
+    try:
+        axes = np.array(fig.axes).reshape(n_params, n_params)
+    except ValueError:
+        print("[posterior_corner] Could not reshape axes grid for point rasterization.")
+        return
+
+    for i in range(n_params):
+        for j in range(n_params):
+            if i == j:
+                # Skip diagonal (1D histograms/KDEs)
+                continue
+            if j > i:
+                # Skip upper triangle (not used by corner)
+                continue
+            ax = axes[i, j]
+            # Rasterize all line2d objects (scatter points plotted with 'o' marker)
+            for line in ax.get_lines():
+                line.set_rasterized(True)
+
+
+def _rasterize_density_plots(fig: plt.Figure, n_params: int) -> None:
+    """
+    Apply rasterization to density plots (2D histograms/contours) in off-diagonal panels
+    to reduce PDF file size.
+
+    Note: Contour lines (QuadContourSet) cannot be rasterized and will remain as vectors,
+    which is fine since they're efficient. We only rasterize PathCollections and images.
+    """
+    try:
+        axes = np.array(fig.axes).reshape(n_params, n_params)
+    except ValueError:
+        print("[posterior_corner] Could not reshape axes grid for rasterization.")
+        return
+
+    for i in range(n_params):
+        for j in range(n_params):
+            if i == j:
+                # Skip diagonal (1D histograms/KDEs)
+                continue
+            if j > i:
+                # Skip upper triangle (not used by corner)
+                continue
+            ax = axes[i, j]
+            # Rasterize PathCollections (filled regions, hexbins, etc.)
+            # but skip QuadContourSets (contour lines) which can't be rasterized
+            for collection in ax.collections:
+                # Check if it's a rasterizable collection type
+                collection_type = type(collection).__name__
+                if collection_type != 'QuadContourSet':
+                    try:
+                        collection.set_rasterized(True)
+                    except (AttributeError, ValueError):
+                        pass  # Silently skip non-rasterizable collections
+            # Rasterize images (if any 2D histograms are shown as images)
+            for image in ax.images:
+                image.set_rasterized(True)
+
+
 def _replace_diag_with_kde(
     fig: plt.Figure,
     samples: np.ndarray,
@@ -267,10 +359,16 @@ def plot_corner(
     kde_diag: bool = False,
     enforce_label_map: bool = False,
     plot_points: bool = True,
+    rasterize_points: bool = True,
+    rasterize_density: bool = True,
 ) -> Path:
     """
     Load posterior.nc, select variables, and save a classic corner plot with
     histograms, scatter points, and density contours.
+
+    Args:
+        rasterize_points: If True (default), rasterize scatter points to reduce PDF file size.
+        rasterize_density: If True (default), rasterize 2D density plots/contours to reduce PDF file size.
     """
     if not posterior_path.exists():
         raise FileNotFoundError(f"Could not find posterior file: {posterior_path}")
@@ -378,6 +476,12 @@ def plot_corner(
 
     if fig is None:
         raise RuntimeError("corner.corner returned None; no plot generated.")
+
+    # Apply rasterization to reduce PDF file size
+    if rasterize_points:
+        _rasterize_scatter_points(fig, len(var_names))
+    if rasterize_density:
+        _rasterize_density_plots(fig, len(var_names))
 
     # Ensure bottom-row x-labels are set (sometimes corner hides one)
     try:
@@ -491,6 +595,16 @@ def main():
         action="store_true",
         help="Do not plot posterior sample points in off-diagonal panels.",
     )
+    ap.add_argument(
+        "--no-rasterize-points",
+        action="store_true",
+        help="Do not rasterize scatter points (increases PDF file size but keeps them as vectors).",
+    )
+    ap.add_argument(
+        "--no-rasterize-density",
+        action="store_true",
+        help="Do not rasterize density plots/contours (increases PDF file size but keeps them as vectors).",
+    )
     args = ap.parse_args()
 
     posterior_path = Path(args.posterior).resolve()
@@ -506,6 +620,8 @@ def main():
         kde_diag=args.kde_diag,
         enforce_label_map=args.label_map is not None,
         plot_points=not args.no_points,
+        rasterize_points=not args.no_rasterize_points,
+        rasterize_density=not args.no_rasterize_density,
     )
 
 

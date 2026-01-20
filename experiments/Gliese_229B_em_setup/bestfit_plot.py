@@ -25,6 +25,7 @@ Outputs (in experiment directory):
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
@@ -36,9 +37,6 @@ import seaborn as sns
 import yaml
 import arviz as az
 from types import SimpleNamespace
-
-from jax import config as jax_config
-jax_config.update("jax_enable_x64", True)
 
 
 # ---------------- YAML / cfg helpers ----------------
@@ -56,6 +54,47 @@ def _read_cfg(path: Path):
     with path.open("r", encoding="utf-8") as f:
         y = yaml.safe_load(f)
     return _to_ns(y)
+
+
+def _configure_runtime_from_cfg(cfg) -> None:
+    runtime_cfg = getattr(cfg, "runtime", None)
+    if runtime_cfg is None:
+        return
+
+    # Set runtime environment FIRST, before any other imports or function calls
+    # This MUST happen before JAX/CUDA initialization
+    platform = str(getattr(runtime_cfg, "platform", "cpu")).lower()
+
+    if platform == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        xla_flags = (
+            f"--xla_cpu_multi_thread_eigen=true "
+            f"--xla_cpu_enable_fast_math=true "
+            f"--xla_cpu_use_mkl_dnn=true "
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+        print("[info] XLA CPU: fast_math, MKL-DNN enabled")
+    else:
+        cuda_devices = str(getattr(runtime_cfg, "cuda_visible_devices", ""))
+        if cuda_devices:
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+        os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
+        os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
+        tf_gpu_allocator = getattr(runtime_cfg, "tf_gpu_allocator", None)
+        if tf_gpu_allocator:
+            os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
+
+        xla_flags = (
+            "--xla_gpu_enable_latency_hiding_scheduler=true "
+            "--xla_gpu_enable_highest_priority_async_stream=true "
+            "--xla_gpu_enable_fast_min_max=true "
+            "--xla_gpu_deterministic_ops=false"
+        )
+        os.environ["XLA_FLAGS"] = xla_flags
+
+        print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
+        print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
 
 
 def _resolve_path_relative(path_str: str, exp_dir: Path) -> Path:
@@ -415,6 +454,13 @@ def plot_model_band(
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
+    # Load cfg as SimpleNamespace
+    cfg = _read_cfg(cfg_path)
+
+    _configure_runtime_from_cfg(cfg)
+    from jax import config as jax_config
+    jax_config.update("jax_enable_x64", True)
+
     try:
         from exo_skryer.build_model import build_forward_model
         from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
@@ -423,9 +469,6 @@ def plot_model_band(
         raise ImportError(
             f"Could not import modeling helpers from exo_skryer package at {repo_root}."
         ) from e
-
-    # Load cfg as SimpleNamespace
-    cfg = _read_cfg(cfg_path)
 
     _bump_opacity_paths_one_level(cfg, exp_dir)
 

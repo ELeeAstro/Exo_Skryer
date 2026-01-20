@@ -7,6 +7,7 @@ from typing import Dict
 
 import jax
 import jax.numpy as jnp
+from jax import lax
 
 from . import build_opacities as XS
 from .data_constants import amu, bar
@@ -109,29 +110,35 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
     p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
     p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
-    def _interp_one_species(sigma_3d, log_temp_grid):
+    n_species = sigma_cube.shape[0]
+    n_wl = sigma_cube.shape[-1]
+
+    def _accumulate_one(i: jnp.ndarray, acc: jnp.ndarray) -> jnp.ndarray:
+        sigma_3d = sigma_cube[i]  # (nT, nP, nwl) in log10(cm^2)
+        log_temp_grid = log_temperature_grids[i]  # (nT,)
+
         t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
         t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
         t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
         t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
-        s_t0_p0 = sigma_3d[t_idx, p_idx, :]
+        s_t0_p0 = sigma_3d[t_idx, p_idx, :]         # (nlay, nwl)
         s_t0_p1 = sigma_3d[t_idx, p_idx + 1, :]
         s_t1_p0 = sigma_3d[t_idx + 1, p_idx, :]
         s_t1_p1 = sigma_3d[t_idx + 1, p_idx + 1, :]
 
         s_t0 = (1.0 - p_weight)[:, None] * s_t0_p0 + p_weight[:, None] * s_t0_p1
         s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
-        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
-        return 10.0 ** s_interp.astype(jnp.float64)
+        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1  # log10 sigma
 
-    # Vectorize over all species: (n_species, nlay, nwl)
-    sigma_interp_all = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
+        sigma_linear = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl) in cm^2
+        return acc + sigma_linear * mixing_ratios[i, :, None]
 
-    # Weight by volume mixing ratios: (n_species, nlay, 1) * (n_species, nlay, nwl)
-    weighted_sigma_all = sigma_interp_all * mixing_ratios[:, :, None]
-
-    # Sum over species dimension
-    weighted_sigma = jnp.sum(weighted_sigma_all, axis=0)
+    weighted_sigma = lax.fori_loop(
+        0,
+        n_species,
+        _accumulate_one,
+        jnp.zeros((layer_count, n_wl), dtype=jnp.float64),
+    )
 
     return weighted_sigma / (layer_mu[:, None] * amu)
