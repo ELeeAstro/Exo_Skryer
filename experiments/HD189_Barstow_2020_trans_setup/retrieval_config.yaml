@@ -24,7 +24,7 @@ physics:
   vert_cloud: None
 
   # Opacity sources
-  opac_line: lbl
+  opac_line: ck
   opac_ray: None
   opac_cia: None
   opac_cloud: deck_and_powerlaw
@@ -40,14 +40,14 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_R10000.txt
-  full_grid: false
-  ck: false
+  wl_master: wl_pRT.txt
+  full_grid: true
+  ck: true
   ck_mix: RORR
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
+    - {species: H2O, path: ../../opac_data/ck/1H2-16O__POKAZATEL__R1000_0.3-50mu.ktable.petitRADTRANS.h5}
 
   # Rayleigh scattering species
   ray: None
@@ -77,7 +77,7 @@ params:
   - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}
 
   # Chemistry parameters
-  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -4}
+  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
 
   # Cloud parameters
   - {name: log_10_k_cld_grey, dist: uniform, low: -6.0, high: 6.0, transform: logit, init: -5.0}

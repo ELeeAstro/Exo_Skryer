@@ -146,6 +146,35 @@ def _load_ck_h5(index: int, spec, path: str, obs: dict, use_full_grid: bool = Fa
             # Create uniform g-point grid from 0 to 1
             g_points = np.linspace(0.0, 1.0, ngauss)
 
+    if g_points.shape[0] != weights.shape[0]:
+        raise ValueError(
+            f"Invalid petitRADTRANS k-table {path}: g_points has length {g_points.shape[0]} "
+            f"but weights has length {weights.shape[0]}."
+        )
+
+    # Ensure g-points are strictly increasing and weights are aligned with the kcoeff g-axis.
+    # Some table formats store g-points unsorted.
+    if g_points.ndim != 1 or weights.ndim != 1:
+        raise ValueError(f"Invalid petitRADTRANS k-table {path}: expected 1D g arrays.")
+    g_sort = np.argsort(g_points)
+    g_points = g_points[g_sort]
+    weights = weights[g_sort]
+    native_kcoeff = native_kcoeff[..., g_sort]
+
+    if np.any(~np.isfinite(g_points)) or np.any(~np.isfinite(weights)):
+        raise ValueError(f"Invalid petitRADTRANS k-table {path}: non-finite g-points or weights.")
+    if np.any(np.diff(g_points) <= 0.0):
+        raise ValueError(f"Invalid petitRADTRANS k-table {path}: g-points are not strictly increasing.")
+    if g_points.min() < 0.0 or g_points.max() > 1.0:
+        raise ValueError(f"Invalid petitRADTRANS k-table {path}: g-points must lie within [0, 1].")
+
+    # Normalize quadrature weights (RT assumes sum(weights)=1).
+    weights = np.clip(weights, 0.0, None)
+    wsum = float(np.sum(weights))
+    if not np.isfinite(wsum) or wsum <= 0.0:
+        raise ValueError(f"Invalid petitRADTRANS k-table {path}: non-positive weight sum {wsum}.")
+    weights = weights / wsum
+
     # Convert wavenumber bin centers to wavelength in microns
     # λ[μm] = 10000 / ν[cm^-1]
     wavelengths = 10000.0 / bin_centers_wn  # μm
@@ -247,6 +276,26 @@ def _load_ck_npz(index: int, spec, path: str, obs: dict, use_full_grid: bool = F
     if g_weights.size != nG:
         raise ValueError(f"g_weight array length {g_weights.size} does not match cross-section axis {nG} in {path}.")
 
+    # Ensure g-points are strictly increasing and weights are aligned with the cross_section g-axis.
+    g_sort = np.argsort(g_points)
+    g_points = g_points[g_sort]
+    g_weights = g_weights[g_sort]
+    cross_section = cross_section[..., g_sort]
+
+    if np.any(~np.isfinite(g_points)) or np.any(~np.isfinite(g_weights)):
+        raise ValueError(f"Invalid c-k table {path}: non-finite g-points or weights.")
+    if np.any(np.diff(g_points) <= 0.0):
+        raise ValueError(f"Invalid c-k table {path}: g-points are not strictly increasing.")
+    if g_points.min() < 0.0 or g_points.max() > 1.0:
+        raise ValueError(f"Invalid c-k table {path}: g-points must lie within [0, 1].")
+
+    # Normalize quadrature weights (RT assumes sum(weights)=1).
+    g_weights = np.clip(g_weights, 0.0, None)
+    wsum = float(np.sum(g_weights))
+    if not np.isfinite(wsum) or wsum <= 0.0:
+        raise ValueError(f"Invalid c-k table {path}: non-positive weight sum {wsum}.")
+    g_weights = g_weights / wsum
+
     if not use_full_grid:
         wl_obs = np.asarray(obs["wl"], dtype=float)
         dwl_obs = np.asarray(obs["dwl"], dtype=float)
@@ -288,12 +337,18 @@ def _rectangularize_entries(entries: List[CKRegistryEntry]) -> Tuple[CKRegistryE
     # Find the wavelength and pressure grid from the first tables (should be the same across all species)
     base_wavelengths = entries[0].wavelengths
     base_pressures = entries[0].pressures
+    base_g_points = entries[0].g_points
+    base_g_weights = entries[0].g_weights
     expected_wavelengths = base_wavelengths.shape[0]
     for entry in entries[1:]:
         if entry.wavelengths.shape != base_wavelengths.shape or not np.allclose(entry.wavelengths, base_wavelengths):
             raise ValueError(f"c-k opacity wavelength grids differ between {entries[0].name} and {entry.name}.")
         if entry.pressures.shape != base_pressures.shape or not np.allclose(entry.pressures, base_pressures):
             raise ValueError(f"c-k opacity pressure grids differ between {entries[0].name} and {entry.name}.")
+        if entry.g_points.shape != base_g_points.shape or not np.allclose(entry.g_points, base_g_points):
+            raise ValueError(f"c-k g-point grids differ between {entries[0].name} and {entry.name}.")
+        if entry.g_weights.shape != base_g_weights.shape or not np.allclose(entry.g_weights, base_g_weights):
+            raise ValueError(f"c-k g-weight grids differ between {entries[0].name} and {entry.name}.")
 
     # Find the max number of pressure points
     max_pressures = max(entry.pressures.shape[0] for entry in entries)

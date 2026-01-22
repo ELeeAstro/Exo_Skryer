@@ -16,7 +16,8 @@ from .ck_mix_PRAS import mix_k_tables_pras
 
 __all__ = [
     "zero_ck_opacity",
-    "compute_ck_opacity"
+    "compute_ck_opacity",
+    "compute_ck_opacity_perspecies"
 ]
 
 
@@ -153,9 +154,14 @@ def zero_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray
     layer_count = layer_pressures.shape[0]
     wavelength_count = wavelengths.shape[0]
 
-    # Get number of g-points from loaded ck data
-    g_weights = XS.ck_g_weights()
-    n_g = g_weights.shape[0]
+    # Get number of g-points from loaded ck data.
+    # Registry may store weights as (n_species, n_g); use state-provided weights if available.
+    g_weights = state.get("g_weights")
+    if g_weights is None:
+        g_weights = XS.ck_g_weights()
+        if g_weights.ndim > 1:
+            g_weights = g_weights[0]
+    n_g = g_weights.shape[-1]
 
     return jnp.zeros((layer_count, wavelength_count, n_g))
 
@@ -300,3 +306,103 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
     total_opacity = mixed_sigma / (layer_mu[:, None, None] * amu)
 
     return total_opacity
+
+
+def compute_ck_opacity_perspecies(
+    state: Dict[str, jnp.ndarray],
+    params: Dict[str, jnp.ndarray]
+) -> tuple[jnp.ndarray, jnp.ndarray]:
+    """Compute per-species correlated-k opacities WITHOUT mixing.
+
+    This function is used with the transmission multiplication random overlap
+    method (ck_mix: trans), where species mixing happens during the RT
+    calculation rather than at the opacity computation stage.
+
+    Parameters
+    ----------
+    state : dict[str, `~jax.numpy.ndarray`]
+        Atmospheric state dictionary containing:
+
+        - `p_lay` : `~jax.numpy.ndarray`, shape (nlay,)
+            Layer pressures in dyne cm⁻².
+        - `T_lay` : `~jax.numpy.ndarray`, shape (nlay,)
+            Layer temperatures in Kelvin.
+        - `mu_lay` : `~jax.numpy.ndarray`, shape (nlay,)
+            Mean molecular weight per layer in amu.
+        - `vmr_lay` : dict[str, `~jax.numpy.ndarray`]
+            Volume mixing ratios for each species.
+        - `wl` : `~jax.numpy.ndarray`, shape (nwl,)
+            Wavelength grid in microns.
+
+    params : dict[str, `~jax.numpy.ndarray`]
+        Parameter dictionary (unused; kept for API compatibility).
+
+    Returns
+    -------
+    sigma_perspecies : `~jax.numpy.ndarray`, shape (n_species, nlay, nwl, ng)
+        Per-species mass opacities in cm² g⁻¹. Note: these are NOT yet
+        weighted by VMR - that happens in the RT calculation.
+    vmr_perspecies : `~jax.numpy.ndarray`, shape (n_species, nlay)
+        Volume mixing ratios for each species at each layer.
+    """
+    layer_pressures = state["p_lay"]
+    layer_temperatures = state["T_lay"]
+    layer_mu = state["mu_lay"]
+    layer_count = layer_pressures.shape[0]
+
+    # Get species names and mixing ratios
+    species_names = XS.ck_species_names()
+    layer_vmr = state["vmr_lay"]
+
+    # Stack VMRs for all species
+    mixing_ratios = jnp.stack(
+        [jnp.broadcast_to(layer_vmr[name], (layer_count,)) for name in species_names],
+        axis=0,
+    )  # (n_species, nlay)
+
+    # Get k-table data
+    sigma_cube = XS.ck_sigma_cube()
+    log_p_grid = XS.ck_log10_pressure_grid()
+    log_temperature_grids = XS.ck_log10_temperature_grids()
+
+    log_p_layers = jnp.log10(layer_pressures / bar)
+    log_t_layers = jnp.log10(layer_temperatures)
+
+    def _interp_sigma_log_layer(log_p: jnp.ndarray, log_t: jnp.ndarray) -> jnp.ndarray:
+        """Interpolate cross-sections for all species at one layer."""
+        p_idx = jnp.searchsorted(log_p_grid, log_p) - 1
+        p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
+        p_weight = (log_p - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
+        p_weight = jnp.clip(p_weight, 0.0, 1.0)
+
+        def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
+            t_idx = jnp.searchsorted(log_temp_grid, log_t) - 1
+            t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
+            t_weight = (log_t - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+            t_weight = jnp.clip(t_weight, 0.0, 1.0)
+
+            s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
+            s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
+            s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
+            s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
+
+            s_t0 = (1.0 - p_weight) * s_t0_p0 + p_weight * s_t0_p1
+            s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
+            return (1.0 - t_weight) * s_t0 + t_weight * s_t1
+
+        return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids).astype(jnp.float64)
+
+    # Interpolate for all layers - returns (nlay, nspec, nwl, ng) then transpose
+    sigma_log_all = jax.vmap(_interp_sigma_log_layer)(log_p_layers, log_t_layers)
+    # sigma_log_all has shape (nlay, nspec, nwl, ng), transpose to (nspec, nlay, nwl, ng)
+    sigma_log_all = jnp.transpose(sigma_log_all, (1, 0, 2, 3))
+
+    # Convert from log10 to linear space
+    sigma_linear = 10.0 ** sigma_log_all
+
+    # Convert to mass opacity (cm² / g)
+    # sigma_linear is cross-section (cm² molecule⁻¹)
+    # Divide by (mu * amu) to get mass opacity
+    sigma_perspecies = sigma_linear / (layer_mu[None, :, None, None] * amu)
+
+    return sigma_perspecies, mixing_ratios

@@ -73,16 +73,16 @@ params:
   - { name: log_10_f_SO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
 
   - {name: log_10_q_c, dist: uniform, low: -12, high: 0, transform: logit, init: 0}
-  - {name: log_10_p_base, dist: uniform, low: -8, high: 2, transform: logit, init: 0}
+  - {name: log_10_p_base, dist: uniform, low: -8, high: 3, transform: logit, init: 0}
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
   - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
 
   - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: cld_Q0, dist: uniform, low: 1.0, high: 40.0, transform: logit, init: 20.0}
+  - {name: cld_Q0, dist: uniform, low: 1.0, high: 65.0, transform: logit, init: 20.0}
   - {name: cld_Q1, dist: delta, value: 1.0, transform: identity, init: 1.0}
   - {name: cld_a, dist: uniform, low: 3.0, high: 5.0, transform: logit, init: 4.0}
-  - {name: cld_sigma, dist: uniform, low: 1.0, high: 3.0, transform: logit, init: 2.0}
-  - {name: f_cloud, dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}
+  - {name: cld_sigma, dist: delta, value: 1.0, transform: identity, init: 1.0}
+    #- {name: f_cloud, dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}
 
 sampling:
 
@@ -140,7 +140,7 @@ sampling:
     nlive: 1000
     bound: multi
     sample: auto
-    dlogz: 0.1
+    dlogz: 0.25
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -149,6 +149,22 @@ sampling:
     dynamic: false
     print_progress: true
     seed: 42
+
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 1000              # Number of live points
+    evidence_tolerance: 0.1          # dlogZ stopping criterion
+    sampling_efficiency: 0.3         # 0.8 (unimodal), 0.3 (multimodal)
+    n_iter_before_update: 100        # Update interval for proposals
+    null_log_evidence: -1.0e99       # Null evidence (usually leave default)
+    max_modes: 100                   # Maximum number of modes to find
+    mode_tolerance: -1.0e99          # Mode separation tolerance
+    seed: -1                         # Random seed (-1 = random, >=0 for reproducibility)
+    verbose: true                    # Print progress
+    resume: false                     # Resume from previous run if interrupted
+    importance_nested_sampling: false # Use importance nested sampling
+    multimodal: true                 # Enable multimodal mode detection
+    const_efficiency_mode: false     # Constant efficiency mode
 
 runtime:
   platform: gpu           # cpu | gpu | cuda | metal

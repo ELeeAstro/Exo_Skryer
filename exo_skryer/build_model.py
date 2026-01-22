@@ -19,7 +19,7 @@ from .vert_mu import constant_mu, compute_mu
 from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
 
 from .opacity_line import zero_line_opacity, compute_line_opacity
-from .opacity_ck import zero_ck_opacity, compute_ck_opacity
+from .opacity_ck import zero_ck_opacity, compute_ck_opacity, compute_ck_opacity_perspecies
 from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
@@ -29,6 +29,7 @@ from . import build_opacities as XS
 from .build_chem import prepare_chemistry_kernel
 
 from .RT_trans_1D_ck import compute_transit_depth_1d_ck
+from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
 from .RT_trans_1D_lbl import compute_transit_depth_1d_lbl
 from .RT_em_1D_ck import compute_emission_spectrum_1d_ck
 from .RT_em_1D_lbl import compute_emission_spectrum_1d_lbl
@@ -282,8 +283,20 @@ def build_forward_model(
     if rt_raw in (None, "None"):
         raise ValueError("physics.rt_scheme must be specified explicitly.")
     rt_scheme = str(rt_raw).lower()
+
+    # Get ck_mix for RT kernel selection (TRANS uses different RT kernel)
+    ck_mix_str = str(getattr(cfg.opac, "ck_mix", "RORR")).upper()
+    if ck_mix_str == "TRANS" and rt_scheme != "transit_1d":
+        raise NotImplementedError("ck_mix: TRANS is only supported for rt_scheme: transit_1d.")
+
     if rt_scheme == "transit_1d":
-        rt_kernel = compute_transit_depth_1d_ck if ck else compute_transit_depth_1d_lbl
+        if ck:
+            if ck_mix_str == "TRANS":
+                rt_kernel = compute_transit_depth_1d_ck_trans
+            else:
+                rt_kernel = compute_transit_depth_1d_ck
+        else:
+            rt_kernel = compute_transit_depth_1d_lbl
     elif rt_scheme == "emission_1d":
         em_scheme = getattr(phys, "em_scheme", "eaa")
         emission_solver = get_emission_solver(em_scheme)
@@ -382,6 +395,8 @@ def build_forward_model(
             ck_mix_raw = str(ck_mix_raw).upper()
             if ck_mix_raw == "PRAS":
                 ck_mix_code = 2
+            elif ck_mix_raw == "TRANS":
+                ck_mix_code = 3
             else:
                 ck_mix_code = 1
 
@@ -429,7 +444,13 @@ def build_forward_model(
             "cloud_g": cld_g_zero,
         }
         if line_opac_kernel is not None:
-            opacity_components["line"] = line_opac_kernel(state, full_params)
+            # For TRANS method, compute per-species opacities (mixing happens in RT)
+            if ck and ck_mix_code == 3:  # TRANS
+                sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, full_params)
+                opacity_components["line_perspecies"] = sigma_ps
+                opacity_components["vmr_perspecies"] = vmr_ps
+            else:
+                opacity_components["line"] = line_opac_kernel(state, full_params)
         if ray_opac_kernel is not None:
             opacity_components["rayleigh"] = ray_opac_kernel(state, full_params)
         if cia_opac_kernel is not None:

@@ -81,15 +81,22 @@ def _load_wavelength_file(path: Path) -> np.ndarray:
 
     with resolved.open("r", encoding="utf-8") as handle:
         first = handle.readline().strip()
+
+    # Check if first line is a header (integer count) or data
     try:
         n_expected = int(first.split()[0])
+        has_header = True
     except (ValueError, IndexError):
         n_expected = None
+        has_header = False
 
-    arr = np.loadtxt(resolved, comments="#", skiprows=1)
+    arr = np.loadtxt(resolved, comments="#", skiprows=1 if has_header else 0)
+
     if arr.ndim == 1:
-        lam = np.asarray([arr[-1]], dtype=float)
+        # Single column file: entire array is wavelengths
+        lam = np.asarray(arr, dtype=float)
     else:
+        # Multi-column file: second column is wavelengths
         lam = np.asarray(arr[:, 1], dtype=float)
 
     if n_expected is not None and lam.shape[0] != n_expected:
@@ -208,6 +215,22 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
         ck_species = getattr(opac_cfg, "line", None) if opac_cfg is not None else None
         if ck_species is not None and ck_species not in (None, "None", "none", True, False):
             load_ck_registry(cfg, obs, lam_master=lam_master_cut, base_dir=exp_dir)
+
+        if not has_ck_data():
+            raise RuntimeError(
+                "cfg.opac.ck is enabled but no correlated-k tables were loaded. "
+                "Check cfg.opac.line and ensure it lists at least one .h5/.hdf5/.npz k-table."
+            )
+
+        # CRITICAL: correlated-k tables cannot be wavelength-interpolated. The model
+        # wavelength grid used downstream (RT + instrument convolution) must match the
+        # CK table wavelength grid exactly.
+        #
+        # After loading CK tables (possibly cut to obs bands), override the cut master
+        # wavelength grid to be the CK wavelength grid.
+        lam_master_cut = np.asarray(ck_master_wavelength(), dtype=float)
+        global _MASTER_WL_CUT
+        _MASTER_WL_CUT = lam_master_cut
     else:
         # Load line-by-line opacities
         print("[info] Using line-by-line (lbl) opacities")
