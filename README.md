@@ -6,3 +6,5 @@
 
 # Nice to haves (inspiration):
 
+YAML file config webapp (in pogress):
+[Config Webapp](https://exoskryer.streamlit.app/)
