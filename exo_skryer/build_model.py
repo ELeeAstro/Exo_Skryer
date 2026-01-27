@@ -13,7 +13,7 @@ import numpy as np
 from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Milne_modified
+from .vert_Tp import isothermal, Milne, Guillot, Line, Barstow, MandS, picket_fence, Milne_modified
 from .vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
 from .vert_mu import constant_mu, compute_mu
 from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
@@ -143,6 +143,8 @@ def build_forward_model(
         Tp_kernel = Milne
     elif vert_tp_name == "guillot":
         Tp_kernel = Guillot
+    elif vert_tp_name == "line":
+        Tp_kernel = Line     
     elif vert_tp_name == "picket_fence":
         Tp_kernel = picket_fence
     elif vert_tp_name == "mands":

@@ -251,19 +251,25 @@ def cloud_nk_k() -> jnp.ndarray:
 def load_cloud_nk_data(path: str | Path, wl_master: np.ndarray) -> None:
     """Load a refractive index table from disk, interpolate to wl_master, and cache.
 
-    Expected file format: whitespace-delimited columns with at least 3 columns:
+    Expected file format::
+
         wavelength[um]  n  k
+
     Extra columns are ignored.
 
-    The first line must be:
+    The first line must be::
+
         <nwl> <conducting_flag>
+
     where conducting_flag is a Fortran-style boolean (e.g. ".True." / ".False.").
+
     This mirrors the behavior in the legacy Fortran tables:
-      - Below the table range: clamp n,k to the lowest-wavelength values.
-      - Above the table range:
-          * if conducting: log-log extrapolate n,k using a point at 0.7*wl_max
-          * else: hold n constant, decrease k ~ 1/wl
-      - Within range: log-log interpolate n,k between bracketing grid points.
+
+    - Below the table range: clamp n,k to the lowest-wavelength values.
+    - Above the table range:
+      - if conducting: log-log extrapolate n,k using a point at 0.7*wl_max
+      - else: hold n constant, decrease k ~ 1/wl
+    - Within range: log-log interpolate n,k between bracketing grid points.
     """
     resolved = Path(path).expanduser().resolve()
 

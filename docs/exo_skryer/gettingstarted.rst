@@ -22,28 +22,69 @@ Exo Skryer attempts to solve these computational issues without the using excess
 Exo Skryer uses the JAX extension to Python to accelerate both the sampling and forward model evaluations, enabling efficient, scalable operation on CPUs and GPUs.
 This enables complex retrieval modelling to be performed in good time on desktop computers with a GPU.
 
+A simple, online app can help you get an initial YAML configuration file started:
+`Exo Skryer YAML configuration tool <https://exoskryer.streamlit.app/>`__
+
 
 The current version of Exo Skryer offers the following nested sampling options:
 
-* JAXNS -  
 * pymultinest - 
 * dynesty - 
-
-(experimental) 
-
-* ultranest - 
-* blackjax-ns -
+* JAXNS -  
+* ultranest (experimental) - 
+* blackjax-ns (experimental) -
 
 As well as two NUTS MCMC samplers:
 
 * numpyro - 
 * blackjax - 
 
+Opacity data
+------------
+
+Some input correlated-k tables, opacity sampled tables and CIA tables can be found at the following:
+`Exo Skryer opacity collection <https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link>`__
+
+Exo Skryer can also use the TauREX (opacity sampling mode) and petitRADTRANS (correlated-k mode) tables available from the `ExoMol website <https://www.exomol.com/>`__
+
 Your first model
 ----------------
 
-The experiments/HD189_Barstow_2020_trans_setup provides a first taste of how to use Exo Skryer, performing a first retrieval model, as well as postprocessing, testing individual functions and other things.
+The "experiments/HD209_Barstow_2020_trans_setup" provides a first taste of how to use Exo Skryer, performing a first retrieval model, as well as postprocessing, testing individual functions and other things.
+We can try running in the command line, the example HD 209459b retrieval model::
 
+    cd experiments/HD209_Barstow_2020_trans_setup
+    python -u -m exo_skryer.run_retrieval --config retrieval_config.yaml
+
+Where the model will read the YAML file after the --config flag, which contains the full information to run the retrieval model.
+After completion (a few minutes), the code will output both the dynesty.pkl file and posterior.nc (ArViZ format) files which can then be used to post-process the retrieval results. 
+
+The traditional corner plot can be plotted through the script::
+
+  python posterior_corner.py --config retrieval_config.yaml
+
+With additional options, such mapping LaTeX label formatting and positioning of the variables through corner_config.yaml, where non-present parameters are not plotted::
+
+  python posterior_corner.py --config retrieval_config.yaml --label-map corner_config.yaml
+
+Or presenting kernel density estimates instead of histograms::
+
+  python posterior_corner.py --config retrieval_config.yaml --label-map corner_config.yaml --kde-diag
+
+
+Best-fit median models for transmission spectra models can be produced using::
+
+  python bestfit_plot.py --config retrieval_config.yaml
+
+or for emission spectra models::
+
+  python bestfit_em_plot.py --config retrieval_config.yaml
+
+Where to plot full resolution spectra, the option "full_grid" in the YAML file must be : True.
+
+The temperature-pressure (T-p) profile can be plotted using::
+
+  python plot_Tp.py --config retrieval_config.yaml
 
 References
 ----------

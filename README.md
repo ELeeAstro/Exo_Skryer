@@ -8,3 +8,6 @@
 
 YAML file config webapp (in pogress):
 [Config Webapp](https://exoskryer.streamlit.app/)
+
+Corr-k, opacity sampled and CIA data:
+[Opacity Data](https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link)

@@ -95,12 +95,8 @@ def _configure_runtime(cfg) -> None:
     platform = str(getattr(runtime_cfg, "platform", "cpu")).lower()
 
     if platform == "cpu":
-        os.environ["JAX_PLATFORMS"] = "cpu"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        os.environ["XLA_FLAGS"] = (
-            "--xla_cpu_multi_thread_eigen=true "
-            "--xla_cpu_enable_fast_math=true "
-        )
+        # Leave CPU runtime environment to JAX defaults.
+        return
     else:
         cuda_devices = str(getattr(runtime_cfg, "cuda_visible_devices", ""))
         if cuda_devices:

@@ -24,9 +24,9 @@ physics:
   vert_cloud: const_profile
 
   # Opacity sources
-  opac_line: lbl
-  opac_ray: lbl
-  opac_cia: lbl
+  opac_line: ck
+  opac_ray: ck
+  opac_cia: ck
   opac_cloud: F18
   opac_special: None
   cloud_dist: mono
@@ -36,21 +36,22 @@ physics:
   em_scheme: None
   emission_mode: planet
   contri_func: false
+  refraction: None
 
 # ----------------------------------------------------------------------------------
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_R20000.txt
-  full_grid: true
-  ck: false
-  ck_mix: RORR
+  wl_master: ../../opac_data/ck/wl_ck_R250.txt
+  full_grid: false
+  ck: True
+  ck_mix: TRANS
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
-    - {species: Na, path: ../../opac_data/lbl/Na_R20000.npz}
-    - {species: K, path: ../../opac_data/lbl/K_R20000.npz}
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
+    - {species: Na, path: ../../opac_data/ck/Na_ck_R250.npz}
+    - {species: K, path: ../../opac_data/ck/K_ck_R250.npz}
 
   # Rayleigh scattering species
   ray:
@@ -98,7 +99,7 @@ params:
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  engine: jaxns
+  engine: dynesty
 
   # NUTS / HMC settings
   nuts:
@@ -144,10 +145,10 @@ sampling:
 
   # Dynesty settings
   dynesty:
-    nlive: 1000
+    nlive: 200
     bound: multi
     sample: auto
-    dlogz: 0.1
+    dlogz: 1.0
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -186,6 +187,6 @@ sampling:
 # Runtime Section
 # ----------------------------------------------------------------------------------
 runtime:
-  platform: gpu
+  platform: cpu
   cuda_visible_devices: 0
   threads: 1

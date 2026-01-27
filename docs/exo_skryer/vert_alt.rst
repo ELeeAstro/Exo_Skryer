@@ -27,7 +27,7 @@ Reference pressure is assumed to be at the highest pressure of the atmosphere.
      - { name: log_10_g, dist: uniform, low: 2.7, high: 3.3, transform: logit, init: 3.0 }
 
 Hypsometric - Variable Gravity
-=============================
+==============================
 
 Uses hypsometic equation to calculate altitude with variable gravity throughout the atmosphere, from a reference gravity, \ :math:`log_{10} g`, and radius, \ :math:`R_{\rm p}`.
 Reference pressure is assumed to be at the highest pressure of the atmosphere.

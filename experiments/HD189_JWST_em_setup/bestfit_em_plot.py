@@ -62,15 +62,8 @@ def _configure_runtime_from_cfg(cfg) -> None:
     platform = str(getattr(runtime_cfg, "platform", "cpu")).lower()
 
     if platform == "cpu":
-        os.environ["JAX_PLATFORMS"] = "cpu"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        xla_flags = (
-            f"--xla_cpu_multi_thread_eigen=true "
-            f"--xla_cpu_enable_fast_math=true "
-            f"--xla_cpu_use_mkl_dnn=true "
-        )
-        os.environ["XLA_FLAGS"] = xla_flags
-        print("[info] XLA CPU: fast_math, MKL-DNN enabled")
+        # Leave CPU runtime environment to JAX defaults.
+        print("[info] Platform: CPU (JAX defaults)")
     else:
         cuda_devices = str(getattr(runtime_cfg, "cuda_visible_devices", ""))
         if cuda_devices:

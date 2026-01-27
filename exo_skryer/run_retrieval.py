@@ -53,37 +53,32 @@ def main() -> None:
     from .read_yaml import read_yaml
     cfg = read_yaml(config_path)
 
-    # Set runtime environment FIRST, before any other imports or function calls
-    # This MUST happen before JAX/CUDA initialization
-    platform = str(cfg.runtime.platform)  # "cpu" or "gpu"
+    # Platform selection from YAML (used for sampler setup). We keep CPU environment
+    # variables at JAX defaults; GPU-specific flags remain configurable.
+    platform = str(getattr(cfg.runtime, "platform", "cpu")).lower()
 
-    # Configure platform-specific settings
-    if platform == "cpu":
-        # CPU: Multi-threading + fast math + MKL-DNN
-        os.environ["JAX_PLATFORMS"] = "cpu"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        print("[info] Platform: CPU")
-    else:
-        # GPU: Set CUDA device and optimization flags
-        cuda_devices = str(cfg.runtime.cuda_visible_devices)
-        os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+    if platform == "gpu":
+        cuda_devices = str(getattr(cfg.runtime, "cuda_visible_devices", ""))
+        if cuda_devices:
+            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
         os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
         os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
         tf_gpu_allocator = getattr(cfg.runtime, "tf_gpu_allocator", None)
         if tf_gpu_allocator:
             os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
 
-        # XLA GPU optimization flags
         xla_flags = (
             "--xla_gpu_enable_latency_hiding_scheduler=true "
             "--xla_gpu_enable_highest_priority_async_stream=true "
             "--xla_gpu_enable_fast_min_max=true "
-            "--xla_gpu_deterministic_ops=false"
+            "--xla_gpu_deterministic_ops=true"
         )
         os.environ["XLA_FLAGS"] = xla_flags
 
         print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
-        print(f"[info] XLA GPU: latency hiding, async streams, fast math enabled")
+        print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
+    else:
+        print("[info] Platform: CPU (JAX defaults)")
 
     # Print main yaml parameters to command line (after setting environment)
     from .help_print import print_cfg
@@ -92,7 +87,6 @@ def main() -> None:
     # Prepare JAX and numpyro JAX settings
     from jax import config as jax_config
     jax_config.update("jax_enable_x64", True)
-    jax_config.update("jax_platform_name", platform)
     #jax_config.update("jax_debug_nans", True)
 
     import numpyro

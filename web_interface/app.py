@@ -287,8 +287,6 @@ def build_config() -> dict:
         config['data']['obs'] = st.session_state.obs_path
     if st.session_state.get('stellar_path'):
         config['data']['stellar'] = st.session_state.stellar_path
-    if st.session_state.get('janaf_path'):
-        config['data']['janaf'] = st.session_state.janaf_path
     if st.session_state.get('nasa9_path'):
         config['data']['nasa9'] = st.session_state.nasa9_path
 
@@ -498,7 +496,7 @@ def render_data_section():
     This section collects file paths for:
     - Observation data (the spectrum to fit)
     - Stellar spectrum (for emission spectra normalization)
-    - Thermodynamic databases (JANAF, NASA9 for chemistry calculations)
+    - Thermodynamic databases (NASA9 for chemistry calculations)
     """
     st.header("Data Configuration")
     st.markdown("Specify paths to input data files.")
@@ -510,8 +508,6 @@ def render_data_section():
         # key="obs_path" means the value is stored in st.session_state['obs_path']
         st.text_input("Observation file path", key="obs_path",
                       placeholder="e.g., ../data/spectrum.txt")
-        st.text_input("JANAF database path", key="janaf_path",
-                      placeholder="e.g., ../../thermo_data/JANAF_cea.txt")
     with col2:
         st.text_input("Stellar spectrum path", key="stellar_path",
                       placeholder="e.g., ../data/stellar.txt")

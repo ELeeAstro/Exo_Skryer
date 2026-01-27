@@ -1,6 +1,6 @@
-***************************
+********************************************
 Mean Molecular Weight :math:`\overline{\mu}`
-***************************
+********************************************
 
 The mean molecular weight module, `~exo_skryer.vert_mu`, provides functions to compute the mean molecular weight of the atmosphere. 
 
@@ -8,7 +8,7 @@ Exo Skryer provides several mean molecular weight calculation functions in the `
 
 
 Constant :math:`\overline{\mu}`
-----------
+-------------------------------
 
 Assume a single constant value for mean molecular weight throughout the atmosphere.
 
@@ -24,7 +24,7 @@ Assume a single constant value for mean molecular weight throughout the atmosphe
 
 
 Dynamic :math:`\overline{\mu}`
--------------------------
+------------------------------
 
 Computes the mean molecular weight, :math:`\overline{\mu}` [g mol\ :sup:`-1`], at each layer.
 This is the sum of each species, :math:`i`, volume mixing ratio (VMR), :math:`x` with it's respective molecular weight :math:`\mu` [g mol\ :sup:`-1`].
@@ -40,4 +40,3 @@ This is the sum of each species, :math:`i`, volume mixing ratio (VMR), :math:`x`
 
    physics:
      vert_mu: dynamic
-

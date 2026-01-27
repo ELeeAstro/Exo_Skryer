@@ -43,7 +43,7 @@ The constant VMR profile assumes a constant value for each species as given by t
 
    params_tp = {
        "T_int": 1200.0,
-       "T_skin": 400.0,
+       "T_ratio": 0.333,
        "log_10_g": 4.5,
        "log_10_k_ir": -2.0,
        "log_10_p_t": 0.0,
@@ -122,7 +122,7 @@ This was converted into JAX compabitile python from the origional python code fo
 
    params_tp = {
        "T_int": 1200.0,
-       "T_skin": 400.0,
+       "T_ratio": 0.333,
        "log_10_g": 4.5,
        "log_10_k_ir": -2.0,
        "log_10_p_t": 0.0,
@@ -200,7 +200,7 @@ Quenching Timescale Approximation
 
    params_tp = {
        "T_int": 1200.0,
-       "T_skin": 400.0,
+       "T_ratio": 0.333,
        "log_10_g": 4.5,
        "log_10_k_ir": -2.0,
        "log_10_p_t": 0.0,

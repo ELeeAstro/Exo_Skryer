@@ -121,7 +121,13 @@ Required parameters: :math:`T_{\rm strat}` [K]
 Guillot (2010)
 --------------
 
-The `Guillot (2010) <https://www.aanda.org/articles/aa/abs/2010/10/aa13396-09/aa13396-09.html>`_ profile combines internal heating and external irradiation, commonly used for hot Jupiters and other irradiated planets.
+The `Guillot (2010) <https://www.aanda.org/articles/aa/abs/2010/10/aa13396-09/aa13396-09.html>`_ analytic semi-grey radiative-equilibrium profile combines internal heating and external irradiation, commonly used for hot Jupiters and other irradiated planets.
+
+.. math::
+
+   T^{4}(\tau) = \frac{3T_{\rm int}^{4}}{4}\left[\frac{2}{3} + \tau\right]
+   + \frac{3T_{\rm eq}^{4}}{4}4f_{\rm hem}\left[\frac{2}{3} + \frac{1}{\gamma_{\rm v}\sqrt{3}} + \left(\frac{\gamma_{\rm v}}{\sqrt{3}} - \frac{1}{\gamma_{\rm v}\sqrt{3}}\right)e^{-\gamma_{\rm v}\tau\sqrt{3}}\right]
+
 
 Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm eq}` [K], :math:`\log_{10} \kappa_{\rm ir}` [cm\ :sup:`2` g\ :sup:`-1`], :math:`\log_{10} \gamma_v` (visible-to-IR opacity ratio), :math:`\log_{10}g` [cm s\ :sup:`-2`], :math:`f_{\rm hem}` (hemispheric redistribution factor)
 
@@ -174,6 +180,87 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm eq}` [K], :math:`\lo
      - { name: log_10_gam_v, dist: uniform, low: -3, high: 3, transform: logit, init: 0.0 }
      - { name: log_10_g, dist: uniform, low: 2.0, high: 4.0, transform: logit, init: 3.0 }
      - { name: f_hem, dist: delta, value: 0.25, transform: identity, init: 0.25}
+
+
+Line (2013)
+-----------
+
+The `Line et al. (2013) <https://ui.adsabs.harvard.edu/abs/2013ApJ...775..137L/abstract>`_ profile extends the Guillot framework with two visible opacity channels, allowing for flexible thermal inversions or more complex T-p constructions.
+
+.. math::
+
+   T^{4}(\tau) = \frac{3T_{\rm int}^{4}}{4}\left(\frac{2}{3} + \tau\right)
+   + \frac{3T_{\rm irr}^{4}}{4}(1-\alpha)\,\xi(\tau,\gamma_{v1})
+   + \frac{3T_{\rm irr}^{4}}{4}\alpha\,\xi(\tau,\gamma_{v2})
+
+.. math::
+
+   T_{\rm irr}^{4} = 4 f_{\rm hem} T_{\rm eq}^{4}
+
+.. math::
+
+   \xi(\tau,\gamma) = \frac{2}{3} + \frac{2}{3\gamma}\left[1 + \left(\frac{\gamma\tau}{2} - 1\right)e^{-\gamma\tau}\right]
+   + \frac{2\gamma}{3}\left(1 - \frac{\tau^{2}}{2}\right) E_{2}(\gamma\tau)
+
+.. math::
+
+   E_{2}(x) = \int_{1}^{\infty} \frac{e^{-xt}}{t^{2}}\,dt
+
+Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm eq}` [K], :math:`\log_{10} \kappa_{\rm ir}` [cm\ :sup:`2` g\ :sup:`-1`], :math:`\log_{10}\gamma_{v1}`, :math:`\log_{10}\gamma_{v2}`, :math:`\log_{10}g` [cm s\ :sup:`-2`], :math:`f_{\rm hem}`, :math:`\alpha`
+
+.. plot::
+   :include-source:
+
+   import numpy as np
+   import matplotlib.pyplot as plt
+   from exo_skryer.vert_Tp import Line
+   from exo_skryer.data_constants import bar
+
+   # Create pressure grid
+   nlev = 100
+   p_bot = np.log10(100.0)
+   p_top = np.log10(1e-4)
+   p_lev = np.logspace(p_bot, p_top, nlev) * bar
+
+   # Example parameters
+   params = {
+       "T_int": 100.0,
+       "T_eq": 1000.0,
+       "log_10_k_ir": -2.0,
+       "log_10_gam_v1": -2.0,
+       "log_10_gam_v2": -1.0,
+       "log_10_g": 3.0,
+       "f_hem": 0.25,
+       "alpha": 0.5
+   }
+   T_lev, T_lay = Line(p_lev, params)
+
+   # Plot
+   fig, ax = plt.subplots(figsize=(10, 5))
+   ax.semilogy(T_lev, p_lev/bar, c='teal')
+   ax.set_xlabel('Temperature [K]', fontsize=16)
+   ax.set_ylabel('pressure [bar]', fontsize=16)
+   ax.set_title('Line et al. (2013) T-p Profile', fontsize=14)
+   ax.tick_params(labelsize=14)
+   ax.invert_yaxis()
+   plt.tight_layout()
+
+**YAML Configuration:**
+
+.. code-block:: yaml
+
+   physics:
+     vert_Tp: Line
+
+   params:
+     - { name: T_int, dist: uniform, low: 100.0, high: 1000.0, transform: logit, init: 500.0 }
+     - { name: T_eq, dist: uniform, low: 500.0, high: 3000.0, transform: logit, init: 1500.0 }
+     - { name: log_10_k_ir, dist: uniform, low: -6, high: 6, transform: logit, init: -2 }
+     - { name: log_10_gam_v1, dist: uniform, low: -3, high: 3, transform: logit, init: -2.0 }
+     - { name: log_10_gam_v2, dist: uniform, low: -3, high: 3, transform: logit, init: -1.0 }
+     - { name: log_10_g, dist: uniform, low: 2.0, high: 4.0, transform: logit, init: 3.0 }
+     - { name: f_hem, dist: delta, value: 0.25, transform: identity, init: 0.25}
+     - { name: alpha, dist: uniform, low: 0.0, high: 1.0, transform: logit, init: 0.5 }
 
 
 Madhusudhan & Seager (2009)
@@ -309,12 +396,14 @@ It does this by creating a modified Hopf function with a stretched exponential t
 
    q_{0} = \frac{4}{3}\left(\frac{T_{\rm skin}}{T_{\rm int}}\right)^{4}
 
+   T_{\rm ratio} = \frac{T_{\rm skin}}{T_{\rm int}}
+
 where :math:`T_{\rm int}` [K] is the internal (effective) temperature, :math:`\tau` the vertical optical depth, :math:`q_{\infty} \approx 0.71`, :math:`\beta` is a stretching exponential parameter, 
 which is shallower than exponential for :math:`\beta < 1` and steeper when :math:`\beta > 1`, 
 :math:`p_{\rm t}` [bar] the transition region between :math:`q_{\infty}` and :math:`q_{0}` and  :math:`T_{\rm skin}` [K] the skin temperature (temperature at zero optical depth).
 This allows much greater flexibility than the classic Milne solution, and the ability to closely mimic the stucture of (cloud free) non-grey radiative-convective-equilibrium (RCE) models.
 
-Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm skin}` [K], :math:`\log_{10}g` [cm s\ :sup:`-2`], :math:`\log_{10} \kappa_{\rm ir}` [cm\ :sup:`2` g\ :sup:`-1`], :math:`\log_{10} p_{\rm t}` [bar], :math:`\beta`
+Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm ratio}`, :math:`\log_{10}g` [cm s\ :sup:`-2`], :math:`\log_{10} \kappa_{\rm ir}` [cm\ :sup:`2` g\ :sup:`-1`], :math:`\log_{10} p_{\rm t}` [bar], :math:`\beta`
 
 .. plot::
    :include-source:
@@ -333,7 +422,7 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm skin}` [K], :math:`\
    # Example parameters
    params = {
        "T_int": 1000.0,
-       "T_skin": 300.0,
+       "T_ratio": 0.4,
        "log_10_g": 4.5,
        "log_10_k_ir": -2.0,
        "log_10_p_t": 0.0,
@@ -359,12 +448,9 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm skin}` [K], :math:`\
      vert_Tp: Milne_modified
 
    params:
-     - { name: log_10_g, dist: uniform, low: 4.0, high: 5.5, transform: logit, init: 5.0 }
+     - { name: log_10_g, dist: uniform, low: 4.0, high: 5.5, transform: logit, init: 4.5 }
      - { name: T_int, dist: uniform, low: 500.0, high: 1500.0, transform: logit, init: 1000.0 }
-     - { name: T_skin, dist: uniform, low: 100.0, high: 500.0, transform: logit, init: 300.0 }
+     - { name: T_ratio, dist: uniform, low: 0.0, high: 1.0, transform: logit, init: 0.4 }
      - { name: log_10_k_ir, dist: uniform, low: -6, high: 6, transform: logit, init: -2 }
      - { name: log_10_p_t, dist: uniform, low: -3, high: 2, transform: logit, init: 0.0 }
      - { name: beta, dist: uniform, low: 0.3, high: 1.0, transform: logit, init: 0.55 }
-
-
-

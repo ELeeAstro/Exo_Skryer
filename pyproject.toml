@@ -24,6 +24,9 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[project.scripts]
+exo-skryer = "exo_skryer.run_retrieval:main"
+
 [project.optional-dependencies]
 test = [
     "pytest-doctestplus",

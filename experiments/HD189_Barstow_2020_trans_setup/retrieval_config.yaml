@@ -24,7 +24,7 @@ physics:
   vert_cloud: None
 
   # Opacity sources
-  opac_line: ck
+  opac_line: lbl
   opac_ray: None
   opac_cia: None
   opac_cloud: deck_and_powerlaw
@@ -42,14 +42,14 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_pRT.txt
-  full_grid: true
-  ck: true
-  ck_mix: RORR
+  wl_master: ../../opac_data/lbl/wl_R10000.txt
+  full_grid: false
+  ck: false
+  ck_mix: TRANS
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/ck/1H2-16O__POKAZATEL__R1000_0.3-50mu.ktable.petitRADTRANS.h5}
+    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
 
   # Rayleigh scattering species
   ray: None
@@ -66,7 +66,7 @@ opac:
 params:
   # Stellar parameters
   - {name: R_s, dist: delta, value: 0.776484, transform: identity, init: 0.776484}
-  - {name: a_sm, dist: delta, value: , transform: identity, init: }
+  #- {name: a_sm, dist: delta, value: , transform: identity, init: }
 
   # Atmospheric boundaries
   - {name: p_bot, dist: delta, value: 1000.0, transform: identity, init: 1000.0}
@@ -138,7 +138,7 @@ sampling:
 
   # Dynesty settings
   dynesty:
-    nlive: 250
+    nlive: 100
     bound: multi
     sample: auto
     dlogz: 1.0
