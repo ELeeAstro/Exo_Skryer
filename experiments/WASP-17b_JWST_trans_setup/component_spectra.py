@@ -439,7 +439,7 @@ def build_atmospheric_state(cfg, params, wl):
     from exo_skryer.data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
     from exo_skryer.vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
     from exo_skryer.vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Milne_modified
-    from exo_skryer.vert_chem import constant_vmr, CE_fastchem_jax, CE_rate_jax, quench_approx
+    from exo_skryer.vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
     from exo_skryer.vert_mu import constant_mu, compute_mu
     from exo_skryer.vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
     from exo_skryer.build_chem import prepare_chemistry_kernel
@@ -506,6 +506,8 @@ def build_atmospheric_state(cfg, params, wl):
     vert_chem_name = str(getattr(phys, "vert_chem", "constant_vmr")).lower()
     if vert_chem_name in ("constant", "constant_vmr"):
         chemistry_kernel_base = constant_vmr
+    elif vert_chem_name in ("constant_vmr_clr", "constant_clr", "clr"):
+        chemistry_kernel_base = constant_vmr_clr
     elif vert_chem_name in ("ce", "chemical_equilibrium", "ce_fastchem_jax", "fastchem_jax"):
         chemistry_kernel_base = CE_fastchem_jax
     elif vert_chem_name in ("rate_ce", "rate_jax", "ce_rate_jax"):
@@ -709,16 +711,15 @@ def compute_component_spectra(
     if cloud_scheme not in ("none", "null", "off"):
         try:
             from exo_skryer.opacity_cloud import (
-                grey_cloud, deck_and_powerlaw, F18_cloud, direct_nk, given_nk
+                compute_cloud_opacity, grey_cloud, deck_and_powerlaw, direct_nk
             )
             cloud_schemes = {
                 "grey": grey_cloud,
                 "grey_cloud": grey_cloud,
                 "deck_and_powerlaw": deck_and_powerlaw,
-                "f18": F18_cloud,
-                "f18_cloud": F18_cloud,
+                "f18": lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="f18"),
+                "f18_cloud": lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="f18"),
                 "direct_nk": direct_nk,
-                "given_nk": given_nk,
             }
             cloud_fn = cloud_schemes.get(cloud_scheme)
             if cloud_fn is not None:

@@ -1,14 +1,14 @@
-log_10_g: {label: "$\\log_{10} g$ [cm s$^{-2}$]", order: 4}
+log_10_g: {label: "$\\log_{10} g$ [cm s$^{-2}$]", order: 3}
 R_p: {label: "$R_{\\rm p}$ [$R_{\\mathrm{Jup}}$]", order: 1}
 T_iso: {label: "$T_{\\mathrm{iso}}$ [K]", order: 2}
-log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 3}
-log_10_f_CO2: {label: "$\\log_{10} {\\mathrm{CO_2}}$", order: 4}
-log_10_f_CO: {label: "$\\log_{10} {\\mathrm{CO}}$", order: 5}
-log_10_f_CH4: {label: "$\\log_{10} {\\mathrm{CH_4}}$", order: 6}
-log_10_f_Na: {label: "$\\log_{10} {\\mathrm{Na}}$", order: 7}
-log_10_f_K: {label: "$\\log_{10} {\\mathrm{K}}$", order: 8}
-log_10_f_H-: {label: "$\\log_{10} {\\mathrm{H^{-}}}$", order: 9}
-log_10_q_c: {label: "$\\log_{10} q_{\\rm c}$ [g g$^{-1}$]", order: 10}
-log_10_p_top_slab: {label: "$\\log_{10} p_{\\rm c, top}$ [bar]" , order: 11}
-log_10_dp_slab: {label: "$\\log_{10} p_{\\rm c, dp}$ [bar]" , order: 11}
-log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{g}}$ [$\\mu$m]", order: 13}
+log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 4}
+log_10_f_CO2: {label: "$\\log_{10} {\\mathrm{CO_2}}$", order: 5}
+log_10_f_CO: {label: "$\\log_{10} {\\mathrm{CO}}$", order: 6}
+log_10_f_CH4: {label: "$\\log_{10} {\\mathrm{CH_4}}$", order: 7}
+log_10_f_Na: {label: "$\\log_{10} {\\mathrm{Na}}$", order: 8}
+log_10_f_K: {label: "$\\log_{10} {\\mathrm{K}}$", order: 9}
+log_10_f_H-: {label: "$\\log_{10} {\\mathrm{H^{-}}}$", order: 10}
+log_10_q_c: {label: "$\\log_{10} q_{\\rm c}$ [g g$^{-1}$]", order: 11}
+log_10_p_top_slab: {label: "$\\log_{10} p_{\\rm c, top}$ [bar]" , order: 12}
+log_10_dp_slab: {label: "$\\log_{10} p_{\\rm c, dp}$ [bar]" , order: 13}
+log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{g}}$ [$\\mu$m]", order: 14}

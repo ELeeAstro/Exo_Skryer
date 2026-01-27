@@ -175,8 +175,8 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     num_delete = int(getattr(ns_cfg, "num_delete", max(1, num_live // 2)))
     seed = int(getattr(ns_cfg, "seed", 0))
     dlogz_stop = float(getattr(ns_cfg, "dlogz_stop", 0.0))
-    ll_batch_size = int(getattr(ns_cfg, "likelihood_batch_size", 1))
-    ll_batch_size = max(1, ll_batch_size)
+    ll_batch_size = int(getattr(ns_cfg, "likelihood_batch_size", min(num_live, 16)))
+    ll_batch_size = max(1, min(num_live, ll_batch_size))
     jit_enable = bool(getattr(ns_cfg, "jit", True))
 
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -285,16 +285,9 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
         if first_leaf.ndim == 0:
             return _loglikelihood_single(particles_batch)
 
-        if ll_batch_size == 1:
-            n = first_leaf.shape[0]
-
-            def body(carry, idx):
-                particle = jax.tree.map(lambda x: x[idx], particles_batch)
-                ll = _loglikelihood_single(particle)
-                return carry, ll
-
-            _, lls = jax.lax.scan(body, None, jnp.arange(n))
-            return lls
+        n = first_leaf.shape[0]
+        if ll_batch_size >= n:
+            return jax.vmap(_loglikelihood_single)(particles_batch)
 
         padded, n = _pad_to_multiple(particles_batch, ll_batch_size)
         n_full = int(jax.tree_util.tree_leaves(padded)[0].shape[0])

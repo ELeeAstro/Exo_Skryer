@@ -18,33 +18,29 @@ from .RT_em_schemes import solve_alpha_eaa
 __all__ = ["compute_emission_spectrum_1d_ck"]
 
 
-def _get_ck_weights(state: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-    g_weights = state.get("g_weights")
-    if g_weights is not None:
-        return g_weights
-    if not XS.has_ck_data():
-        raise RuntimeError("c-k g-weights not built; run build_opacities() with ck tables.")
-    g_weights = XS.ck_g_weights()
-    if g_weights.ndim > 1:
-        g_weights = g_weights[0]
+def _get_ck_weights(opac: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    g_weights = opac.get("g_weights")
+    if g_weights is None:
+        raise RuntimeError("Missing opac['g_weights'] for c-k integration.")
     return g_weights
 
 
 def _sum_opacity_components_ck(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    opac: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
     nlay = state["nlay"]
     nwl = state["nwl"]
 
     if not opacity_components:
-        g_weights = _get_ck_weights(state)
+        g_weights = _get_ck_weights(opac)
         ng = g_weights.shape[-1]
         return jnp.zeros((nlay, nwl, ng))
 
     line_opacity = opacity_components.get("line")
     if line_opacity is None:
-        g_weights = _get_ck_weights(state)
+        g_weights = _get_ck_weights(opac)
         ng = g_weights.shape[-1]
         line_opacity = jnp.zeros((nlay, nwl, ng))
 
@@ -105,7 +101,9 @@ def _scale_flux_ratio(
     params: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
     stellar_flux = state.get("stellar_flux")
-    if stellar_flux is not None:
+    has_stellar_flux = state.get("has_stellar_flux")
+    use_stellar = (has_stellar_flux is not None) & (has_stellar_flux != 0)
+    if stellar_flux is not None and use_stellar:
         F_star = stellar_flux.astype(jnp.float64)
     else:
         if "F_star" not in params:
@@ -121,6 +119,7 @@ def compute_emission_spectrum_1d_ck(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    opac: Dict[str, jnp.ndarray],
     emission_solver=solve_alpha_eaa,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     contri_func = state.get("contri_func", False)
@@ -143,7 +142,7 @@ def compute_emission_spectrum_1d_ck(
                 k_tot_local,
             )
             dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
-            g_weights = _get_ck_weights(state)
+            g_weights = _get_ck_weights(opac)
             dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
             ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
             g_by_g = jnp.moveaxis(g_ck, -1, 0)
@@ -178,7 +177,7 @@ def compute_emission_spectrum_1d_ck(
                 k_tot_local,
             )
             dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
-            g_weights = _get_ck_weights(state)
+            g_weights = _get_ck_weights(opac)
             dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
             ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
             g_by_g = jnp.moveaxis(g_ck, -1, 0)
@@ -199,7 +198,7 @@ def compute_emission_spectrum_1d_ck(
             contrib_out = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
             return lw_up_out, contrib_out
 
-    k_tot_cloud = _sum_opacity_components_ck(state, opacity_components)
+    k_tot_cloud = _sum_opacity_components_ck(state, opacity_components, opac)
     lw_up_cloud, layer_contrib_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
 
     if "f_cloud" in params and "cloud" in opacity_components:

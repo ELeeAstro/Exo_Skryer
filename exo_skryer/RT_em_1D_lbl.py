@@ -83,7 +83,9 @@ def _scale_flux_ratio(
     params: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
     stellar_flux = state.get("stellar_flux")
-    if stellar_flux is not None:
+    has_stellar_flux = state.get("has_stellar_flux")
+    use_stellar = (has_stellar_flux is not None) & (has_stellar_flux != 0)
+    if stellar_flux is not None and use_stellar:
         F_star = stellar_flux.astype(jnp.float64)
     else:
         if "F_star" not in params:

@@ -21,7 +21,9 @@ from .registry_bandpass import (
 )
 
 __all__ = [
-    "apply_response_functions"
+    "apply_response_functions",
+    "get_bandpass_cache",
+    "apply_response_functions_cached",
 ]
 
 
@@ -90,6 +92,51 @@ def _convolve_spectrum_core(
     return numerator / jnp.maximum(norms, 1e-99)
 
 
+def get_bandpass_cache() -> dict[str, jnp.ndarray]:
+    """Materialize bandpass registry arrays into a single PyTree cache (outside jit)."""
+    n_bins = bandpass_num_bins()
+    if n_bins == 0:
+        empty_f = jnp.zeros((0, 0), dtype=jnp.float64)
+        empty_i = jnp.zeros((0, 0), dtype=jnp.int32)
+        empty_1 = jnp.zeros((0,), dtype=jnp.float64)
+        empty_1i = jnp.zeros((0,), dtype=jnp.int32)
+        empty_b = jnp.zeros((0,), dtype=bool)
+        return {
+            "wl_pad": empty_f,
+            "w_pad": empty_f,
+            "idx_pad": empty_i,
+            "norms": empty_1,
+            "valid_lens": empty_1i,
+            "is_boxcar": empty_b,
+        }
+
+    return {
+        "wl_pad": bandpass_wavelengths_padded(),
+        "w_pad": bandpass_weights_padded(),
+        "idx_pad": bandpass_indices_padded(),
+        "norms": bandpass_norms(),
+        "valid_lens": bandpass_valid_lengths(),
+        "is_boxcar": bandpass_is_boxcar(),
+    }
+
+
+def apply_response_functions_cached(spectrum: jnp.ndarray, cache: dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """Convolve spectrum using a provided bandpass cache (jit-friendly)."""
+    norms = cache["norms"]
+    if norms.size == 0:
+        return jnp.zeros((0,), dtype=spectrum.dtype)
+
+    return _convolve_spectrum_core(
+        spec=spectrum,
+        wl_pad=cache["wl_pad"],
+        w_pad=cache["w_pad"],
+        idx_pad=cache["idx_pad"],
+        norms=cache["norms"],
+        valid_lens=cache["valid_lens"],
+        is_boxcar=cache["is_boxcar"],
+    )
+
+
 def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
     """Apply instrument response functions to convolve spectrum onto observational bins.
 
@@ -118,25 +165,4 @@ def apply_response_functions(spectrum: jnp.ndarray) -> jnp.ndarray:
         If no bins are registered (nbin=0), returns an empty array with the
         same dtype as `spectrum`.
     """
-    n_bins = bandpass_num_bins()
-    if n_bins == 0:
-        # No bins prepared; return empty array with matching dtype
-        return jnp.zeros((0,), dtype=spectrum.dtype)
-
-    # Fetch pre-computed JAX arrays from the registry
-    wl_pad = bandpass_wavelengths_padded()   # (nbin, max_len)
-    w_pad = bandpass_weights_padded()        # (nbin, max_len)
-    idx_pad = bandpass_indices_padded()      # (nbin, max_len)
-    norms = bandpass_norms()                 # (nbin,)
-    valid_lens = bandpass_valid_lengths()    # (nbin,)
-    is_boxcar = bandpass_is_boxcar()         # (nbin,)
-
-    return _convolve_spectrum_core(
-        spec=spectrum,
-        wl_pad=wl_pad,
-        w_pad=w_pad,
-        idx_pad=idx_pad,
-        norms=norms,
-        valid_lens=valid_lens,
-        is_boxcar=is_boxcar,
-    )
+    return apply_response_functions_cached(spectrum, get_bandpass_cache())

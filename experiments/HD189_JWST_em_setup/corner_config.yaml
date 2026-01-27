@@ -1,9 +1,12 @@
 
+
+log_10_k_ir: {label: "$k_{\\mathrm{int}}$ [K]", order: 1}
+log_10_gam_v: {label: "$g_{\\mathrm{int}}$ [K]", order: 1}
+
 log_10_g: {label: "$\\log_{10} g$ [cm s$^{-2}$]", order: 2}
 R_p: {label: "$R_{\\rm p}$ [$R_{\\mathrm{Jup}}$]", order: 1}
 T_eq: {label: "$T_{\\mathrm{eq}}$ [K]", order: 3}
 T_int: {label: "$T_{\\mathrm{int}}$ [K]", order: 4}
-#log_10_gam_v: {label: "$T_{\\mathrm{int}}$ [K]", order: 5}
 log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 6}
 log_10_f_CO2: {label: "$\\log_{10} {\\mathrm{CO_2}}$", order: 7}
 log_10_f_CO: {label: "$\\log_{10} {\\mathrm{CO}}$", order: 8}

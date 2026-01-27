@@ -88,7 +88,7 @@ VERT_ALT_OPTIONS = ["p_ref", "variable_g", "hypsometric"]
 # - CE_fastchem_jax: Chemical equilibrium via FastChem (JAX)
 # - CE_rate_jax: Chemical equilibrium via rate equations (JAX)
 # - quench_approx: Quenched chemistry approximation
-VERT_CHEM_OPTIONS = ["constant_vmr", "CE_fastchem_jax", "CE_rate_jax", "quench_approx"]
+VERT_CHEM_OPTIONS = ["constant_vmr", "constant_vmr_clr", "CE_fastchem_jax", "CE_rate_jax", "quench_approx"]
 
 # Mean molecular weight handling
 # From build_model.py lines 186-201 (vert_mu selector)

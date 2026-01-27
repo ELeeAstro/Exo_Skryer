@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Dict
 
+import jax
 import jax.numpy as jnp
 
 from .data_constants import amu, kb, bar
@@ -25,6 +26,7 @@ solar_He_H2 = solar_He/solar_H2
 
 __all__ = [
     "constant_vmr",
+    "constant_vmr_clr",
     "build_constant_vmr_kernel",
     "CE_fastchem_jax",
     "CE_rate_jax",
@@ -80,6 +82,95 @@ def constant_vmr(species_order: tuple[str, ...]):
         return vmr
 
     return _constant_vmr_kernel
+
+
+def constant_vmr_clr(species_order: tuple[str, ...], use_log10_vmr: bool = False):
+    """Build a JIT-optimized function for constant VMR profiles using
+    centered-log-ratio (CLR) parameterization.
+
+    This function creates a chemistry kernel that generates constant (vertically
+    uniform) volume mixing ratio profiles from abundance parameters using a
+    softmax transform. The filler (H2+He) coordinate is fixed at zero,
+    guaranteeing that all VMRs are non-negative and sum to unity.
+
+    The kernel accepts either native CLR parameters (``clr_*``) or traditional
+    log10 VMR parameters (``log_10_f_*``). When log10 VMR parameters are used,
+    they are converted to CLR coordinates internally before applying softmax,
+    which acts as a soft constraint ensuring valid atmospheric composition.
+
+    Parameters
+    ----------
+    species_order : tuple of str
+        Ordered tuple of trace species names (e.g., ('H2O', 'CH4', 'CO')).
+    use_log10_vmr : bool, optional
+        If True, kernel expects 'log_10_f_<species>' parameters and converts
+        them to CLR coordinates internally. If False (default), expects
+        'clr_<species>' parameters directly.
+
+    Returns
+    -------
+    callable
+        A chemistry kernel function with signature:
+        ``kernel(p_lay, T_lay, params, nlay) -> Dict[str, jnp.ndarray]``
+
+        The kernel takes:
+        - p_lay : Layer pressures (unused but kept for API compatibility)
+        - T_lay : Layer temperatures (unused but kept for API compatibility)
+        - params : Dictionary containing abundance parameters
+        - nlay : Number of atmospheric layers
+
+        And returns a dictionary mapping species names to their VMR profiles.
+    """
+    if use_log10_vmr:
+        param_keys = tuple(f"log_10_f_{s}" for s in species_order)
+    else:
+        param_keys = tuple(f"clr_{s}" for s in species_order)
+
+    n_trace = len(species_order)
+
+    def _constant_vmr_clr_kernel(p_lay, T_lay, params, nlay):
+        del p_lay, T_lay
+
+        if n_trace == 0:
+            background = 1.0
+            vmr = {}
+        else:
+            if use_log10_vmr:
+                # Convert log10(VMR) to CLR coordinates
+                log10_vmrs = jnp.array([params[k] for k in param_keys])
+                vmrs = 10.0 ** log10_vmrs
+
+                # Compute filler fraction (clamped to avoid log(0))
+                filler = jnp.maximum(1.0 - jnp.sum(vmrs), 1e-10)
+
+                # CLR transform: z_i = log(VMR_i / VMR_filler)
+                z_vals = jnp.log(vmrs) - jnp.log(filler)
+            else:
+                # Direct CLR parameters
+                z_vals = jnp.array([params[k] for k in param_keys])
+
+            # Numerically stable softmax with z_filler = 0:
+            # log_denom = log(1 + sum(exp(z_j))) via logaddexp (softplus)
+            log_sum_exp_z = jax.scipy.special.logsumexp(z_vals)
+            log_denom = jnp.logaddexp(0.0, log_sum_exp_z)
+
+            # VMR for each trace species: x_i = exp(z_i - log_denom)
+            trace = jnp.exp(z_vals - log_denom)
+
+            # Filler fraction: x_filler = exp(-log_denom)
+            background = jnp.exp(-log_denom)
+
+            # Build VMR dictionary with constant profiles for each species
+            vmr = {s: jnp.full((nlay,), trace[i]) for i, s in enumerate(species_order)}
+
+        # Split filler into H2 and He at solar ratio
+        H2 = background / (1.0 + solar_He_H2)
+        vmr["H2"] = jnp.full((nlay,), H2)
+        He = H2 * solar_He_H2
+        vmr["He"] = jnp.full((nlay,), He)
+        return vmr
+
+    return _constant_vmr_clr_kernel
 
 
 def build_constant_vmr_kernel(species_order: tuple[str, ...]):

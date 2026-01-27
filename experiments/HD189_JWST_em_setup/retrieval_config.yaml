@@ -28,6 +28,7 @@ physics:
   opac_cia: lbl
   opac_cloud: direct_nk
   opac_special: None
+  cloud_dist: mono
 
 
   # Radiative transfer

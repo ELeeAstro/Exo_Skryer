@@ -94,7 +94,7 @@ def _compute_pair_weight(
     return ratio_a * ratio_b
 
 
-def compute_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute collision-induced absorption (CIA) mass opacity for all molecular pairs.
 
     This function calculates the total CIA opacity by summing contributions from
@@ -148,7 +148,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     density = state["rho_lay"]         # (nlay,)
     layer_vmr = state["vmr_lay"]
 
-    master_wavelength = XS.cia_master_wavelength()
+    master_wavelength = opac["cia_master_wavelength"]
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("CIA wavelength grid must match the forward-model master grid.")
 
@@ -157,9 +157,9 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     if not keep_indices:
         return zero_cia_opacity(state, params)
 
-    sigma_cube = XS.cia_sigma_cube()  # (nspecies, nT, nwl) in log10
-    log_temperature_grids = XS.cia_log10_temperature_grids()
-    temperature_grids = XS.cia_temperature_grids()
+    sigma_cube = opac["cia_sigma_cube"]  # (nspecies, nT, nwl) in log10
+    log_temperature_grids = opac["cia_log10_temperature_grids"]
+    temperature_grids = opac["cia_temperature_grids"]
     log_t_layers = jnp.log10(layer_temperatures)
 
     weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)

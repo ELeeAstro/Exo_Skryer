@@ -3,7 +3,8 @@ registry_cloud.py
 =================
 """
 
-from typing import Dict, NamedTuple
+from typing import Dict, NamedTuple, Optional, Tuple
+from pathlib import Path
 import numpy as np
 import jax.numpy as jnp
 
@@ -16,6 +17,11 @@ __all__ = [
     "set_cloud_nk_data",
     "get_cloud_nk_data",
     "clear_cloud_nk_data",
+    "has_cloud_nk_data",
+    "cloud_nk_wavelength",
+    "cloud_nk_n",
+    "cloud_nk_k",
+    "load_cloud_nk_data",
 ]
 
 
@@ -171,7 +177,7 @@ def set_cloud_nk_data(wl: jnp.ndarray, n: jnp.ndarray, k: jnp.ndarray) -> None:
 
     This function caches wavelength-dependent complex refractive index arrays
     (n, k) for use in cloud opacity calculations. The data is stored globally
-    and can be accessed by the `given_nk` cloud opacity function.
+    and can be accessed by any cloud scheme that consumes cached n,k.
 
     Parameters
     ----------
@@ -199,6 +205,7 @@ def get_cloud_nk_data() -> Dict[str, jnp.ndarray]:
         - 'wl': Wavelength grid in microns, shape (nwl,)
         - 'n': Real refractive index, shape (nwl,)
         - 'k': Imaginary refractive index, shape (nwl,)
+        - 'conducting': int32 flag (1 if conducting, 0 otherwise) if loaded via load_cloud_nk_data()
 
     Raises
     ------
@@ -208,7 +215,7 @@ def get_cloud_nk_data() -> Dict[str, jnp.ndarray]:
     if not _CLOUD_NK_DATA:
         raise RuntimeError(
             "No cloud n,k data has been loaded. "
-            "Call set_cloud_nk_data(wl, n, k) before using the 'given_nk' cloud scheme."
+            "Call set_cloud_nk_data(wl, n, k) before using cached cloud n,k."
         )
     return _CLOUD_NK_DATA
 
@@ -222,3 +229,136 @@ def clear_cloud_nk_data() -> None:
     """
     global _CLOUD_NK_DATA
     _CLOUD_NK_DATA.clear()
+
+
+def has_cloud_nk_data() -> bool:
+    """Return True if cloud n,k arrays have been cached."""
+    return bool(_CLOUD_NK_DATA)
+
+
+def cloud_nk_wavelength() -> jnp.ndarray:
+    return get_cloud_nk_data()["wl"]
+
+
+def cloud_nk_n() -> jnp.ndarray:
+    return get_cloud_nk_data()["n"]
+
+
+def cloud_nk_k() -> jnp.ndarray:
+    return get_cloud_nk_data()["k"]
+
+
+def load_cloud_nk_data(path: str | Path, wl_master: np.ndarray) -> None:
+    """Load a refractive index table from disk, interpolate to wl_master, and cache.
+
+    Expected file format: whitespace-delimited columns with at least 3 columns:
+        wavelength[um]  n  k
+    Extra columns are ignored.
+
+    The first line must be:
+        <nwl> <conducting_flag>
+    where conducting_flag is a Fortran-style boolean (e.g. ".True." / ".False.").
+    This mirrors the behavior in the legacy Fortran tables:
+      - Below the table range: clamp n,k to the lowest-wavelength values.
+      - Above the table range:
+          * if conducting: log-log extrapolate n,k using a point at 0.7*wl_max
+          * else: hold n constant, decrease k ~ 1/wl
+      - Within range: log-log interpolate n,k between bracketing grid points.
+    """
+    resolved = Path(path).expanduser().resolve()
+
+    with resolved.open("r", encoding="utf-8") as f:
+        header = f.readline().strip()
+
+    parts = header.split()
+    if len(parts) < 2:
+        raise ValueError(
+            f"Cloud n,k file {resolved} first line must be '<nwl> <.True./.False.>', got: {header!r}"
+        )
+
+    try:
+        nwl_header = int(parts[0])
+    except ValueError as e:
+        raise ValueError(f"Cloud n,k file {resolved} invalid nwl in first line: {header!r}") from e
+
+    cond_token = parts[1].strip().lower()
+    if cond_token in (".true.", "true", "t", "1"):
+        conducting = True
+    elif cond_token in (".false.", "false", "f", "0"):
+        conducting = False
+    else:
+        raise ValueError(
+            f"Cloud n,k file {resolved} invalid conducting flag in first line: {header!r}"
+        )
+
+    data = np.loadtxt(resolved, comments="#", skiprows=1)
+    if data.ndim != 2 or data.shape[1] < 3:
+        raise ValueError(f"Cloud n,k file {resolved} must have at least 3 columns (wl, n, k).")
+
+    wl = np.asarray(data[:, 0], dtype=np.float64)
+    n = np.asarray(data[:, 1], dtype=np.float64)
+    k = np.asarray(data[:, 2], dtype=np.float64)
+
+    if nwl_header != wl.size:
+        # Not fatal: some tables may include extra comment rows or have stale headers.
+        print(f"[warn] cloud nk header nwl={nwl_header} but read {wl.size} rows from {resolved}")
+
+    # Ensure increasing wavelength for interpolation
+    if not np.all(np.diff(wl) > 0):
+        order = np.argsort(wl)
+        wl = wl[order]
+        n = n[order]
+        k = k[order]
+
+    wl_master = np.asarray(wl_master, dtype=np.float64)
+    if wl_master.ndim != 1 or not np.all(np.diff(wl_master) > 0):
+        raise ValueError("wl_master must be a 1D strictly-increasing wavelength grid.")
+
+    nwl = wl.size
+    wl_min = wl[0]
+    wl_max = wl[-1]
+
+    n_i = np.empty_like(wl_master, dtype=np.float64)
+    k_i = np.empty_like(wl_master, dtype=np.float64)
+
+    mask_low = wl_master < wl_min
+    mask_high = wl_master > wl_max
+    mask_mid = ~(mask_low | mask_high)
+
+    # Below range: clamp to first values
+    if np.any(mask_low):
+        n_i[mask_low] = n[0]
+        k_i[mask_low] = k[0]
+
+    # Within range
+    if np.any(mask_mid):
+        xlog = np.log10(wl)
+        nlog = np.log10(n)
+        klog = np.log10(k)
+        x_m = np.log10(wl_master[mask_mid])
+        n_i[mask_mid] = 10.0 ** np.interp(x_m, xlog, nlog)
+        k_i[mask_mid] = 10.0 ** np.interp(x_m, xlog, klog)
+
+    # Above range: scheme-based extrapolation
+    if np.any(mask_high):
+        x = wl_master[mask_high]
+        if not conducting:
+            # n held constant; k decreases proportional to 1/wl
+            n_i[mask_high] = n[-1]
+            k_i[mask_high] = k[-1] * (wl_max / x)
+        else:
+            wl_ex = 0.7 * wl_max
+            iwl_ex = np.searchsorted(wl, wl_ex, side="right") - 1
+            # Ensure at least 3 points back from the end and valid index
+            if (iwl_ex > nwl - 4) or (iwl_ex < 0):
+                iwl_ex = nwl - 4
+            fac = np.log10(x / wl_max) / np.log10(wl[iwl_ex] / wl_max)
+            n_i[mask_high] = 10.0 ** (np.log10(n[-1]) + fac * np.log10(n[iwl_ex] / n[-1]))
+            k_i[mask_high] = 10.0 ** (np.log10(k[-1]) + fac * np.log10(k[iwl_ex] / k[-1]))
+
+    # Match Fortran floor
+    n_i = np.maximum(n_i, 1e-99)
+    k_i = np.maximum(k_i, 1e-99)
+
+    set_cloud_nk_data(jnp.asarray(wl_master), jnp.asarray(n_i), jnp.asarray(k_i))
+    _CLOUD_NK_DATA["conducting"] = jnp.asarray(1 if conducting else 0, dtype=jnp.int32)

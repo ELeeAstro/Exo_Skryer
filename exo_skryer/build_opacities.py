@@ -54,10 +54,20 @@ from .registry_ray import (
     has_ray_data,
     ray_master_wavelength,
     ray_sigma_table,
+    ray_nm1_table,
+    ray_nd_ref,
     ray_species_names,
     ray_pick_arrays,
     load_ray_registry,
     reset_registry as reset_ray_registry,
+)
+from .registry_cloud import (
+    has_cloud_nk_data,
+    cloud_nk_wavelength,
+    cloud_nk_n,
+    cloud_nk_k,
+    load_cloud_nk_data,
+    clear_cloud_nk_data,
 )
 
 
@@ -197,6 +207,7 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
     reset_ck_registry()
     reset_cia_registry()
     reset_ray_registry()
+    clear_cloud_nk_data()
 
     # Read the master wavelength grid and calculate the observationally cut grid
     lam_master_full = read_master_wl(cfg, obs, exp_dir=exp_dir)
@@ -242,6 +253,20 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
         load_cia_registry(cfg, obs, lam_master=lam_master_cut, base_dir=exp_dir)
     if opac_cfg is not None and getattr(opac_cfg, "ray", None) not in (None, "None"):
         load_ray_registry(cfg, obs, lam_master=lam_master_cut)
+
+    # Optional cloud refractive indices for Mie cloud schemes (lxmie, madt-rayleigh).
+    cloud_cfg = getattr(opac_cfg, "cloud", None) if opac_cfg is not None else None
+    if cloud_cfg not in (None, "None"):
+        entry = cloud_cfg[0] if isinstance(cloud_cfg, list) else cloud_cfg
+        path = getattr(entry, "path", None)
+        if path is not None:
+            path = Path(path)
+            if not path.is_absolute():
+                if exp_dir is None:
+                    raise ValueError("cfg.opac.cloud path is relative but exp_dir was not provided.")
+                path = (exp_dir / path).resolve()
+            print(f"[cloud_nk] loading n,k from file: {path}")
+            load_cloud_nk_data(path, wl_master=lam_master_cut)
 
 
 __all__ = [
@@ -289,4 +314,8 @@ __all__ = [
     "ray_sigma_table",
     "ray_species_names",
     "ray_pick_arrays",
+    "has_cloud_nk_data",
+    "cloud_nk_wavelength",
+    "cloud_nk_n",
+    "cloud_nk_k",
 ]

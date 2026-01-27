@@ -41,7 +41,7 @@ def zero_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
     return jnp.zeros(shape)
 
 
-def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def compute_ray_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute Rayleigh scattering mass opacity for the configured scatterers.
 
     This function converts precomputed Rayleigh scattering cross-sections from
@@ -72,19 +72,17 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nda
     kappa_ray : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Rayleigh scattering mass opacity in cm² g⁻¹ at each layer and wavelength.
     """
-    if not XR.has_ray_data():
-        return zero_ray_opacity(state, params)
     wavelengths = state["wl"]
     number_density = state["nd_lay"]
     density = state["rho_lay"]
     layer_vmr = state["vmr_lay"]
     layer_count = number_density.shape[0]
 
-    master_wavelength = XR.ray_master_wavelength()
+    master_wavelength = opac["ray_master_wavelength"]
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("Rayleigh wavelength grid must match forward-model grid.")
 
-    sigma_log = jnp.asarray(XR.ray_sigma_table(), dtype=jnp.float64)
+    sigma_log = opac["ray_sigma_table"]
     sigma_values = 10.0**sigma_log  # (n_species, nwl)
     species_names = XR.ray_species_names()
     # Accumulate directly into (nlay, nwl) without materializing (n_species, nlay).

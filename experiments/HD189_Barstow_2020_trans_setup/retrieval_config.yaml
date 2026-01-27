@@ -29,12 +29,14 @@ physics:
   opac_cia: None
   opac_cloud: deck_and_powerlaw
   opac_special: None
+  cloud_dist: mono
 
   # Radiative transfer
   rt_scheme: transit_1d
   em_scheme: eaa
   emission_mode: planet
   contri_func: false
+  refraction: None
 
 # ----------------------------------------------------------------------------------
 # Opacity Section
@@ -64,6 +66,7 @@ opac:
 params:
   # Stellar parameters
   - {name: R_s, dist: delta, value: 0.776484, transform: identity, init: 0.776484}
+  - {name: a_sm, dist: delta, value: , transform: identity, init: }
 
   # Atmospheric boundaries
   - {name: p_bot, dist: delta, value: 1000.0, transform: identity, init: 1000.0}

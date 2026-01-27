@@ -19,6 +19,7 @@ physics:
   opac_cia: lbl
   opac_cloud: direct_nk
   opac_special: lbl
+  cloud_dist: mono
 
   rt_scheme: transit_1d
   em_scheme: None
@@ -189,4 +190,3 @@ runtime:
   platform: gpu           # cpu | gpu | cuda | metal
   cuda_visible_devices: 1  # or "0,1"
   threads: 1
-

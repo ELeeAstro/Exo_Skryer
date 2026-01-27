@@ -74,6 +74,56 @@ def _flatten_param(arr: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unsupported parameter shape {arr.shape}")
 
 
+def _convert_clr_to_vmr(posterior_ds, var_names: List[str]):
+    """Detect CLR parameters, convert to log10(VMR), and update the dataset.
+
+    If any variable names start with ``clr_``, the corresponding CLR samples
+    are converted to physical ``log_10_f_*`` columns via softmax and the
+    variable list is updated so the corner plot shows VMR, not raw CLR.
+
+    Returns the (possibly modified) dataset and variable list.
+    """
+    clr_names = [v for v in var_names if v.startswith("clr_")]
+    if not clr_names:
+        return posterior_ds, var_names
+
+    from exo_skryer.build_chem import clr_samples_to_vmr
+
+    species = [name[4:] for name in clr_names]  # strip "clr_" prefix
+
+    # Flatten CLR samples into a dict for the converter
+    samples_dict = {}
+    for name in clr_names:
+        arr = np.asarray(posterior_ds[name].values, dtype=float)
+        samples_dict[name] = arr.reshape(-1)
+
+    derived = clr_samples_to_vmr(samples_dict, species)
+
+    # Inject derived log_10_f_* columns into a copy of the dataset
+    import xarray as xr
+
+    ds = posterior_ds.copy()
+    original_shape = posterior_ds[clr_names[0]].shape  # (chain, draw)
+    for clr_name in clr_names:
+        species_name = clr_name[4:]
+        log_key = f"log_10_f_{species_name}"
+        ds[log_key] = xr.DataArray(
+            derived[log_key].reshape(original_shape),
+            dims=posterior_ds[clr_name].dims,
+        )
+
+    # Swap clr_* for log_10_f_* in var_names
+    new_var_names = []
+    for v in var_names:
+        if v.startswith("clr_"):
+            new_var_names.append(f"log_10_f_{v[4:]}")
+        else:
+            new_var_names.append(v)
+
+    print(f"[posterior_corner] Converted CLR → log10(VMR) for: {', '.join(species)}")
+    return ds, new_var_names
+
+
 def _build_sample_matrix(
     posterior_ds,
     var_names: List[str],
@@ -279,6 +329,9 @@ def plot_corner(
 
     # --- choose variables ---
     var_names = _resolve_var_names(posterior_ds, params)
+
+    # --- CLR → log10(VMR) conversion (if CLR parameters are present) ---
+    posterior_ds, var_names = _convert_clr_to_vmr(posterior_ds, var_names)
 
     if config_path is None:
         default_cfg = posterior_path.parent / "retrieval_config.yaml"

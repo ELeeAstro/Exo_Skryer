@@ -11,7 +11,10 @@ from typing import Iterable, Any
 __all__ = [
     'infer_trace_species',
     'infer_log10_vmr_keys',
+    'infer_clr_keys',
     'validate_log10_vmr_params',
+    'validate_clr_params',
+    'clr_samples_to_vmr',
     'prepare_chemistry_kernel',
     'load_nasa9_if_needed'
 ]
@@ -90,6 +93,22 @@ def infer_log10_vmr_keys(trace_species: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(f"log_10_f_{s}" for s in trace_species)
 
 
+def infer_clr_keys(trace_species: tuple[str, ...]) -> tuple[str, ...]:
+    """Return CLR parameter keys for each trace species.
+
+    Parameters
+    ----------
+    trace_species : tuple of str
+        Ordered tuple of trace species names.
+
+    Returns
+    -------
+    tuple of str
+        Parameter keys with ``clr_`` prefix, e.g. ``('clr_H2O', 'clr_CO')``.
+    """
+    return tuple(f"clr_{s}" for s in trace_species)
+
+
 def validate_log10_vmr_params(cfg, trace_species: tuple[str, ...]) -> None:
     cfg_param_names = {p.name for p in cfg.params}
     missing = [s for s in trace_species if f"log_10_f_{s}" not in cfg_param_names]
@@ -99,6 +118,127 @@ def validate_log10_vmr_params(cfg, trace_species: tuple[str, ...]) -> None:
             f"Missing required VMR parameters for: {joined}. "
             f"Add `log_10_f_<species>` entries to cfg.params."
         )
+
+
+def validate_clr_params(cfg, trace_species: tuple[str, ...]) -> bool:
+    """Validate that abundance parameters are present for CLR mode.
+
+    This function accepts either CLR parameters (``clr_<species>``) or traditional
+    log10 VMR parameters (``log_10_f_<species>``). When log10 VMR parameters are
+    used, they will be converted to CLR coordinates internally via softmax, which
+    acts as a soft constraint ensuring valid atmospheric composition.
+
+    Parameters
+    ----------
+    cfg : config object
+        Configuration object containing params list.
+    trace_species : tuple of str
+        Ordered tuple of trace species names.
+
+    Returns
+    -------
+    bool
+        True if using log_10_f_* parameters, False if using clr_* parameters.
+
+    Raises
+    ------
+    ValueError
+        If neither parameter style is found, or if mixing both styles.
+    """
+    cfg_param_names = {p.name for p in cfg.params}
+
+    # Check which parameter style is being used
+    has_clr = any(f"clr_{s}" in cfg_param_names for s in trace_species)
+    has_log10 = any(f"log_10_f_{s}" in cfg_param_names for s in trace_species)
+
+    if has_clr and has_log10:
+        raise ValueError(
+            "Cannot mix clr_* and log_10_f_* parameters. "
+            "Use either CLR parameters (clr_H2O, clr_CO, ...) "
+            "or log10 VMR parameters (log_10_f_H2O, log_10_f_CO, ...)"
+        )
+
+    if has_clr:
+        # Validate all CLR parameters are present
+        missing = [s for s in trace_species if f"clr_{s}" not in cfg_param_names]
+        if missing:
+            joined = ", ".join(missing)
+            raise ValueError(
+                f"Missing required CLR parameters for: {joined}. "
+                f"Add `clr_<species>` entries to cfg.params."
+            )
+        return False  # Using native CLR parameters
+
+    if has_log10:
+        # Validate all log10 VMR parameters are present
+        missing = [s for s in trace_species if f"log_10_f_{s}" not in cfg_param_names]
+        if missing:
+            joined = ", ".join(missing)
+            raise ValueError(
+                f"Missing required VMR parameters for: {joined}. "
+                f"Add `log_10_f_<species>` entries to cfg.params."
+            )
+        return True  # Using log10 VMR parameters, will convert internally
+
+    # Neither style found
+    raise ValueError(
+        f"No abundance parameters found for species: {', '.join(trace_species)}. "
+        f"Add either `clr_<species>` or `log_10_f_<species>` entries to cfg.params."
+    )
+
+
+def clr_samples_to_vmr(
+    samples_dict: dict[str, "np.ndarray"],
+    species: tuple[str, ...] | list[str],
+) -> dict[str, "np.ndarray"]:
+    """Convert CLR posterior samples to physical VMR (and log10 VMR) columns.
+
+    Applies the same softmax inverse as ``constant_vmr_clr`` but operates on
+    NumPy arrays of posterior samples rather than JAX scalars.
+
+    Parameters
+    ----------
+    samples_dict : dict[str, np.ndarray]
+        Posterior samples keyed by parameter name.  Must contain
+        ``clr_<species>`` for every species in *species*.
+    species : tuple or list of str
+        Ordered trace species names (e.g. ``('H2O', 'CO', 'CO2')``).
+
+    Returns
+    -------
+    derived : dict[str, np.ndarray]
+        New columns ready to merge into the samples dictionary:
+
+        - ``log_10_f_<species>`` : log10(VMR) for each trace species
+        - ``f_<species>``        : linear VMR for each trace species
+        - ``f_H2_He``            : combined H2+He filler fraction
+    """
+    import numpy as np
+    from scipy.special import logsumexp as _logsumexp
+
+    species = tuple(species)
+    n_samples = len(samples_dict[f"clr_{species[0]}"])
+
+    # (N_samples, N_species) matrix of CLR values
+    z = np.column_stack([samples_dict[f"clr_{s}"] for s in species])
+
+    # Prepend z_filler = 0 column → (N_samples, N_species + 1)
+    z_all = np.concatenate([np.zeros((n_samples, 1)), z], axis=1)
+
+    # Softmax: VMR_i = exp(z_i) / sum(exp(z_j))
+    log_denom = _logsumexp(z_all, axis=1, keepdims=True)
+    vmr_all = np.exp(z_all - log_denom)
+
+    # First column is filler, rest are trace species (same order as input)
+    derived: dict[str, np.ndarray] = {}
+    derived["f_H2_He"] = vmr_all[:, 0]
+
+    for i, s in enumerate(species):
+        vmr_i = vmr_all[:, i + 1]
+        derived[f"f_{s}"] = vmr_i
+        derived[f"log_10_f_{s}"] = np.log10(np.maximum(vmr_i, 1e-300))
+
+    return derived
 
 
 def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
@@ -126,7 +266,7 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
     trace_species : tuple of str
         Tuple of trace species names inferred from the opacity configuration.
     """
-    from .vert_chem import constant_vmr
+    from .vert_chem import constant_vmr, constant_vmr_clr
 
     # Infer required species from opacity configuration
     trace_species = infer_trace_species(
@@ -141,6 +281,9 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
     if chemistry_kernel is constant_vmr:
         validate_log10_vmr_params(cfg, trace_species)
         chemistry_kernel = constant_vmr(trace_species)
+    elif chemistry_kernel is constant_vmr_clr:
+        use_log10_vmr = validate_clr_params(cfg, trace_species)
+        chemistry_kernel = constant_vmr_clr(trace_species, use_log10_vmr=use_log10_vmr)
 
     return chemistry_kernel, trace_species
 

@@ -47,7 +47,7 @@ def zero_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarr
     return jnp.zeros(shape)
 
 
-def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute line-by-line mass opacity for all molecular/atomic absorbers.
 
     This function calculates the total line absorption opacity by:
@@ -90,9 +90,9 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.nd
     # Get species names and mixing ratios
     species_names = XS.line_species_names()
     layer_count = layer_pressures.shape[0]
-    sigma_cube = XS.line_sigma_cube()
-    log_p_grid = XS.line_log10_pressure_grid()
-    log_temperature_grids = XS.line_log10_temperature_grids()
+    sigma_cube = opac["line_sigma_cube"]
+    log_p_grid = opac["line_log10_pressure_grid"]
+    log_temperature_grids = opac["line_log10_temperature_grids"]
 
     # Direct lookup - species names must match VMR keys exactly
     # VMR values are already JAX arrays, no need to wrap

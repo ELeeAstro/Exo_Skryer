@@ -46,6 +46,9 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
         - nwl: Number of wavelength bins
         - ng: Number of g-points per wavelength bin
     """
+    # NOTE: This helper pulls tables from the global registry. If used inside a large
+    # jitted forward model, it may increase compile-time constants. Prefer
+    # compute_ck_opacity() which supports passing tables via `state`.
     sigma_cube = XS.ck_sigma_cube()
     log_p_grid = XS.ck_log10_pressure_grid()
     log_temperature_grids = XS.ck_log10_temperature_grids()
@@ -84,7 +87,7 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
     # memory should perform layer-wise interpolation + mixing instead of using this helper.
     return jax.vmap(_interp_one_layer)(log_p_layers, log_t_layers)
 
-def _get_ck_quadrature(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.ndarray]:
+def _get_ck_quadrature(opac: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Extract g-points and quadrature weights for correlated-k integration.
 
     This function retrieves the g-points and their associated quadrature weights
@@ -105,10 +108,8 @@ def _get_ck_quadrature(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.
     weights : `~jax.numpy.ndarray`, shape (ng,)
         Quadrature weights for numerical integration over g-space. Sum to 1.0.
     """
-    g_points_all = XS.ck_g_points()
-    g_weights_all = state.get("g_weights")
-    if g_weights_all is None:
-        g_weights_all = XS.ck_g_weights()
+    g_points_all = opac["g_points"]
+    g_weights_all = opac["g_weights"]
 
     # Values are already JAX arrays, no need to wrap
     if g_points_all.ndim == 1:
@@ -124,7 +125,7 @@ def _get_ck_quadrature(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.
     return g_eval, weights
 
 
-def zero_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def zero_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Return a zero correlated-k opacity array.
 
     This function is used as a fallback when correlated-k opacities are disabled
@@ -154,19 +155,14 @@ def zero_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray
     layer_count = layer_pressures.shape[0]
     wavelength_count = wavelengths.shape[0]
 
-    # Get number of g-points from loaded ck data.
-    # Registry may store weights as (n_species, n_g); use state-provided weights if available.
-    g_weights = state.get("g_weights")
-    if g_weights is None:
-        g_weights = XS.ck_g_weights()
-        if g_weights.ndim > 1:
-            g_weights = g_weights[0]
+    # Get number of g-points from opac cache.
+    g_weights = opac["g_weights"]
     n_g = g_weights.shape[-1]
 
     return jnp.zeros((layer_count, wavelength_count, n_g))
 
 
-def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute correlated-k opacity with multi-species mixing.
 
     This function calculates the total atmospheric opacity using the correlated-k
@@ -225,7 +221,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
         axis=0,
     )
 
-    g_points, g_weights = _get_ck_quadrature(state)
+    g_points, g_weights = _get_ck_quadrature(opac)
 
     # Get mixing method from state (default to RORR).
     # Backwards-compatible: accept either a string ("RORR"/"PRAS") or an int code.
@@ -237,9 +233,9 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
         ck_mix_code = ck_mix_raw
 
     # Layer-wise interpolation + mixing to avoid materializing (n_species, n_layers, n_wl, n_g).
-    sigma_cube = XS.ck_sigma_cube()
-    log_p_grid = XS.ck_log10_pressure_grid()
-    log_temperature_grids = XS.ck_log10_temperature_grids()
+    sigma_cube = opac["ck_sigma_cube"]
+    log_p_grid = opac["ck_log10_pressure_grid"]
+    log_temperature_grids = opac["ck_log10_temperature_grids"]
 
     log_p_layers = jnp.log10(layer_pressures / bar)
     log_t_layers = jnp.log10(layer_temperatures)
@@ -310,6 +306,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
 
 def compute_ck_opacity_perspecies(
     state: Dict[str, jnp.ndarray],
+    opac: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray]
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     """Compute per-species correlated-k opacities WITHOUT mixing.
@@ -361,9 +358,9 @@ def compute_ck_opacity_perspecies(
     )  # (n_species, nlay)
 
     # Get k-table data
-    sigma_cube = XS.ck_sigma_cube()
-    log_p_grid = XS.ck_log10_pressure_grid()
-    log_temperature_grids = XS.ck_log10_temperature_grids()
+    sigma_cube = opac["ck_sigma_cube"]
+    log_p_grid = opac["ck_log10_pressure_grid"]
+    log_temperature_grids = opac["ck_log10_temperature_grids"]
 
     log_p_layers = jnp.log10(layer_pressures / bar)
     log_t_layers = jnp.log10(layer_temperatures)

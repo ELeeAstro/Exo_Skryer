@@ -21,6 +21,8 @@ __all__ = [
     "ray_species_names",
     "ray_master_wavelength",
     "ray_sigma_table",
+    "ray_nm1_table",
+    "ray_nd_ref",
     "ray_pick_arrays",
 ]
 
@@ -40,6 +42,8 @@ class RayRegistryEntry:
 _RAY_ENTRIES: Tuple[RayRegistryEntry, ...] = ()
 _RAY_SIGMA_CACHE: jnp.ndarray | None = None
 _RAY_WAVELENGTH_CACHE: jnp.ndarray | None = None
+_RAY_NM1_CACHE: jnp.ndarray | None = None
+_RAY_NDREF_CACHE: jnp.ndarray | None = None
 
 # Some required constants
 PI = np.pi
@@ -63,10 +67,12 @@ def _clear_cache():
 
 # Clear global data helper function
 def reset_registry():
-    global _RAY_ENTRIES, _RAY_SIGMA_CACHE, _RAY_WAVELENGTH_CACHE
+    global _RAY_ENTRIES, _RAY_SIGMA_CACHE, _RAY_WAVELENGTH_CACHE, _RAY_NM1_CACHE, _RAY_NDREF_CACHE
     _RAY_ENTRIES = ()
     _RAY_SIGMA_CACHE = None
     _RAY_WAVELENGTH_CACHE = None
+    _RAY_NM1_CACHE = None
+    _RAY_NDREF_CACHE = None
     _clear_cache()
 
 # Check if Rayleigh data exists helper functions
@@ -114,6 +120,14 @@ def _sigma_H(freq: np.ndarray, wl_A: np.ndarray) -> np.ndarray:
 
 # Go through each species and calculate the Rayleigh scattering cross sections (same as gCMCRT)
 def _compute_species_sigma(name: str, wl_um: np.ndarray) -> np.ndarray:
+    xsec, _, _ = _compute_species_sigma_nm1_ndref(name, wl_um)
+    return xsec
+
+
+def _compute_species_sigma_nm1_ndref(
+    name: str,
+    wl_um: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, float]:
     name = name.strip()
     wl_um = np.asarray(wl_um, dtype=float)
     wn = 1.0e4 / wl_um
@@ -129,9 +143,13 @@ def _compute_species_sigma(name: str, wl_um: np.ndarray) -> np.ndarray:
         King = 1.0
         nd_stp = N_STP_2547
     elif name in ("e-", "el"):
-        return np.full_like(wl_um, SIGMA_T)
+        xsec = np.full_like(wl_um, SIGMA_T)
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "H":
-        return _sigma_H(freq, wl_A)
+        xsec = _sigma_H(freq, wl_A)
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "CO":
         n = _n_func(wn, 22851.0, 0.456e14, 71427.0**2)
         King = 1.0
@@ -184,46 +202,65 @@ def _compute_species_sigma(name: str, wl_um: np.ndarray) -> np.ndarray:
     elif name == "HCl":
         a_vol = 2.515 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "HCN":
         a_vol = 2.593 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "H2S":
         a_vol = 3.631 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "OCS":
         a_vol = 5.090 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "SO2":
         a_vol = 3.882 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "C2H2":
         a_vol = 3.487 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "PH3":
         a_vol = 4.237 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "SO3":
         a_vol = 4.297 / (1.0e8**3)
         King = 1.0
-        return (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        xsec = (128.0 / 3.0) * PI**5 * a_vol**2 * wn**4 * King
+        nm1 = np.zeros_like(wl_um)
+        return xsec, nm1, 1.0
     elif name == "H2O":
         raise NotImplementedError("Layer-dependent H2O Rayleigh must be handled in opacity calculations.")
     else:
         raise ValueError(f"Unsupported Rayleigh species '{name}' in ray registry.")
     xsec = ((24.0 * PI**3 * wn**4) / (nd_stp**2)) * (((n**2 - 1.0) / (n**2 + 2.0))**2) * King
-    return np.maximum(xsec, 1.0e-99)
+    nm1 = np.maximum(n - 1.0, 0.0)
+    return np.maximum(xsec, 1.0e-99), nm1, float(nd_stp)
 
 # Calculate and set the global Rayleigh cross section data caches
 def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None:
-    global _RAY_ENTRIES, _RAY_SIGMA_CACHE, _RAY_WAVELENGTH_CACHE
+    global _RAY_ENTRIES, _RAY_SIGMA_CACHE, _RAY_WAVELENGTH_CACHE, _RAY_NM1_CACHE, _RAY_NDREF_CACHE
     entries: List[RayRegistryEntry] = []
+    nm1_entries: List[np.ndarray] = []
+    ndref_entries: List[float] = []
     config = getattr(cfg.opac, "ray", None)
     if not config:
         reset_registry()
@@ -234,7 +271,7 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
     for index, spec in enumerate(cfg.opac.ray):
         name = getattr(spec, "species", str(spec))
         print("[Ray] Computing Rayleigh xs for", name)
-        xs = _compute_species_sigma(name, wavelengths)
+        xs, nm1, nd_ref = _compute_species_sigma_nm1_ndref(name, wavelengths)
         log_xs = np.log10(xs)
 
         # Create entry with NumPy arrays (will be converted to JAX later)
@@ -247,6 +284,8 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
                 cross_sections=log_xs.astype(np.float64),
             )
         )
+        nm1_entries.append(nm1.astype(np.float64))
+        ndref_entries.append(float(nd_ref))
 
     _RAY_ENTRIES = tuple(entries)
     if not _RAY_ENTRIES:
@@ -268,6 +307,9 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
     _RAY_SIGMA_CACHE = jnp.asarray(sigma_stacked, dtype=jnp.float32)
 
     _RAY_WAVELENGTH_CACHE = jnp.asarray(_RAY_ENTRIES[0].wavelengths, dtype=jnp.float64)
+    nm1_stacked = np.stack(nm1_entries, axis=0)
+    _RAY_NM1_CACHE = jnp.asarray(nm1_stacked, dtype=jnp.float32)
+    _RAY_NDREF_CACHE = jnp.asarray(np.asarray(ndref_entries, dtype=np.float64), dtype=jnp.float64)
 
     print(f"[Ray] Cross section cache: {_RAY_SIGMA_CACHE.shape} (dtype: {_RAY_SIGMA_CACHE.dtype})")
 
@@ -297,6 +339,20 @@ def ray_sigma_table() -> jnp.ndarray:
     if _RAY_SIGMA_CACHE is None:
         raise RuntimeError("Rayleigh σ table not built; call build_opacities() first.")
     return _RAY_SIGMA_CACHE
+
+
+@lru_cache(None)
+def ray_nm1_table() -> jnp.ndarray:
+    if _RAY_NM1_CACHE is None:
+        raise RuntimeError("Rayleigh (n-1) table not built; call build_opacities() first.")
+    return _RAY_NM1_CACHE
+
+
+@lru_cache(None)
+def ray_nd_ref() -> jnp.ndarray:
+    if _RAY_NDREF_CACHE is None:
+        raise RuntimeError("Rayleigh reference number density table not built; call build_opacities() first.")
+    return _RAY_NDREF_CACHE
 
 
 @lru_cache(None)

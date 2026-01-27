@@ -29,6 +29,7 @@ physics:
   opac_cia: lbl
   opac_cloud: F18
   opac_special: None
+  cloud_dist: mono
 
   # Radiative transfer
   rt_scheme: transit_1d
@@ -102,8 +103,8 @@ sampling:
   # NUTS / HMC settings
   nuts:
     backend: numpyro
-    warmup: 100
-    draws: 100
+    warmup: 1000
+    draws: 1000
     seed: 42
     chains: 1
 

@@ -87,7 +87,7 @@ def _interpolate_logsigma_1d(
     return jnp.where(below_min[:, None], tiny, s_interp)
 
 
-def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def compute_hminus_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute H⁻ continuum mass opacity from the CIA registry.
 
     This function uses the `"H-"` entry from the CIA registry (if loaded) as a
@@ -125,7 +125,7 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.
         is not loaded, does not contain `"H-"`, or when `state["vmr_lay"]` does
         not provide an `"H-"` mixing ratio.
     """
-    if not XS.has_cia_data():
+    if "cia_sigma_cube" not in opac:
         return zero_special_opacity(state, params)
 
     species_names = XS.cia_species_names()
@@ -135,7 +135,7 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.
         return zero_special_opacity(state, params)
 
     wavelengths = state["wl"]
-    master_wavelength = XS.cia_master_wavelength()
+    master_wavelength = opac["cia_master_wavelength"]
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("CIA wavelength grid must match the forward-model master grid.")
 
@@ -148,9 +148,9 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.
     if "H-" not in layer_vmr:
         return zero_special_opacity(state, params)
 
-    sigma_cube = XS.cia_sigma_cube()
-    log_temperature_grids = XS.cia_log10_temperature_grids()
-    temperature_grids = XS.cia_temperature_grids()
+    sigma_cube = opac["cia_sigma_cube"]
+    log_temperature_grids = opac["cia_log10_temperature_grids"]
+    temperature_grids = opac["cia_temperature_grids"]
     sigma_log = sigma_cube[hm_index]
     log_temperature_grid = log_temperature_grids[hm_index]
     temperature_grid = temperature_grids[hm_index]
@@ -162,7 +162,7 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.
     return normalization[:, None] * sigma_values
 
 
-def compute_special_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+def compute_special_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute the summed special-opacity contribution.
 
     This is the top-level entry point for special opacity sources. It returns a
@@ -185,4 +185,4 @@ def compute_special_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp
     --------
     compute_hminus_opacity : H⁻ continuum special term
     """
-    return compute_hminus_opacity(state, params)
+    return compute_hminus_opacity(state, opac, params)

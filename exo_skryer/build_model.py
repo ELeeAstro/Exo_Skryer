@@ -14,7 +14,7 @@ from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
 from .vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Milne_modified
-from .vert_chem import constant_vmr, CE_fastchem_jax, CE_rate_jax, quench_approx
+from .vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
 from .vert_mu import constant_mu, compute_mu
 from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
 
@@ -23,7 +23,7 @@ from .opacity_ck import zero_ck_opacity, compute_ck_opacity, compute_ck_opacity_
 from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
-from .opacity_cloud import compute_cloud_opacity, zero_cloud_opacity, grey_cloud, deck_and_powerlaw, F18_cloud, direct_nk, given_nk
+from .opacity_cloud import compute_cloud_opacity, zero_cloud_opacity, grey_cloud, deck_and_powerlaw, direct_nk
 
 from . import build_opacities as XS
 from .build_chem import prepare_chemistry_kernel
@@ -35,7 +35,7 @@ from .RT_em_1D_ck import compute_emission_spectrum_1d_ck
 from .RT_em_1D_lbl import compute_emission_spectrum_1d_lbl
 from .RT_em_schemes import get_emission_solver
 
-from .instru_convolve import apply_response_functions
+from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
 
 __all__ = [
     'build_forward_model'
@@ -104,6 +104,18 @@ def build_forward_model(
                     raw_value = float(raw_value)
             fixed_params[param.name] = jnp.asarray(raw_value)
 
+    # Cloud size distribution selector from YAML (static, not sampled).
+    # 1 = monodisperse, 2 = polydisperse (lognormal)
+    cloud_dist_raw = getattr(cfg.physics, "cloud_dist", None)
+    if cloud_dist_raw is not None:
+        cloud_dist_str = str(cloud_dist_raw).lower().strip()
+        if cloud_dist_str in ("1", "mono", "monodisperse"):
+            fixed_params["cloud_dist"] = jnp.asarray(1, dtype=jnp.int32)
+        elif cloud_dist_str in ("2", "log_normal", "lognormal", "log-normal", "ln"):
+            fixed_params["cloud_dist"] = jnp.asarray(2, dtype=jnp.int32)
+        else:
+            raise ValueError("physics.cloud_dist must be 'mono' or 'log_normal' (or 1/2).")
+
     # Example: number of layers from YAML
     nlay = int(getattr(cfg.physics, "nlay", 99))
     nlev = nlay + 1
@@ -159,6 +171,8 @@ def build_forward_model(
     vert_chem_name = str(vert_chem_raw).lower()
     if vert_chem_name in ("constant", "constant_vmr"):
         chemistry_kernel = constant_vmr
+    elif vert_chem_name in ("constant_vmr_clr", "constant_clr", "clr"):
+        chemistry_kernel = constant_vmr_clr
     elif vert_chem_name in ("ce", "chemical_equilibrium", "ce_fastchem_jax", "fastchem_jax"):
         chemistry_kernel = CE_fastchem_jax
     elif vert_chem_name in ("rate_ce", "rate_jax", "ce_rate_jax"):
@@ -262,11 +276,13 @@ def build_forward_model(
     elif cld_opac_scheme_str.lower() in ("powerlaw", "deck_and_powerlaw"):
         cld_opac_kernel = deck_and_powerlaw
     elif cld_opac_scheme_str.lower() == "f18":
-        cld_opac_kernel = F18_cloud
+        cld_opac_kernel = lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="f18")
+    elif cld_opac_scheme_str.lower() in ("madt_rayleigh", "madt-rayleigh", "mie_madt"):
+        cld_opac_kernel = lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="madt_rayleigh")
+    elif cld_opac_scheme_str.lower() in ("lxmie", "mie_full", "full_mie"):
+        cld_opac_kernel = lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="lxmie")
     elif cld_opac_scheme_str.lower() in ("nk", "direct_nk"):
         cld_opac_kernel = direct_nk
-    elif cld_opac_scheme_str.lower() in ("given_nk", "cached_nk"):
-        cld_opac_kernel = given_nk
     else:
         raise NotImplementedError(f"Unknown cld_opac_scheme='{cld_opac_scheme}'")
 
@@ -283,6 +299,28 @@ def build_forward_model(
     if rt_raw in (None, "None"):
         raise ValueError("physics.rt_scheme must be specified explicitly.")
     rt_scheme = str(rt_raw).lower()
+
+    # Refraction (transmission only): apply a refractive cutoff without ray tracing.
+    refraction_raw = getattr(phys, "refraction", None)
+    if refraction_raw in (None, "None"):
+        refraction_mode = 0
+    else:
+        refraction_str = str(refraction_raw).strip().lower()
+        if refraction_str in ("none", "off", "false", "0"):
+            refraction_mode = 0
+        elif refraction_str in ("cutoff", "refractive_cutoff", "refraction_cutoff"):
+            refraction_mode = 1
+        else:
+            raise NotImplementedError(f"Unknown physics.refraction='{refraction_raw}'")
+
+    if refraction_mode == 1:
+        if rt_scheme != "transit_1d":
+            raise NotImplementedError("physics.refraction is only supported for rt_scheme: transit_1d.")
+        param_names = {p.name for p in cfg.params}
+        if "a_sm" not in param_names:
+            raise ValueError("physics.refraction: cutoff requires a delta parameter 'a_sm' (semi-major axis in AU).")
+        if not XS.has_ray_data():
+            raise RuntimeError("physics.refraction: cutoff requires Rayleigh registry data (cfg.opac.ray).")
 
     # Get ck_mix for RT kernel selection (TRANS uses different RT kernel)
     ck_mix_str = str(getattr(cfg.opac, "ck_mix", "RORR")).upper()
@@ -301,8 +339,8 @@ def build_forward_model(
         em_scheme = getattr(phys, "em_scheme", "eaa")
         emission_solver = get_emission_solver(em_scheme)
         if ck:
-            rt_kernel = lambda state, params, components: compute_emission_spectrum_1d_ck(
-                state, params, components, emission_solver=emission_solver
+            rt_kernel = lambda state, params, components, opac: compute_emission_spectrum_1d_ck(
+                state, params, components, opac, emission_solver=emission_solver
             )
         else:
             rt_kernel = lambda state, params, components: compute_emission_spectrum_1d_lbl(
@@ -314,9 +352,67 @@ def build_forward_model(
     # High-resolution master grid (must match cut_grid used in bandpass loader)
     wl_hi_array = np.asarray(XS.master_wavelength_cut(), dtype=float)
     wl_hi = jnp.asarray(wl_hi_array)
-    stellar_flux_arr = None
+    has_stellar_flux_arr = jnp.asarray(1 if stellar_flux is not None else 0, dtype=jnp.int32)
     if stellar_flux is not None:
         stellar_flux_arr = jnp.asarray(stellar_flux, dtype=jnp.float64)
+    else:
+        stellar_flux_arr = jnp.zeros_like(wl_hi, dtype=jnp.float64)
+
+    bandpass_cache = get_bandpass_cache()
+
+    opac_cache: Dict[str, jnp.ndarray] = {}
+    if XS.has_ck_data():
+        opac_cache["ck_sigma_cube"] = XS.ck_sigma_cube()
+        opac_cache["ck_log10_pressure_grid"] = XS.ck_log10_pressure_grid()
+        opac_cache["ck_log10_temperature_grids"] = XS.ck_log10_temperature_grids()
+        opac_cache["ck_g_points"] = XS.ck_g_points()
+        opac_cache["ck_g_weights"] = XS.ck_g_weights()
+    if XS.has_line_data():
+        opac_cache["line_sigma_cube"] = XS.line_sigma_cube()
+        opac_cache["line_log10_pressure_grid"] = XS.line_log10_pressure_grid()
+        opac_cache["line_log10_temperature_grids"] = XS.line_log10_temperature_grids()
+    if XS.has_cia_data():
+        opac_cache["cia_master_wavelength"] = XS.cia_master_wavelength()
+        opac_cache["cia_sigma_cube"] = XS.cia_sigma_cube()
+        opac_cache["cia_log10_temperature_grids"] = XS.cia_log10_temperature_grids()
+        opac_cache["cia_temperature_grids"] = XS.cia_temperature_grids()
+    if XS.has_ray_data():
+        opac_cache["ray_master_wavelength"] = XS.ray_master_wavelength()
+        opac_cache["ray_sigma_table"] = XS.ray_sigma_table()
+        opac_cache["ray_nm1_table"] = XS.ray_nm1_table()
+        opac_cache["ray_nd_ref"] = XS.ray_nd_ref()
+    if XS.has_cloud_nk_data():
+        opac_cache["cloud_nk_n"] = XS.cloud_nk_n()
+        opac_cache["cloud_nk_k"] = XS.cloud_nk_k()
+
+    # Opacities must be present in the runtime cache 
+    if ck and line_opac_scheme_str.lower() == "ck":
+        required = ("ck_sigma_cube", "ck_log10_pressure_grid", "ck_log10_temperature_grids", "ck_g_points", "ck_g_weights")
+        missing = [k for k in required if k not in opac_cache]
+        if missing:
+            raise RuntimeError(f"Missing correlated-k cache entries: {missing}")
+    if (not ck) and line_opac_scheme_str.lower() == "lbl":
+        required = ("line_sigma_cube", "line_log10_pressure_grid", "line_log10_temperature_grids")
+        missing = [k for k in required if k not in opac_cache]
+        if missing:
+            raise RuntimeError(f"Missing line-by-line cache entries: {missing}")
+    if cia_opac_kernel is not None:
+        required = ("cia_master_wavelength", "cia_sigma_cube", "cia_log10_temperature_grids", "cia_temperature_grids")
+        missing = [k for k in required if k not in opac_cache]
+        if missing:
+            raise RuntimeError(f"Missing CIA cache entries: {missing}")
+    if ray_opac_kernel is not None:
+        required = ("ray_master_wavelength", "ray_sigma_table")
+        missing = [k for k in required if k not in opac_cache]
+        if missing:
+            raise RuntimeError(f"Missing Rayleigh cache entries: {missing}")
+
+    # Mie cloud schemes require cached n,k.
+    if cld_opac_scheme_str.lower() in ("madt_rayleigh", "madt-rayleigh", "mie_madt", "lxmie", "mie_full", "full_mie"):
+        required = ("cloud_nk_n", "cloud_nk_k")
+        missing = [k for k in required if k not in opac_cache]
+        if missing:
+            raise RuntimeError(f"Missing cloud n,k cache entries: {missing}")
 
     emission_mode = getattr(phys, "emission_mode", "planet")
     if emission_mode is None:
@@ -336,12 +432,19 @@ def build_forward_model(
     )
 
     @jax.jit
-    def forward_model(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    def _forward_model_impl(
+        params: Dict[str, jnp.ndarray],
+        wl_runtime: jnp.ndarray,
+        stellar_flux_runtime: jnp.ndarray,
+        has_stellar_flux_runtime: jnp.ndarray,
+        opac_cache_runtime: Dict[str, jnp.ndarray],
+        bandpass_cache_runtime: Dict[str, jnp.ndarray],
+    ) -> jnp.ndarray:
 
         # Merge fixed (delta) parameters with varying parameters
         full_params = {**fixed_params, **params}
 
-        wl = wl_hi
+        wl = wl_runtime
 
         # Dimension constants
         nwl = wl.shape[0]
@@ -382,15 +485,26 @@ def build_forward_model(
         # Cloud vertical profile (mass mixing ratio)
         q_c_lay = vert_cloud_kernel(p_lay, T_lay, mu_lay, rho_lay, nd_lay, full_params)
 
-        # State dictionary for physics kernels
-        g_weights = None
+        # Opacity cache for kernels (separate from atmospheric state)
+        opac = opac_cache_runtime
         ck_mix_code = None
-        if ck and XS.has_ck_data():
-            g_weights = XS.ck_g_weights()
+        if ck:
+            if "ck_g_weights" not in opac:
+                raise RuntimeError("Missing opac['ck_g_weights'] for c-k mode.")
+            if "ck_g_points" not in opac:
+                raise RuntimeError("Missing opac['ck_g_points'] for c-k mode.")
+            g_weights = opac["ck_g_weights"]
             if g_weights.ndim > 1:
                 g_weights = g_weights[0]
+            g_points = opac["ck_g_points"]
+            if g_points.ndim > 1:
+                g_points = g_points[0]
+            opac = dict(opac)
+            opac["g_weights"] = g_weights
+            opac["g_points"] = g_points
 
-            # Get ck_mix option from config
+        # Get ck_mix option from config (static)
+        if ck:
             ck_mix_raw = getattr(cfg.opac, "ck_mix", "RORR")
             ck_mix_raw = str(ck_mix_raw).upper()
             if ck_mix_raw == "PRAS":
@@ -420,17 +534,18 @@ def build_forward_model(
             "q_c_lay": q_c_lay,
             "vmr_lay": vmr_lay,
             "contri_func": bool(getattr(phys, "contri_func", False)),
+            "refraction_mode": refraction_mode,
         }
-        
-        if stellar_flux_arr is not None:
-            state["stellar_flux"] = stellar_flux_arr
-        if g_weights is not None:
-            state["g_weights"] = g_weights
+        if "cloud_nk_n" in opac:
+            state["cloud_nk_n"] = opac["cloud_nk_n"]
+            state["cloud_nk_k"] = opac["cloud_nk_k"]
+        state["stellar_flux"] = stellar_flux_runtime
+        state["has_stellar_flux"] = has_stellar_flux_runtime
         if ck_mix_code is not None:
             state["ck_mix"] = ck_mix_code
 
         if ck:
-            line_zero = zero_ck_opacity(state, full_params)
+            line_zero = zero_ck_opacity(state, opac, full_params)
         else:
             line_zero = zero_line_opacity(state, full_params)
         k_cld_zero, cld_ssa_zero, cld_g_zero = zero_cloud_opacity(state, full_params)
@@ -446,17 +561,17 @@ def build_forward_model(
         if line_opac_kernel is not None:
             # For TRANS method, compute per-species opacities (mixing happens in RT)
             if ck and ck_mix_code == 3:  # TRANS
-                sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, full_params)
+                sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac, full_params)
                 opacity_components["line_perspecies"] = sigma_ps
                 opacity_components["vmr_perspecies"] = vmr_ps
             else:
-                opacity_components["line"] = line_opac_kernel(state, full_params)
+                opacity_components["line"] = line_opac_kernel(state, opac, full_params)
         if ray_opac_kernel is not None:
-            opacity_components["rayleigh"] = ray_opac_kernel(state, full_params)
+            opacity_components["rayleigh"] = ray_opac_kernel(state, opac, full_params)
         if cia_opac_kernel is not None:
-            opacity_components["cia"] = cia_opac_kernel(state, full_params)
+            opacity_components["cia"] = cia_opac_kernel(state, opac, full_params)
         if special_opac_kernel is not None:
-            opacity_components["special"] = special_opac_kernel(state, full_params)
+            opacity_components["special"] = special_opac_kernel(state, opac, full_params)
         if cld_opac_kernel is not None:
             k_cld_ext, cld_ssa, cld_g = cld_opac_kernel(state, full_params)
             opacity_components["cloud"] = k_cld_ext
@@ -466,10 +581,17 @@ def build_forward_model(
         # Radiative transfer
         # RT kernels always return (spectrum, contrib_func)
         # contrib_func is zeros if state["contri_func"] is False
-        D_hires, contrib_func = rt_kernel(state, full_params, opacity_components)
+        if rt_scheme == "transit_1d":
+            # All transit RT kernels accept the opac cache (LBL may use it for refraction).
+            D_hires, contrib_func = rt_kernel(state, full_params, opacity_components, opac)
+        else:
+            if ck:
+                D_hires, contrib_func = rt_kernel(state, full_params, opacity_components, opac)
+            else:
+                D_hires, contrib_func = rt_kernel(state, full_params, opacity_components)
 
         # Instrumental convolution → binned spectrum
-        D_bin = apply_response_functions(D_hires)
+        D_bin = apply_response_functions_cached(D_hires, bandpass_cache_runtime)
 
         if return_highres:
             result_dict = {"hires": D_hires, "binned": D_bin}
@@ -479,5 +601,15 @@ def build_forward_model(
             return result_dict
 
         return D_bin
+
+    def forward_model(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        return _forward_model_impl(
+            params,
+            wl_hi,
+            stellar_flux_arr,
+            has_stellar_flux_arr,
+            opac_cache,
+            bandpass_cache,
+        )
 
     return forward_model

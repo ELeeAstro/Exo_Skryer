@@ -23,16 +23,15 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
+from .refraction import refraction_cutoff_mask
 
 __all__ = ["compute_transit_depth_1d_ck_trans"]
 
 
-def _get_ck_quadrature(state):
-    """Extract g-points and weights from state or registry."""
-    g_points_all = XS.ck_g_points()
-    g_weights = state.get("g_weights")
-    if g_weights is None:
-        g_weights = XS.ck_g_weights()
+def _get_ck_quadrature(opac):
+    """Extract g-points and weights from opac cache."""
+    g_points_all = opac["g_points"]
+    g_weights = opac["g_weights"]
 
     if g_points_all.ndim == 1:
         g_points = g_points_all
@@ -102,6 +101,7 @@ def _integrate_g_points_trans(
     g_weights: jnp.ndarray,         # (ng,)
     state: Dict[str, jnp.ndarray],
     geometry: tuple[jnp.ndarray, jnp.ndarray],
+    refraction_mask: jnp.ndarray | None,
     want_contrib: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Integrate transit depth using RO transmission-function multiplication.
@@ -155,6 +155,8 @@ def _integrate_g_points_trans(
     T_prod = lax.fori_loop(0, nspec, _body, T_prod0)  # (nlay, nwl)
 
     T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 100.0)) * T_prod  # (nlay, nwl)
+    if refraction_mask is not None:
+        T_total = jnp.where(refraction_mask, 0.0, T_total)
     one_minus_trans = 1.0 - jnp.clip(T_total, 0.0, 1.0)               # (nlay, nwl)
 
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)     # (nwl,)
@@ -168,6 +170,7 @@ def compute_transit_depth_1d_ck_trans(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    opac: Dict[str, jnp.ndarray],
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute 1D transit depth using transmission multiplication random overlap.
 
@@ -196,8 +199,12 @@ def compute_transit_depth_1d_ck_trans(
     nlay = state["nlay"]
     nwl = state["nwl"]
 
+    refraction_mask = None
+    if int(state.get("refraction_mode", 0)) == 1:
+        refraction_mask = refraction_cutoff_mask(state, params, opac)
+
     geometry = _build_transit_geometry(state)
-    g_points, g_weights = _get_ck_quadrature(state)
+    g_points, g_weights = _get_ck_quadrature(opac)
 
     # Get per-species opacities
     sigma_perspecies = opacity_components.get("line_perspecies")
@@ -226,11 +233,11 @@ def compute_transit_depth_1d_ck_trans(
         if contri_func:
             D_cloud, dR2_cloud, layer_dR2_cloud = _integrate_g_points_trans(
                 sigma_perspecies, vmr_perspecies, other_with_cloud,
-                g_points, g_weights, state, geometry, want_contrib=True
+                g_points, g_weights, state, geometry, refraction_mask, want_contrib=True
             )
             D_clear, dR2_clear, layer_dR2_clear = _integrate_g_points_trans(
                 sigma_perspecies, vmr_perspecies, other_no_cloud,
-                g_points, g_weights, state, geometry, want_contrib=True
+                g_points, g_weights, state, geometry, refraction_mask, want_contrib=True
             )
 
             D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
@@ -240,11 +247,11 @@ def compute_transit_depth_1d_ck_trans(
         else:
             D_cloud, _, _ = _integrate_g_points_trans(
                 sigma_perspecies, vmr_perspecies, other_with_cloud,
-                g_points, g_weights, state, geometry, want_contrib=False
+                g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
             D_clear, _, _ = _integrate_g_points_trans(
                 sigma_perspecies, vmr_perspecies, other_no_cloud,
-                g_points, g_weights, state, geometry, want_contrib=False
+                g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
 
             D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
@@ -254,13 +261,13 @@ def compute_transit_depth_1d_ck_trans(
         if contri_func:
             D_net, dR2, layer_dR2 = _integrate_g_points_trans(
                 sigma_perspecies, vmr_perspecies, other_opacity_2d,
-                g_points, g_weights, state, geometry, want_contrib=True
+                g_points, g_weights, state, geometry, refraction_mask, want_contrib=True
             )
             contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
         else:
             D_net, _, _ = _integrate_g_points_trans(
                 sigma_perspecies, vmr_perspecies, other_opacity_2d,
-                g_points, g_weights, state, geometry, want_contrib=False
+                g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
             contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
 

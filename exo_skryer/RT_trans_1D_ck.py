@@ -11,24 +11,22 @@ import jax
 import jax.numpy as jnp
 from . import build_opacities as XS
 
+from .refraction import refraction_cutoff_mask
+
 __all__ = ["compute_transit_depth_1d_ck"]
 
 
-def _get_ck_weights(state):
-    g_weights = state.get("g_weights")
-    if g_weights is not None:
-        return g_weights
-    if not XS.has_ck_data():
-        raise RuntimeError("c-k g-weights not built; run build_opacities() with ck tables.")
-    g_weights = XS.ck_g_weights()
-    if g_weights.ndim > 1:
-        g_weights = g_weights[0]
+def _get_ck_weights(opac: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    g_weights = opac.get("g_weights")
+    if g_weights is None:
+        raise RuntimeError("Missing opac['g_weights'] for c-k integration.")
     return g_weights
 
 
 def _sum_opacity_components_ck(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    opac: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
     """
     Return the summed opacity grid for correlated-k mode.
@@ -42,7 +40,7 @@ def _sum_opacity_components_ck(
 
     line_opacity = opacity_components.get("line")
     if line_opacity is None:
-        g_weights = _get_ck_weights(state)
+        g_weights = _get_ck_weights(opac)
         ng = g_weights.shape[-1]
         line_opacity = jnp.zeros((nlay, nwl, ng))
 
@@ -146,6 +144,7 @@ def _integrate_g_points(
     g_weights: jnp.ndarray,  # (ng,)
     state: Dict[str, jnp.ndarray],
     geometry: tuple[jnp.ndarray, jnp.ndarray],
+    refraction_mask: jnp.ndarray | None,
     want_contrib: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Integrate transit depth over g without per-g slicing.
@@ -162,6 +161,8 @@ def _integrate_g_points(
     k_eff = jnp.maximum(k_array, 1.0e-99)
     dtau_v = k_eff * rho[:, None, None] * dz[:, None, None]  # (nlay, nwl, ng)
     tau_path = jnp.einsum("ij,jwg->iwg", P1D, dtau_v)  # (nlay, nwl, ng)
+    if refraction_mask is not None:
+        tau_path = jnp.where(refraction_mask[:, :, None], 1.0e30, tau_path)
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)  # (nlay, nwl, ng)
     dR2_per_g = jnp.sum(area_weight[:, None, None] * one_minus_trans, axis=0)  # (nwl, ng)
@@ -191,16 +192,21 @@ def compute_transit_depth_1d_ck(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    opac: Dict[str, jnp.ndarray],
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     contri_func = state.get("contri_func", False)
     nlay = state["nlay"]
     nwl = state["nwl"]
 
+    refraction_mask = None
+    if int(state.get("refraction_mode", 0)) == 1:
+        refraction_mask = refraction_cutoff_mask(state, params, opac)
+
     geometry = _build_transit_geometry(state)
-    k_tot = _sum_opacity_components_ck(state, opacity_components)  # (nlay, nwl, ng)
+    k_tot = _sum_opacity_components_ck(state, opacity_components, opac)  # (nlay, nwl, ng)
 
     ng = k_tot.shape[-1]
-    g_weights = _get_ck_weights(state)[:ng]
+    g_weights = _get_ck_weights(opac)[:ng]
 
     if "f_cloud" in params and "cloud" in opacity_components:
         f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
@@ -211,10 +217,10 @@ def compute_transit_depth_1d_ck(
 
         if contri_func:
             D_cloud, dR2_cloud, layer_dR2_cloud = _integrate_g_points(
-                k_tot, g_weights, state, geometry, want_contrib=True
+                k_tot, g_weights, state, geometry, refraction_mask, want_contrib=True
             )
             D_clear, dR2_clear, layer_dR2_clear = _integrate_g_points(
-                k_no_cloud, g_weights, state, geometry, want_contrib=True
+                k_no_cloud, g_weights, state, geometry, refraction_mask, want_contrib=True
             )
 
             D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
@@ -223,10 +229,10 @@ def compute_transit_depth_1d_ck(
             contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
         else:
             D_cloud, _, _ = _integrate_g_points(
-                k_tot, g_weights, state, geometry, want_contrib=False
+                k_tot, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
             D_clear, _, _ = _integrate_g_points(
-                k_no_cloud, g_weights, state, geometry, want_contrib=False
+                k_no_cloud, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
 
             D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
@@ -234,12 +240,12 @@ def compute_transit_depth_1d_ck(
     else:
         if contri_func:
             D_net, dR2, layer_dR2 = _integrate_g_points(
-                k_tot, g_weights, state, geometry, want_contrib=True
+                k_tot, g_weights, state, geometry, refraction_mask, want_contrib=True
             )
             contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
         else:
             D_net, _, _ = _integrate_g_points(
-                k_tot, g_weights, state, geometry, want_contrib=False
+                k_tot, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
             contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
 

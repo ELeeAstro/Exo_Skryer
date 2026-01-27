@@ -9,6 +9,7 @@ from typing import Dict, Tuple
 
 import jax
 import jax.numpy as jnp
+import jax.scipy as jsp
 
 from .data_constants import bar
 from .aux_functions import pchip_1d
@@ -332,6 +333,65 @@ def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarr
     in_reg2 = (p_lev > P1) & (p_lev <= P3)
 
     T_lev = jnp.where(in_reg1, T_reg1, jnp.where(in_reg2, T_reg2, T3))
+    T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
+    return T_lev, T_lay
+
+def Line(p_lev: jnp.ndarray,params: Dict[str, jnp.ndarray],) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Line et al. (2013) (two visible channels) analytic T(p) profile.
+
+    Parameters
+    ----------
+    p_lev : jnp.ndarray, shape (nlev,)
+        Pressure at atmospheric levels.
+    params : dict[str, jnp.ndarray]
+        Expected keys (all scalar JAX arrays):
+        - "T_int" : internal temperature [K]
+        - "T_eq"  : equilibrium temperature [K]
+        - "f_hem" : redistribution factor
+        - "log_10_k_ir" : log10 thermal/IR opacity [cm^2 g^-1]
+        - "log_10_g"    : log10 gravity [cm s^-2]
+        - "log_10_gam_v1": log10(γ1) visible/thermal opacity ratio (channel 1)
+        - "log_10_gam_v2": log10(γ2) visible/thermal opacity ratio (channel 2)
+        - "alpha" : partition between visible channels, α in [0, 1]
+
+    Returns
+    -------
+    T_lev : jnp.ndarray, shape (nlev,)
+        Temperature at levels [K]
+    T_lay : jnp.ndarray, shape (nlev-1,)
+        Temperature at layer midpoints [K]
+    """
+    T_int = params["T_int"]
+    T_eq = params["T_eq"]
+    f = params["f_hem"]
+
+    k_ir = 10.0 ** params["log_10_k_ir"]
+    g = 10.0 ** params["log_10_g"]
+
+    gam1 = 10.0 ** params["log_10_gam_v1"]
+    gam2 = 10.0 ** params["log_10_gam_v2"]
+    alpha = params["alpha"]
+
+    tau = (k_ir / g) * p_lev
+
+    T_irr4 = (4.0 * f) * (T_eq**4)
+
+    def xi_gamma(tau_: jnp.ndarray, gamma: jnp.ndarray) -> jnp.ndarray:
+        x = gamma * tau_
+        # E2(x) = exponential integral of order 2
+        E2 = jsp.special.expn(2, x)
+
+        term0 = 2.0 / 3.0
+        term1 = (2.0 / (3.0 * gamma)) * (1.0 + (x / 2.0 - 1.0) * jnp.exp(-x))
+        term2 = (2.0 * gamma / 3.0) * (1.0 - (tau_**2) / 2.0) * E2
+        return term0 + term1 + term2
+
+    # Eq. (13)
+    T4 = (3.0 * T_int**4 / 4.0) * (2.0 / 3.0 + tau)
+    T4 += (3.0 * T_irr4 / 4.0) * (1.0 - alpha) * xi_gamma(tau, gam1)
+    T4 += (3.0 * T_irr4 / 4.0) * alpha * xi_gamma(tau, gam2)
+
+    T_lev = T4 ** 0.25
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
 
