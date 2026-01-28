@@ -62,18 +62,21 @@ RT_SCHEMES = ["emission_1d", "transit_1d"]
 
 # Emission calculation schemes (only used when rt_scheme is emission_1d)
 # Passed to get_emission_solver() in RT_em_schemes.py
-EM_SCHEMES = ["eaa", "None"]
+# - eaa / alpha_eaa: Alpha-EAA single-angle approximation (fast)
+# - toon89 / toon89_picaso: Toon et al. (1989) multi-stream method (accurate for scattering)
+EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso", "None"]
 
 # Temperature-Pressure profile parameterizations
 # From build_model.py lines 137-153 (vert_Tp selector)
 # - isothermal: Constant temperature throughout atmosphere
 # - Guillot: Analytic profile with T_eq, T_int, k_ir, gam_v parameters
 # - Barstow: Profile with stratospheric temperature (T_strat)
+# - Line: Line profile
 # - Milne: Eddington-Milne approximation
 # - Milne_modified: Modified Milne profile
 # - picket_fence: Picket-fence approximation
 # - MandS: Madhusudhan & Seager profile
-VERT_TP_OPTIONS = ["isothermal", "Guillot", "Barstow", "Milne", "Milne_modified", "picket_fence", "MandS"]
+VERT_TP_OPTIONS = ["isothermal", "Guillot", "Barstow", "Line", "Milne", "Milne_modified", "picket_fence", "MandS"]
 
 # How altitude/height is calculated in the atmosphere model
 # From build_model.py lines 158-166 (vert_alt selector)
@@ -152,26 +155,33 @@ EMISSION_MODES = ["planet", "brown_dwarf"]
 # Correlated-k mixing rules for combining opacities from multiple species
 # From build_model.py lines 482-489 (ck_mix selector)
 # - RORR: Random Overlap with Resorting and Rebinning (default, most accurate)
-# - PRAS: Pre-mixed Random Overlap with Sorting
 # - TRANS: Transmission-optimized method (only for transit_1d)
-CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
+CK_MIX_OPTIONS = ["RORR", "TRANS"]
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space
 SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "pymultinest"]
 
 # Compute platforms
-RUNTIME_PLATFORMS = ["gpu", "cpu", "cuda", "metal"]
+RUNTIME_PLATFORMS = ["gpu", "cpu"]
 
-# Common molecular/atomic species for line opacity
+# Refraction modes (for transit_1d only)
+# From build_model.py lines 306-325
+# - None: No refraction
+# - cutoff / refractive_cutoff: Apply refractive cutoff without ray tracing
+REFRACTION_OPTIONS = ["None", "cutoff", "refractive_cutoff", "refraction_cutoff"]
+
+# Common molecular/atomic species for line opacity (from opac_data directory)
 # These are the absorbers that create spectral features
-COMMON_LINE_SPECIES = ["H2O", "CO", "CO2", "CH4", "NH3", "H2S", "HCN", "C2H2", "Na", "K", "TiO", "VO", "FeH", "Fe", "SiO"]
+COMMON_LINE_SPECIES = ["H2O", "CO", "CO2", "CH4", "NH3", "H2S", "HCN", "C2H2", "SO2", "OH", "Na", "K"]
 
-# Species that contribute to Rayleigh scattering
-COMMON_RAY_SPECIES = ["H2", "He", "N2", "H2O", "CO2", "CH4"]
+# Species that contribute to Rayleigh scattering (from registry_ray.py)
+# Supported: H2, He, CO, CO2, CH4, O2, N2, NH3, Ar, N2O, SF6, HCl, HCN, H2S, OCS, SO2, C2H2, PH3, SO3, H2O, e-, H
+COMMON_RAY_SPECIES = ["H2", "He", "N2", "CO", "CO2", "CH4", "O2", "NH3", "Ar", "H2O", "H2S", "HCN", "SO2", "C2H2"]
 
-# Collision-induced absorption pairs (molecule-molecule interactions)
-COMMON_CIA_PAIRS = ["H2-H2", "H2-He", "H2-N2", "N2-N2", "CO2-CO2"]
+# Collision-induced absorption pairs (from opac_data/cia directory)
+# Note: H- is for bound-free and free-free opacity (negative hydrogen ion)
+COMMON_CIA_PAIRS = ["H2-H2", "H2-He", "H2-H", "He-H", "H-"]
 
 # Prior distribution types for retrieval parameters
 # - uniform: Flat prior between low and high bounds
@@ -213,7 +223,7 @@ def init_session_state():
         # Parameters list (will hold retrieval parameter definitions)
         'params': [],
         # Sampling
-        'sampling_engine': 'jaxns',
+        'sampling_engine': 'dynesty',
     }
     # Only initialize keys that don't exist yet
     for key, value in defaults.items():
@@ -314,6 +324,8 @@ def build_config() -> dict:
         'em_scheme': st.session_state.get('em_scheme', 'eaa') if st.session_state.get('rt_scheme') == 'emission_1d' else None,
         'emission_mode': st.session_state.get('emission_mode', 'planet') if st.session_state.get('rt_scheme') == 'emission_1d' else None,
         'contri_func': st.session_state.get('contri_func', False),
+        # Refraction (only for transit mode)
+        'refraction': st.session_state.get('refraction', 'None') if st.session_state.get('rt_scheme') == 'transit_1d' and st.session_state.get('refraction', 'None') != 'None' else None,
     }
     # Remove None values from the dict (cleaner YAML output)
     config['physics'] = {k: v for k, v in config['physics'].items() if v is not None}
@@ -379,7 +391,7 @@ def build_config() -> dict:
 
     if engine == 'jaxns':
         # JAXNS: JAX-accelerated nested sampling
-        config['sampling']['jaxns'] = {
+        jaxns_config = {
             'max_samples': st.session_state.get('jaxns_max_samples', 100000),
             'num_live_points': st.session_state.get('jaxns_num_live_points', 500),  # Posterior resolution
             's': st.session_state.get('jaxns_s', 5),  # Slices per dimension
@@ -389,18 +401,36 @@ def build_config() -> dict:
             'parameter_estimation': st.session_state.get('jaxns_parameter_estimation', True),
             'gradient_guided': st.session_state.get('jaxns_gradient_guided', False),
             'verbose': st.session_state.get('jaxns_verbose', True),
-            # Termination criteria - when to stop sampling
-            'termination': {
-                'ess': st.session_state.get('jaxns_ess', 500),  # Effective sample size target
-                'dlogZ': st.session_state.get('jaxns_dlogz', 0.01),  # Evidence precision
-                'max_samples': st.session_state.get('jaxns_term_max_samples', 100000),
-            },
             'posterior_samples': st.session_state.get('jaxns_posterior_samples', 5000),
             'seed': st.session_state.get('jaxns_seed', 42),  # For reproducibility
         }
+        # Optional advanced parameters
+        if st.session_state.get('jaxns_shell_fraction'):
+            jaxns_config['shell_fraction'] = st.session_state.get('jaxns_shell_fraction')
+        if st.session_state.get('jaxns_init_efficiency_threshold'):
+            jaxns_config['init_efficiency_threshold'] = st.session_state.get('jaxns_init_efficiency_threshold')
+
+        # Termination criteria - when to stop sampling
+        termination = {
+            'ess': st.session_state.get('jaxns_ess', 500),  # Effective sample size target
+            'dlogZ': st.session_state.get('jaxns_dlogz', 0.01),  # Evidence precision
+            'max_samples': st.session_state.get('jaxns_term_max_samples', 100000),
+        }
+        # Optional termination criteria
+        if st.session_state.get('jaxns_evidence_uncert'):
+            termination['evidence_uncert'] = st.session_state.get('jaxns_evidence_uncert')
+        if st.session_state.get('jaxns_max_num_likelihood_evaluations'):
+            termination['max_num_likelihood_evaluations'] = st.session_state.get('jaxns_max_num_likelihood_evaluations')
+        if st.session_state.get('jaxns_rtol'):
+            termination['rtol'] = st.session_state.get('jaxns_rtol')
+        if st.session_state.get('jaxns_atol'):
+            termination['atol'] = st.session_state.get('jaxns_atol')
+
+        jaxns_config['termination'] = termination
+        config['sampling']['jaxns'] = jaxns_config
     elif engine == 'dynesty':
         # Dynesty: Dynamic nested sampling in pure Python
-        config['sampling']['dynesty'] = {
+        dynesty_config = {
             'nlive': st.session_state.get('dynesty_nlive', 500),
             'bound': st.session_state.get('dynesty_bound', 'multi'),  # Bounding method
             'sample': st.session_state.get('dynesty_sample', 'auto'),  # Sampling method
@@ -409,6 +439,19 @@ def build_config() -> dict:
             'print_progress': st.session_state.get('dynesty_print_progress', True),
             'seed': st.session_state.get('dynesty_seed', 42),
         }
+        # Optional parameters
+        if st.session_state.get('dynesty_maxiter'):
+            dynesty_config['maxiter'] = st.session_state.get('dynesty_maxiter')
+        if st.session_state.get('dynesty_maxcall'):
+            dynesty_config['maxcall'] = st.session_state.get('dynesty_maxcall')
+        if st.session_state.get('dynesty_bootstrap'):
+            dynesty_config['bootstrap'] = st.session_state.get('dynesty_bootstrap')
+        if st.session_state.get('dynesty_enlarge'):
+            dynesty_config['enlarge'] = st.session_state.get('dynesty_enlarge')
+        if st.session_state.get('dynesty_update_interval'):
+            dynesty_config['update_interval'] = st.session_state.get('dynesty_update_interval')
+
+        config['sampling']['dynesty'] = dynesty_config
     elif engine == 'blackjax_ns':
         # BlackJAX nested sampling: JAX-based
         config['sampling']['blackjax_ns'] = {
@@ -430,15 +473,22 @@ def build_config() -> dict:
         }
     elif engine == 'ultranest':
         # UltraNest: MLFriends nested sampling
-        config['sampling']['ultranest'] = {
+        ultranest_config = {
             'num_live_points': st.session_state.get('ultranest_num_live_points', 500),
             'min_num_live_points': st.session_state.get('ultranest_min_live_points', 100),
             'dlogz': st.session_state.get('ultranest_dlogz', 0.01),
             'verbose': st.session_state.get('ultranest_verbose', True),
         }
+        # Optional parameters
+        if st.session_state.get('ultranest_max_iters'):
+            ultranest_config['max_iters'] = st.session_state.get('ultranest_max_iters')
+        if st.session_state.get('ultranest_show_status') is not None:
+            ultranest_config['show_status'] = st.session_state.get('ultranest_show_status')
+
+        config['sampling']['ultranest'] = ultranest_config
     elif engine == 'pymultinest':
         # PyMultiNest: Python wrapper for MultiNest
-        config['sampling']['pymultinest'] = {
+        pymultinest_config = {
             'n_live_points': st.session_state.get('pymultinest_n_live_points', 500),
             'evidence_tolerance': st.session_state.get('pymultinest_evidence_tolerance', 0.5),
             'sampling_efficiency': st.session_state.get('pymultinest_sampling_efficiency', 0.3),
@@ -446,6 +496,23 @@ def build_config() -> dict:
             'verbose': st.session_state.get('pymultinest_verbose', True),
             'resume': st.session_state.get('pymultinest_resume', False),
         }
+        # Optional advanced parameters
+        if st.session_state.get('pymultinest_n_iter_before_update'):
+            pymultinest_config['n_iter_before_update'] = st.session_state.get('pymultinest_n_iter_before_update')
+        if st.session_state.get('pymultinest_null_log_evidence'):
+            pymultinest_config['null_log_evidence'] = st.session_state.get('pymultinest_null_log_evidence')
+        if st.session_state.get('pymultinest_max_modes'):
+            pymultinest_config['max_modes'] = st.session_state.get('pymultinest_max_modes')
+        if st.session_state.get('pymultinest_mode_tolerance'):
+            pymultinest_config['mode_tolerance'] = st.session_state.get('pymultinest_mode_tolerance')
+        if st.session_state.get('pymultinest_importance_nested_sampling') is not None:
+            pymultinest_config['importance_nested_sampling'] = st.session_state.get('pymultinest_importance_nested_sampling')
+        if st.session_state.get('pymultinest_multimodal') is not None:
+            pymultinest_config['multimodal'] = st.session_state.get('pymultinest_multimodal')
+        if st.session_state.get('pymultinest_const_efficiency_mode') is not None:
+            pymultinest_config['const_efficiency_mode'] = st.session_state.get('pymultinest_const_efficiency_mode')
+
+        config['sampling']['pymultinest'] = pymultinest_config
 
     # -------------------------------------------------------------------------
     # RUNTIME SECTION
@@ -563,6 +630,9 @@ def render_physics_section():
         # Only show cloud distribution if clouds are enabled
         if st.session_state.vert_cloud != "None":
             st.selectbox("Cloud Size Distribution", CLOUD_DIST_OPTIONS, key="cloud_dist")
+        # Only show refraction for transit mode
+        if st.session_state.get('rt_scheme') == "transit_1d":
+            st.selectbox("Refraction", REFRACTION_OPTIONS, key="refraction")
 
 
 def render_opac_section():
@@ -805,45 +875,69 @@ def render_sampling_section():
 
     if engine == "jaxns":
         st.subheader("JAXNS Configuration")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.number_input("Max samples", min_value=1000, value=100000, key="jaxns_max_samples")
-            st.number_input("Num live points", min_value=50, value=1000, key="jaxns_num_live_points")
-            st.number_input("Slices per dimension (s)", min_value=1, value=4, key="jaxns_s")
-        with col2:
-            st.number_input("Phantom samples (k)", min_value=0, value=0, key="jaxns_k")
-            st.number_input("Parallel chains (c)", min_value=0, value=0, key="jaxns_c",
-                           help="0 = auto")
-            st.number_input("Posterior samples", min_value=100, value=10000, key="jaxns_posterior_samples")
-        with col3:
-            st.checkbox("Difficult model", key="jaxns_difficult_model")
-            st.checkbox("Parameter estimation", value=True, key="jaxns_parameter_estimation")
-            st.checkbox("Gradient guided", key="jaxns_gradient_guided")
-            st.checkbox("Verbose", value=True, key="jaxns_verbose")
 
-        st.markdown("**Termination Criteria**")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.number_input("ESS target", min_value=10, value=10000, key="jaxns_ess")
-        with col2:
-            st.number_input("dlogZ", min_value=0.001, value=0.1, format="%.4f", key="jaxns_dlogz")
-        with col3:
-            st.number_input("Term max samples", min_value=1000, value=100000, key="jaxns_term_max_samples")
+        with st.expander("Basic Settings", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.number_input("Max samples", min_value=1000, value=100000, key="jaxns_max_samples")
+                st.number_input("Num live points", min_value=50, value=1000, key="jaxns_num_live_points")
+                st.number_input("Slices per dimension (s)", min_value=1, value=4, key="jaxns_s")
+            with col2:
+                st.number_input("Phantom samples (k)", min_value=0, value=0, key="jaxns_k")
+                st.number_input("Parallel chains (c)", min_value=0, value=0, key="jaxns_c",
+                               help="0 = auto")
+                st.number_input("Posterior samples", min_value=100, value=10000, key="jaxns_posterior_samples")
+            with col3:
+                st.checkbox("Difficult model", key="jaxns_difficult_model")
+                st.checkbox("Parameter estimation", value=True, key="jaxns_parameter_estimation")
+                st.checkbox("Gradient guided", key="jaxns_gradient_guided")
+                st.checkbox("Verbose", value=True, key="jaxns_verbose")
 
-        st.number_input("Random seed", min_value=0, value=42, key="jaxns_seed")
+        with st.expander("Termination Criteria", expanded=True):
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.number_input("ESS target", min_value=10, value=10000, key="jaxns_ess")
+                st.number_input("dlogZ", min_value=0.001, value=0.1, format="%.4f", key="jaxns_dlogz")
+            with col2:
+                st.number_input("Term max samples", min_value=1000, value=100000, key="jaxns_term_max_samples")
+                st.number_input("Evidence uncert (optional)", min_value=0.0, value=0.0, format="%.4f", key="jaxns_evidence_uncert")
+            with col3:
+                st.number_input("Max likelihood evals (optional)", min_value=0, value=0, key="jaxns_max_num_likelihood_evaluations")
+                st.number_input("rtol (optional)", min_value=0.0, value=0.0, format="%.6f", key="jaxns_rtol")
+
+        with st.expander("Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("Shell fraction (optional)", min_value=0.0, max_value=1.0, value=0.0, format="%.2f", key="jaxns_shell_fraction")
+                st.number_input("Init efficiency threshold (optional)", min_value=0.0, max_value=1.0, value=0.0, format="%.2f", key="jaxns_init_efficiency_threshold")
+            with col2:
+                st.number_input("atol (optional)", min_value=0.0, value=0.0, format="%.6f", key="jaxns_atol")
+                st.number_input("Random seed", min_value=0, value=42, key="jaxns_seed")
 
     elif engine == "dynesty":
         st.subheader("Dynesty Configuration")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.number_input("N live points", min_value=50, value=1000, key="dynesty_nlive")
-            st.selectbox("Bounding method", ["multi", "single", "balls", "cubes"], key="dynesty_bound")
-            st.selectbox("Sampling method", ["auto", "unif", "rwalk", "slice", "rslice"], key="dynesty_sample")
-        with col2:
-            st.number_input("dlogz", min_value=0.001, value=0.1, format="%.4f", key="dynesty_dlogz")
-            st.checkbox("Dynamic nested sampling", key="dynesty_dynamic")
-            st.checkbox("Print progress", value=True, key="dynesty_print_progress")
-        st.number_input("Random seed", min_value=0, value=42, key="dynesty_seed")
+
+        with st.expander("Basic Settings", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("N live points", min_value=50, value=1000, key="dynesty_nlive")
+                st.selectbox("Bounding method", ["multi", "single", "balls", "cubes"], key="dynesty_bound")
+                st.selectbox("Sampling method", ["auto", "unif", "rwalk", "slice", "rslice"], key="dynesty_sample")
+            with col2:
+                st.number_input("dlogz", min_value=0.001, value=0.1, format="%.4f", key="dynesty_dlogz")
+                st.checkbox("Dynamic nested sampling", key="dynesty_dynamic")
+                st.checkbox("Print progress", value=True, key="dynesty_print_progress")
+
+        with st.expander("Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("Max iterations (optional)", min_value=0, value=0, key="dynesty_maxiter", help="0 = unlimited")
+                st.number_input("Max function calls (optional)", min_value=0, value=0, key="dynesty_maxcall", help="0 = unlimited")
+                st.number_input("Bootstrap (optional)", min_value=0, value=0, key="dynesty_bootstrap")
+            with col2:
+                st.number_input("Enlarge factor (optional)", min_value=0.0, value=0.0, format="%.2f", key="dynesty_enlarge")
+                st.number_input("Update interval (optional)", min_value=0, value=0, key="dynesty_update_interval")
+                st.number_input("Random seed", min_value=0, value=42, key="dynesty_seed")
 
     elif engine == "blackjax_ns":
         st.subheader("BlackJAX NS Configuration")
@@ -869,26 +963,49 @@ def render_sampling_section():
 
     elif engine == "ultranest":
         st.subheader("UltraNest Configuration")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.number_input("Num live points", min_value=50, value=1000, key="ultranest_num_live_points")
-            st.number_input("Min live points", min_value=10, value=1000, key="ultranest_min_live_points")
-        with col2:
-            st.number_input("dlogz", min_value=0.001, value=0.1, format="%.4f", key="ultranest_dlogz")
-            st.checkbox("Verbose", value=True, key="ultranest_verbose")
+
+        with st.expander("Basic Settings", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("Num live points", min_value=50, value=1000, key="ultranest_num_live_points")
+                st.number_input("Min live points", min_value=10, value=1000, key="ultranest_min_live_points")
+            with col2:
+                st.number_input("dlogz", min_value=0.001, value=0.1, format="%.4f", key="ultranest_dlogz")
+                st.checkbox("Verbose", value=True, key="ultranest_verbose")
+
+        with st.expander("Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("Max iterations (optional)", min_value=0, value=0, key="ultranest_max_iters", help="0 = unlimited")
+            with col2:
+                st.checkbox("Show status", value=True, key="ultranest_show_status")
 
     elif engine == "pymultinest":
         st.subheader("PyMultiNest Configuration")
-        col1, col2 = st.columns(2)
-        with col1:
-            st.number_input("N live points", min_value=50, value=1000, key="pymultinest_n_live_points")
-            st.number_input("Evidence tolerance", min_value=0.01, value=0.1, format="%.2f", key="pymultinest_evidence_tolerance")
-            st.number_input("Sampling efficiency", min_value=0.01, max_value=1.0, value=0.3, format="%.2f", key="pymultinest_sampling_efficiency")
-        with col2:
-            st.checkbox("Verbose", value=True, key="pymultinest_verbose")
-            st.checkbox("Resume", value=True, key="pymultinest_resume")
-            st.number_input("Random seed", min_value=-1, value=-1, key="pymultinest_seed",
-                           help="-1 = random seed")
+
+        with st.expander("Basic Settings", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("N live points", min_value=50, value=1000, key="pymultinest_n_live_points")
+                st.number_input("Evidence tolerance", min_value=0.01, value=0.1, format="%.2f", key="pymultinest_evidence_tolerance")
+                st.number_input("Sampling efficiency", min_value=0.01, max_value=1.0, value=0.3, format="%.2f", key="pymultinest_sampling_efficiency")
+            with col2:
+                st.checkbox("Verbose", value=True, key="pymultinest_verbose")
+                st.checkbox("Resume", value=True, key="pymultinest_resume")
+                st.number_input("Random seed", min_value=-1, value=-1, key="pymultinest_seed",
+                               help="-1 = random seed")
+
+        with st.expander("Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("N iter before update (optional)", min_value=0, value=0, key="pymultinest_n_iter_before_update")
+                st.number_input("Null log evidence (optional)", value=0.0, format="%.2e", key="pymultinest_null_log_evidence")
+                st.number_input("Max modes (optional)", min_value=0, value=0, key="pymultinest_max_modes")
+                st.number_input("Mode tolerance (optional)", value=0.0, format="%.2e", key="pymultinest_mode_tolerance")
+            with col2:
+                st.checkbox("Importance nested sampling", key="pymultinest_importance_nested_sampling")
+                st.checkbox("Multimodal", value=True, key="pymultinest_multimodal")
+                st.checkbox("Constant efficiency mode", key="pymultinest_const_efficiency_mode")
 
 
 def render_runtime_section():
