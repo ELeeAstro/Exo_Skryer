@@ -23,6 +23,8 @@ dependencies = [
   "matplotlib",
   "h5py",
   "tqdm",
+  "seaborn",
+  "corner",
 ]
 dynamic = ["version"]
 
@@ -69,6 +71,10 @@ docs = [
     "sphinx-toolbox",
     "IPython",
     "tox",
+    "blackjax",
+    "anesthetic",
+    "ultranest",
+    "pymultinest",
 ]
 
 [project.urls]

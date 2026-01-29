@@ -28,16 +28,17 @@ A simple, online app can help you get an initial YAML configuration file started
 
 The current version of Exo Skryer offers the following nested sampling options:
 
-* pymultinest - 
-* dynesty - 
-* JAXNS -  
-* ultranest (experimental) - 
-* blackjax-ns (experimental) -
+* pymultinest 
+* dynesty 
+* JAXNS 
+* ultranest (experimental) 
+* blackjax-ns (experimental)
+* polychord (experimental)
 
 As well as two NUTS MCMC samplers:
 
-* numpyro - 
-* blackjax - 
+* numpyro 
+* blackjax 
 
 Opacity data
 ------------
@@ -57,7 +58,26 @@ We can try running in the command line, the example HD 209459b retrieval model::
     python -u -m exo_skryer.run_retrieval --config retrieval_config.yaml
 
 Where the model will read the YAML file after the --config flag, which contains the full information to run the retrieval model.
+
+.. note::
+    Make sure that the retrieval_config.yaml points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example.
+
+.. code-block:: yaml
+
+   wl_master: ../../opac_data/ck/wl_ck_R250.txt
+
+   line:
+     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
+     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.npz}
+     - {species: K, path: ../../opac_data/ck/K_ck_R250.npz}
+
+   cia:
+     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+
+
 After completion (a few minutes), the code will output both the dynesty.pkl file and posterior.nc (ArViZ format) files which can then be used to post-process the retrieval results. 
+
 
 The traditional corner plot can be plotted through the script::
 

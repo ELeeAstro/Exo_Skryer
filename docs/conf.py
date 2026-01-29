@@ -11,9 +11,33 @@
 # the global Astropy configuration which is loaded here before anything else.
 # See astropy.sphinx.conf for which values are set there.
 
-from exo_skryer import __version__
 import sys
 import datetime
+import types
+
+# Patch or mock JAX to keep doc builds resilient to optional dependency churn.
+def _ensure_module(name, attrs=None):
+    if name in sys.modules:
+        mod = sys.modules[name]
+    else:
+        mod = types.ModuleType(name)
+        sys.modules[name] = mod
+    if attrs:
+        for key, value in attrs.items():
+            setattr(mod, key, value)
+    return mod
+
+try:
+    import jax  # noqa: F401
+    from jax.interpreters import xla as _jax_xla  # noqa: F401
+    if not hasattr(_jax_xla, "pytype_aval_mappings"):
+        _jax_xla.pytype_aval_mappings = {}
+except Exception:
+    _ensure_module("jax")
+    _ensure_module("jax.interpreters")
+    _ensure_module("jax.interpreters.xla", {"pytype_aval_mappings": {}})
+
+from exo_skryer import __version__
 
 try:
     from sphinx_astropy.conf.v2 import *  # noqa
@@ -34,6 +58,8 @@ highlight_language = 'python3'
 exclude_patterns.append('_templates')  # noqa
 # Exclude template PSF block specification documentation
 exclude_patterns.append('psf_spec/*')  # noqa
+# Exclude auto-generated sampler API stubs now that samplers are removed from api.rst
+exclude_patterns.append('api/exo_skryer.sampler_*')  # noqa
 
 plot_formats = ['png', 'hires.png', 'pdf', 'svg']
 
@@ -159,6 +185,26 @@ autoclass_content = 'both'
 
 numpydoc_show_class_members = False
 autodoc_inherit_docstrings = True
+autodoc_mock_imports = [
+    "anesthetic",
+    "blackjax",
+    "jax",
+    "jaxlib",
+    "numpyro",
+    "pymultinest",
+    "pypolychord",
+    "ultranest",
+]
+autosummary_mock_imports = [
+    "anesthetic",
+    "blackjax",
+    "jax",
+    "jaxlib",
+    "numpyro",
+    "pymultinest",
+    "pypolychord",
+    "ultranest",
+]
 
 intersphinx_mapping = {
     "jax": ["https://jax.readthedocs.io/en/latest/", None],
