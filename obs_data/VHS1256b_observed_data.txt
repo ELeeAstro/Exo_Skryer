@@ -1,4 +1,4 @@
-lam_um dlam_um depth depth_sigma response_mode
+#lam_um dlam_um depth depth_sigma response_mode
 0.969975 0.0001175 1.39511e-09 1.4456e-10 boxcar
 0.97021 0.0001175 1.56897e-09 8.25547e-11 boxcar
 0.970445 0.0001175 1.24763e-09 6.91703e-11 boxcar

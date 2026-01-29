@@ -2,25 +2,27 @@
 name = "Exo_Skryer"
 description = "A JAX accelerated sub-stellar atmosphere retrieval code"
 readme = "README.rst"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 license = { file = "LICENSE", content-type = "text/plain" }
 authors = [
   { name = "Elspeth K. H. Lee", email = "elspeth.lee@unibe.ch" },
 ]
 dependencies = [
   "numpy",
+  "scipy",
   "jax",
-  "blackjax @ git+https://github.com/handley-lab/blackjax.git@95e93ed93e726b95143b2f4a9582888621625f52",
+  "jaxlib",
   "jaxns",
   "numpyro",
   "arviz",
   "pyyaml",
   "optimistix",
-  "anesthetic",
   "distrax",
-
-  # below is the recommended source for tensorflow_probability:
-  "tfp-nightly"
+  "tensorflow-probability",
+  "dynesty",
+  "matplotlib",
+  "h5py",
+  "tqdm",
 ]
 dynamic = ["version"]
 
@@ -28,10 +30,34 @@ dynamic = ["version"]
 exo-skryer = "exo_skryer.run_retrieval:main"
 
 [project.optional-dependencies]
+gpu = [
+    "jax[cuda12_pip]",
+]
+blackjax = [
+    "blackjax",
+]
+anesthetic = [
+    "anesthetic",
+]
+ultranest = [
+    "ultranest",
+]
+pymultinest = [
+    "pymultinest",
+]
+polychord = [
+    "pypolychord",
+]
+all-samplers = [
+    "blackjax",
+    "ultranest",
+    "pymultinest",
+    "pypolychord",
+]
 test = [
     "pytest-doctestplus",
-    "pytest >=4.6.0",
-    "tox"
+    "pytest",
+    "tox",
 ]
 docs = [
     "sphinx",
@@ -41,19 +67,8 @@ docs = [
     "sphinx-astropy[confv2]",
     "sphinx-book-theme",
     "sphinx-toolbox",
-    "matplotlib",
     "IPython",
-    "tox"
-]
-dynesty = [
-    "dynesty"
-]
-ultranest = [
-    "ultranest"
-]
-nested_sampling = [
-    "dynesty",
-    "ultranest"
+    "tox",
 ]
 
 [project.urls]
