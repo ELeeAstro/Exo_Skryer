@@ -21,6 +21,15 @@ Create and activate a fresh environment:
    conda create -n exo_skryer python=3.12 -y
    conda activate exo_skryer
 
+
+Python venv (alternative)
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: bash
+
+   python -m venv .venv
+   source .venv/bin/activate
+
 Install from source
 -------------------
 
@@ -43,17 +52,6 @@ Verify:
 .. code-block:: bash
 
    python -c "import exo_skryer; print('exo_skryer import ok')"
-
-Python venv (alternative)
-^^^^^^^^^^^^^^^^^^^^^^^^^
-
-.. code-block:: bash
-
-   python -m venv .venv
-   source .venv/bin/activate
-   python -m pip install -U pip
-   python -m pip install -e .
-
 
 GPU note (JAX)
 ^^^^^^^^^^^^^^
