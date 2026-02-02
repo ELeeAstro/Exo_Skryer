@@ -5,6 +5,22 @@ Installation
 ************
 
 
+Recommended: install in a clean environment
+-------------------------------------------
+
+We strongly recommend installing Exo_Skryer into a dedicated environment (not ``base``),
+to avoid dependency conflicts (JAX, NumPyro, plotting, etc.).
+
+Conda / Mambaforge (recommended)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Create and activate a fresh environment:
+
+.. code-block:: bash
+
+   conda create -n exo_skryer python=3.12 -y
+   conda activate exo_skryer
+
 Install from source
 -------------------
 
@@ -22,47 +38,11 @@ Clone the repository, change directories into it, and build from source::
     you may want to install ``jax`` for your CPU or GPU. For details on jax 
     installation, see `JAX Installation <https://docs.jax.dev/en/latest/installation.html>`_.
 
-Recommended: install in a clean environment
--------------------------------------------
-
-We strongly recommend installing Exo_Skryer into a dedicated environment (not ``base``),
-to avoid dependency conflicts (JAX, NumPyro, plotting stack, etc.).
-
-Conda / Mambaforge (recommended)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Create and activate a fresh environment:
-
-.. code-block:: bash
-
-   conda create -n exo_skryer python=3.12 -y
-   conda activate exo_skryer
-
-From the repository root (developer install):
-
-.. code-block:: bash
-
-   python -m pip install -U pip
-   python -m pip install -e .
-
 Verify:
 
 .. code-block:: bash
 
    python -c "import exo_skryer; print('exo_skryer import ok')"
-
-Run a retrieval:
-
-.. code-block:: bash
-
-   exo-skryer --config path/to/retrieval_config.yaml
-
-If the ``exo-skryer`` command is not available in your environment, use:
-
-.. code-block:: bash
-
-   python -u -m exo_skryer.run_retrieval --config path/to/retrieval_config.yaml
-
 
 Python venv (alternative)
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -131,3 +111,10 @@ retrieval YAML configuration files.
    streamlit run app.py
 
 Streamlit will print a local URL (typically ``http://localhost:8501``).
+
+
+Next steps
+----------
+
+See :doc:`gettingstarted` for next steps, and running a test retrieval model!
+
