@@ -1,6 +1,10 @@
+.. _gettingstarted:
+
 ***************
 Getting started
 ***************
+
+This guide assumes you have already completed the :doc:`install` steps.
 
 Why Exo Skryer?
 ---------------
@@ -17,8 +21,7 @@ In the era of JWST where medium resolution, large wavelength range coverage obse
 retrieval results have now become a standard methodology to publish alongside new observational data.
 Retrieval models for high spectral resolution data are also being developed, which will become boosted by the near-future operation of the ELT.
 
-These demands have pushed the computational burden of retrieval models
-Exo Skryer attempts to solve these computational issues without the using excessive amounts of high performance computing (HPC) power.
+Exo Skryer attempts to solve computational issues associated with in-depth retrieval modelling, without using excessive amounts of high performance computing (HPC) power.
 Exo Skryer uses the JAX extension to Python to accelerate both the sampling and forward model evaluations, enabling efficient, scalable operation on CPUs and GPUs.
 This enables complex retrieval modelling to be performed in good time on desktop computers with a GPU.
 
@@ -52,7 +55,7 @@ Your first model
 ----------------
 
 The "experiments/HD209_Barstow_2020_trans_setup" provides a first taste of how to use Exo Skryer, performing a first retrieval model, as well as postprocessing, testing individual functions and other things.
-We can try running in the command line, the example HD 209459b retrieval model::
+From the repository root, run the example HD 209458b retrieval model::
 
     cd experiments/HD209_Barstow_2020_trans_setup
     python -u -m exo_skryer.run_retrieval --config retrieval_config.yaml
@@ -60,7 +63,7 @@ We can try running in the command line, the example HD 209459b retrieval model::
 Where the model will read the YAML file after the --config flag, which contains the full information to run the retrieval model.
 
 .. note::
-    Make sure that the retrieval_config.yaml points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example.
+    Make sure that the retrieval_config.yaml file points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example.
 
 .. code-block:: yaml
 
@@ -76,7 +79,7 @@ Where the model will read the YAML file after the --config flag, which contains 
      - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
 
 
-After completion (a few minutes), the code will output both the dynesty.pkl file and posterior.nc (ArViZ format) files which can then be used to post-process the retrieval results. 
+After completion (a few minutes), the code will output both the dynesty.pkl file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results. 
 
 
 The traditional corner plot can be plotted through the script::
@@ -100,11 +103,8 @@ or for emission spectra models::
 
   python bestfit_em_plot.py --config retrieval_config.yaml
 
-Where to plot full resolution spectra, the option "full_grid" in the YAML file must be : True.
+To plot full resolution spectra, set ``full_grid: true`` in the YAML file.
 
 The temperature-pressure (T-p) profile can be plotted using::
 
   python plot_Tp.py --config retrieval_config.yaml
-
-References
-----------
