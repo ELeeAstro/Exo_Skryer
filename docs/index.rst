@@ -24,6 +24,7 @@ A JAX accelerated retrieval code.
   exo_skryer/opacity_ck.rst
   exo_skryer/ck_mix_PRAS.rst
   exo_skryer/ck_mix_RORR.rst
+  exo_skryer/ck_mix_TRANS.rst
   exo_skryer/opacity_rayleigh.rst
   exo_skryer/opacity_cia.rst
   exo_skryer/opacity_cloud.rst

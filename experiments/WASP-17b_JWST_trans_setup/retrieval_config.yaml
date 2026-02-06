@@ -46,7 +46,10 @@ opac:
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
-    - {species: H-, path: ./}
+    - {species: H2-H, path: ../../opac_data/cia/H2-H_2011.npz}
+    - {species: He-H, path: ../../opac_data/cia/He-H_2011.npz}
+  special:
+    - {species: H-, bf: true, ff: true}
   cloud: None
 
 params:
@@ -68,6 +71,8 @@ params:
   - { name: log_10_f_Na, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
   - { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
   - { name: log_10_f_H-, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - { name: log_10_H_over_H2, dist: uniform, low: -12,   high: 2,  transform: logit, init: -6}
+  - { name: log_10_ne_over_ntot, dist: uniform, low: -12,   high: -2,  transform: logit, init: -7}
 
   - { name: log_10_q_c, dist: uniform, low: -12,   high: -1,  transform: logit, init: 0}
   - { name: log_10_cld_r, dist: uniform, low: -3,   high: -1,  transform: logit, init: 0}

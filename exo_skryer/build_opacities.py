@@ -69,6 +69,16 @@ from .registry_cloud import (
     load_cloud_nk_data,
     clear_cloud_nk_data,
 )
+from .registry_special import (
+    has_special_data,
+    special_master_wavelength,
+    hminus_temperature_grid,
+    hminus_log10_temperature_grid,
+    hminus_bf_log10_sigma_table,
+    hminus_ff_log10_sigma_table,
+    load_special_registry,
+    reset_registry as reset_special_registry,
+)
 
 
 __all__ = [
@@ -207,6 +217,7 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
     reset_ck_registry()
     reset_cia_registry()
     reset_ray_registry()
+    reset_special_registry()
     clear_cloud_nk_data()
 
     # Read the master wavelength grid and calculate the observationally cut grid
@@ -253,6 +264,8 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
         load_cia_registry(cfg, obs, lam_master=lam_master_cut, base_dir=exp_dir)
     if opac_cfg is not None and getattr(opac_cfg, "ray", None) not in (None, "None"):
         load_ray_registry(cfg, obs, lam_master=lam_master_cut)
+    # Load special opacity tables (e.g., H- bf/ff) on the master grid.
+    load_special_registry(cfg, obs, lam_master=lam_master_cut, base_dir=exp_dir)
 
     # Optional cloud refractive indices for Mie cloud schemes (lxmie, madt-rayleigh).
     cloud_cfg = getattr(opac_cfg, "cloud", None) if opac_cfg is not None else None
@@ -314,6 +327,12 @@ __all__ = [
     "ray_sigma_table",
     "ray_species_names",
     "ray_pick_arrays",
+    "has_special_data",
+    "special_master_wavelength",
+    "hminus_temperature_grid",
+    "hminus_log10_temperature_grid",
+    "hminus_bf_log10_sigma_table",
+    "hminus_ff_log10_sigma_table",
     "has_cloud_nk_data",
     "cloud_nk_wavelength",
     "cloud_nk_n",

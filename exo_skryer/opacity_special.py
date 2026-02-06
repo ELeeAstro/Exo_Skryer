@@ -9,11 +9,10 @@ from typing import Dict
 
 import jax.numpy as jnp
 
-from . import build_opacities as XS
-
 __all__ = [
     "zero_special_opacity",
-    "compute_hminus_opacity",
+    "compute_hminus_bf_opacity",
+    "compute_hminus_ff_opacity",
     "compute_special_opacity"
 ]
 
@@ -87,11 +86,11 @@ def _interpolate_logsigma_1d(
     return jnp.where(below_min[:, None], tiny, s_interp)
 
 
-def compute_hminus_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-    """Compute H⁻ continuum mass opacity from the CIA registry.
+def compute_hminus_bf_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """Compute H⁻ bound-free continuum mass opacity from the special registry.
 
-    This function uses the `"H-"` entry from the CIA registry (if loaded) as a
-    temperature-dependent cross-section table and applies the `(n / ρ)`
+    This function uses the precomputed H⁻ bound-free cross-section table and
+    applies the `(n / ρ)`
     normalization appropriate for a single-absorber continuum term.
 
     Parameters
@@ -120,24 +119,24 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.nd
 
     Returns
     -------
-    kappa_hminus : `~jax.numpy.ndarray`, shape (nlay, nwl)
-        H⁻ continuum mass opacity in cm² g⁻¹. Returns zeros when the CIA registry
-        is not loaded, does not contain `"H-"`, or when `state["vmr_lay"]` does
-        not provide an `"H-"` mixing ratio.
+    kappa_hminus_bf : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        H⁻ bound-free continuum mass opacity in cm² g⁻¹. Returns zeros when the
+        special registry is not loaded or when `state["vmr_lay"]` does not
+        provide an `"H-"` mixing ratio.
     """
-    if "cia_sigma_cube" not in opac:
-        return zero_special_opacity(state, params)
-
-    species_names = XS.cia_species_names()
-    try:
-        hm_index = [name.strip() for name in species_names].index("H-")
-    except ValueError:
+    required = (
+        "hminus_master_wavelength",
+        "hminus_temperature_grid",
+        "hminus_log10_temperature_grid",
+        "hminus_bf_log10_sigma",
+    )
+    if any(k not in opac for k in required):
         return zero_special_opacity(state, params)
 
     wavelengths = state["wl"]
-    master_wavelength = opac["cia_master_wavelength"]
+    master_wavelength = opac["hminus_master_wavelength"]
     if master_wavelength.shape != wavelengths.shape:
-        raise ValueError("CIA wavelength grid must match the forward-model master grid.")
+        raise ValueError("H- special wavelength grid must match the forward-model master grid.")
 
     layer_temperatures = state["T_lay"]
     number_density = state["nd_lay"]
@@ -148,17 +147,71 @@ def compute_hminus_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.nd
     if "H-" not in layer_vmr:
         return zero_special_opacity(state, params)
 
-    sigma_cube = opac["cia_sigma_cube"]
-    log_temperature_grids = opac["cia_log10_temperature_grids"]
-    temperature_grids = opac["cia_temperature_grids"]
-    sigma_log = sigma_cube[hm_index]
-    log_temperature_grid = log_temperature_grids[hm_index]
-    temperature_grid = temperature_grids[hm_index]
-    sigma_values = 10.0 ** _interpolate_logsigma_1d(sigma_log, log_temperature_grid, temperature_grid, layer_temperatures)
+    sigma_log = opac["hminus_bf_log10_sigma"]
+    log_temperature_grid = opac["hminus_log10_temperature_grid"]
+    temperature_grid = opac["hminus_temperature_grid"]
+    sigma_values = 10.0 ** _interpolate_logsigma_1d(
+        sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
+    )
 
     # VMR value is already a JAX array, no need to wrap
     vmr_hm = jnp.broadcast_to(layer_vmr["H-"], (layer_count,))
     normalization = vmr_hm * (number_density / density)
+    return normalization[:, None] * sigma_values
+
+
+def compute_hminus_ff_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """Compute H⁻ free-free continuum mass opacity from the special registry.
+
+    This term is treated as a two-body continuum source driven by electron and
+    neutral-hydrogen abundances:
+
+        κ_ff = f_e × f_H × (n_d)² / ρ × σ_ff(λ, T)
+
+    where f_e and f_H are volume mixing ratios.
+    """
+    required = (
+        "hminus_master_wavelength",
+        "hminus_temperature_grid",
+        "hminus_log10_temperature_grid",
+        "hminus_ff_log10_sigma",
+    )
+    if any(k not in opac for k in required):
+        return zero_special_opacity(state, params)
+
+    wavelengths = state["wl"]
+    master_wavelength = opac["hminus_master_wavelength"]
+    if master_wavelength.shape != wavelengths.shape:
+        raise ValueError("H- special wavelength grid must match the forward-model master grid.")
+
+    layer_temperatures = state["T_lay"]
+    number_density = state["nd_lay"]
+    density = state["rho_lay"]
+    layer_vmr = state["vmr_lay"]
+    layer_count = state["nlay"]
+
+    if "H" not in layer_vmr:
+        raise ValueError(
+            "H- free-free requires atomic hydrogen VMR key 'H' in state['vmr_lay']. "
+            "For constant_vmr/constant_vmr_clr you can provide parameter "
+            "'log_10_H_over_H2' to derive H from the filler."
+        )
+    if "log_10_ne_over_ntot" not in params:
+        raise ValueError(
+            "H- free-free requires parameter 'log_10_ne_over_ntot' (log10 of ne/n_tot)."
+        )
+
+    sigma_log = opac["hminus_ff_log10_sigma"]
+    log_temperature_grid = opac["hminus_log10_temperature_grid"]
+    temperature_grid = opac["hminus_temperature_grid"]
+    sigma_values = 10.0 ** _interpolate_logsigma_1d(
+        sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
+    )
+
+    vmr_e = jnp.broadcast_to(10.0 ** params["log_10_ne_over_ntot"], (layer_count,))
+    vmr_e = jnp.clip(vmr_e, 0.0, 1.0)
+    vmr_h = jnp.broadcast_to(layer_vmr["H"], (layer_count,))
+    normalization = (vmr_e * vmr_h) * ((number_density**2) / density)
     return normalization[:, None] * sigma_values
 
 
@@ -183,6 +236,9 @@ def compute_special_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.n
 
     See Also
     --------
-    compute_hminus_opacity : H⁻ continuum special term
+    compute_hminus_bf_opacity : H⁻ bound-free continuum term
+    compute_hminus_ff_opacity : H⁻ free-free continuum term
     """
-    return compute_hminus_opacity(state, opac, params)
+    kappa = compute_hminus_bf_opacity(state, opac, params)
+    kappa = kappa + compute_hminus_ff_opacity(state, opac, params)
+    return kappa

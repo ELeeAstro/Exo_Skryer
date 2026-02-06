@@ -73,17 +73,64 @@ def infer_trace_species(
     if cia_opac_scheme_str.lower() in ("lbl", "ck"):
         for cia_name in _extract_species_list(getattr(cfg.opac, "cia", None)):
             if cia_name == "H-":
-                _append_unique(required, "H-")
+                # H- is treated as special opacity (bound-free/free-free), not a CIA pair.
                 continue
             parts = cia_name.split("-")
             if len(parts) == 2:
-                _append_unique(required, parts[0])
-                _append_unique(required, parts[1])
+                # CIA pairs that include atomic hydrogen should not force H to be a
+                # retrieved trace VMR; in constant-VMR modes H is derived from the
+                # filler via log_10_H_over_H2.
+                for p in (parts[0], parts[1]):
+                    if p in ("H2", "He", "H"):
+                        continue
+                    _append_unique(required, p)
 
     if special_opac_scheme_str.lower() not in ("none", "off", "false", "0"):
-        for cia_name in _extract_species_list(getattr(cfg.opac, "cia", None)):
-            if cia_name == "H-":
-                _append_unique(required, "H-")
+        opac_cfg = getattr(cfg, "opac", None)
+        special_cfg = getattr(opac_cfg, "special", None) if opac_cfg is not None else None
+
+        hm_enabled = False
+        hm_bf = True
+        hm_ff = False
+
+        # New config: cfg.opac.special includes species='H-' with optional bf/ff toggles
+        if special_cfg not in (None, "None", "none", False):
+            hm_enabled = True
+            if not isinstance(special_cfg, bool):
+                try:
+                    iterator = iter(special_cfg)
+                except TypeError:
+                    iterator = iter((special_cfg,))
+                for item in iterator:
+                    name = getattr(item, "species", item)
+                    if str(name).strip() != "H-":
+                        continue
+                    hm_bf = bool(getattr(item, "bf", hm_bf))
+                    hm_ff = bool(getattr(item, "ff", hm_ff))
+                    hm_enabled = True
+                    break
+
+        # Back-compat: cfg.opac.cia includes H- (treated as bf only unless ff flag set)
+        if not hm_enabled:
+            cia_cfg = getattr(opac_cfg, "cia", None) if opac_cfg is not None else None
+            if cia_cfg not in (None, "None", "none", False):
+                try:
+                    iterator = iter(cia_cfg)
+                except TypeError:
+                    iterator = iter((cia_cfg,))
+                for item in iterator:
+                    name = getattr(item, "species", item)
+                    if str(name).strip() != "H-":
+                        continue
+                    hm_enabled = True
+                    hm_bf = True
+                    hm_ff = bool(getattr(item, "ff", hm_ff))
+                    break
+
+        if hm_enabled and hm_bf:
+            _append_unique(required, "H-")
+        # For H- free-free: electrons and atomic-H are handled via separate
+        # retrieved proxies (ne/n_tot and H/H2), not via the VMR machinery.
 
     trace_species = tuple(s for s in required if s not in ("H2", "He"))
     return trace_species
@@ -276,6 +323,43 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
         cia_opac_scheme_str=opacity_schemes['cia_opac'],
         special_opac_scheme_str=opacity_schemes['special_opac'],
     )
+
+    # If configured opacities require atomic H (CIA H2-H / He-H pairs, or H- ff),
+    # constant-VMR chemistry derives H from the H2+He filler using log_10_H_over_H2.
+    need_atomic_h = False
+    opac_cfg = getattr(cfg, "opac", None)
+    cia_names = _extract_species_list(getattr(opac_cfg, "cia", None) if opac_cfg is not None else None)
+    for name in cia_names:
+        parts = str(name).strip().split("-")
+        if len(parts) == 2 and "H" in parts and "H-" not in parts:
+            need_atomic_h = True
+            break
+    if not need_atomic_h:
+        special_cfg = getattr(opac_cfg, "special", None) if opac_cfg is not None else None
+        if special_cfg not in (None, "None", "none", False):
+            try:
+                iterator = iter(special_cfg) if not isinstance(special_cfg, bool) else iter(())
+            except TypeError:
+                iterator = iter((special_cfg,))
+            for item in iterator:
+                spec = getattr(item, "species", item)
+                if str(spec).strip() != "H-":
+                    continue
+                if bool(getattr(item, "ff", False)):
+                    need_atomic_h = True
+                break
+
+    if need_atomic_h:
+        from .vert_chem import constant_vmr, constant_vmr_clr
+
+        if chemistry_kernel in (constant_vmr, constant_vmr_clr):
+            cfg_param_names = {p.name for p in cfg.params}
+            if "log_10_H_over_H2" not in cfg_param_names:
+                raise ValueError(
+                    "Atomic H is required by the configured CIA/special opacities, but parameter "
+                    "'log_10_H_over_H2' is missing. Add it to cfg.params to derive H from the "
+                    "H2+He filler (constant_vmr/constant_vmr_clr)."
+                )
 
     # For constant VMR: validate and build optimized kernel
     if chemistry_kernel is constant_vmr:

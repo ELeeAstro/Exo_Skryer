@@ -386,6 +386,19 @@ def build_forward_model(
     if XS.has_cloud_nk_data():
         opac_cache["cloud_nk_n"] = XS.cloud_nk_n()
         opac_cache["cloud_nk_k"] = XS.cloud_nk_k()
+    if XS.has_special_data():
+        opac_cache["hminus_master_wavelength"] = XS.special_master_wavelength()
+        opac_cache["hminus_temperature_grid"] = XS.hminus_temperature_grid()
+        opac_cache["hminus_log10_temperature_grid"] = XS.hminus_log10_temperature_grid()
+        # Table presence depends on cfg.opac.special flags; only include those that exist.
+        try:
+            opac_cache["hminus_bf_log10_sigma"] = XS.hminus_bf_log10_sigma_table()
+        except RuntimeError:
+            pass
+        try:
+            opac_cache["hminus_ff_log10_sigma"] = XS.hminus_ff_log10_sigma_table()
+        except RuntimeError:
+            pass
 
     # Opacities must be present in the runtime cache 
     if ck and line_opac_scheme_str.lower() == "ck":
@@ -408,6 +421,11 @@ def build_forward_model(
         missing = [k for k in required if k not in opac_cache]
         if missing:
             raise RuntimeError(f"Missing Rayleigh cache entries: {missing}")
+    if special_opac_kernel is not None and XS.has_special_data():
+        required = ("hminus_master_wavelength", "hminus_temperature_grid", "hminus_log10_temperature_grid")
+        missing = [k for k in required if k not in opac_cache]
+        if missing:
+            raise RuntimeError(f"Missing special-opacity cache entries: {missing}")
 
     # Mie cloud schemes require cached n,k.
     if cld_opac_scheme_str.lower() in ("madt_rayleigh", "madt-rayleigh", "mie_madt", "lxmie", "mie_full", "full_mie"):

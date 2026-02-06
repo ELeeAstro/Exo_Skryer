@@ -75,10 +75,31 @@ def constant_vmr(species_order: tuple[str, ...]):
 
         # Build VMR dictionary with constant profiles for each species
         vmr = {s: jnp.full((nlay,), trace[i]) for i, s in enumerate(species_order)}
-        H2 =  background  / (1.0 +  solar_He_H2)
+        # Optional atomic-hydrogen split: retrieve log10(H/H2) and solve for
+        # H2, He, H such that:
+        #   H/H2 = r,  He/H = solar_He (by H nuclei), and H2 + He + H = background
+        #
+        # This keeps the total hydrogen budget (H nuclei) consistent while moving
+        # hydrogen between H2 and H, rather than implicitly changing He/H when H is added.
+        if "log_10_H_over_H2" in params:
+            r = 10.0 ** params["log_10_H_over_H2"]
+        else:
+            r = jnp.asarray(0.0, dtype=background.dtype)
+        r = jnp.maximum(r, 0.0)
+
+        # Let N_H be the (dimensionless) abundance of hydrogen nuclei in the filler.
+        # Then:
+        #   H2 = N_H/(2+r),  H = r*H2,  He = solar_He*N_H,
+        # and enforce H2+H+He = background to solve for N_H.
+        denom = solar_He + (1.0 + r) / (2.0 + r)
+        N_H = background / denom
+        H2 = N_H / (2.0 + r)
+        H = r * H2
+        He = solar_He * N_H
         vmr["H2"] = jnp.full((nlay,), H2)
-        He = H2 * solar_He_H2
         vmr["He"] = jnp.full((nlay,), He)
+        if "log_10_H_over_H2" in params:
+            vmr["H"] = jnp.full((nlay,), H)
         return vmr
 
     return _constant_vmr_kernel
@@ -163,11 +184,23 @@ def constant_vmr_clr(species_order: tuple[str, ...], use_log10_vmr: bool = False
             # Build VMR dictionary with constant profiles for each species
             vmr = {s: jnp.full((nlay,), trace[i]) for i, s in enumerate(species_order)}
 
-        # Split filler into H2 and He at solar ratio
-        H2 = background / (1.0 + solar_He_H2)
+        # Split filler into H2/He, optionally with atomic H using retrieved H/H2 ratio.
+        # Enforce He/H = solar_He (by H nuclei) when H is present.
+        if "log_10_H_over_H2" in params:
+            r = 10.0 ** params["log_10_H_over_H2"]
+        else:
+            r = jnp.asarray(0.0, dtype=background.dtype)
+        r = jnp.maximum(r, 0.0)
+
+        denom = solar_He + (1.0 + r) / (2.0 + r)
+        N_H = background / denom
+        H2 = N_H / (2.0 + r)
+        H = r * H2
+        He = solar_He * N_H
         vmr["H2"] = jnp.full((nlay,), H2)
-        He = H2 * solar_He_H2
         vmr["He"] = jnp.full((nlay,), He)
+        if "log_10_H_over_H2" in params:
+            vmr["H"] = jnp.full((nlay,), H)
         return vmr
 
     return _constant_vmr_clr_kernel

@@ -152,7 +152,13 @@ def _integrate_g_points_trans(
         T_s = jnp.sum(T_s_g * w[None, None, :], axis=-1)                  # (nlay, nwl)
         return T_prod * jnp.clip(T_s, 1e-99, 1.0)
 
-    T_prod = lax.fori_loop(0, nspec, _body, T_prod0)  # (nlay, nwl)
+    # Important: when nspec==0 (e.g. continuum-only diagnostics), tracing a fori_loop
+    # would still stage `_body` and attempt `sigma_perspecies[0]`, which is invalid
+    # for a zero-length leading dimension.
+    if nspec == 0:
+        T_prod = T_prod0
+    else:
+        T_prod = lax.fori_loop(0, nspec, _body, T_prod0)  # (nlay, nwl)
 
     T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 100.0)) * T_prod  # (nlay, nwl)
     if refraction_mask is not None:

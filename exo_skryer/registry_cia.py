@@ -27,28 +27,6 @@ __all__ = [
 ]
 
 
-# Plain Python lists (exact values)
-An_ff1 = [518.1021, 472.2636, -482.2089, 115.5291, 0.0, 0.0]
-Bn_ff1 = [-734.8666, 1443.4137, -737.1616, 169.6374, 0.0, 0.0]
-Cn_ff1 = [1021.1775, -1977.3395, 1096.8827, -245.6490, 0.0, 0.0]
-Dn_ff1 = [-479.0721, 922.3575, -521.1341, 114.2430, 0.0, 0.0]
-En_ff1 = [93.1373, -178.9275, 101.7963, -21.9972, 0.0, 0.0]
-Fn_ff1 = [-6.4285, 12.3600, -7.0571, 1.5097, 0.0, 0.0]
-
-An_ff2 = [0.0, 2483.3460, -3449.8890, 2200.0400, -696.2710, 88.2830]
-Bn_ff2 = [0.0, 285.8270, -1158.3820, 2427.7190, -1841.4000, 444.5170]
-Cn_ff2 = [0.0, -2054.2910, 8746.5230, -13651.1050, 8642.9700, -1863.8640]
-Dn_ff2 = [0.0, 2827.7760, -11485.6320, 16755.5240, -10051.5300, 2095.2880]
-En_ff2 = [0.0, -1341.5370, 5303.6090, -7510.4940, 4400.0670, -901.7880]
-Fn_ff2 = [0.0, 208.9520, -812.9390, 1132.7380, -655.0200, 132.9850]
-
-Cn_bf = [152.519, 49.534, -118.858, 92.536, -34.194, 4.982]
-
-alf = 1.439e8
-lam_0 = 1.6419
-lam_min = 0.125
-
-
 # Dataclass containing the CIA table data
 # Note: During preprocessing, all arrays are NumPy (CPU)
 # They get converted to JAX (device) only at the final cache creation step
@@ -183,56 +161,6 @@ def _rectangularize_entries(entries: List[CiaRegistryEntry]) -> Tuple[CiaRegistr
         )
     return tuple(padded_entries)
 
-def _build_hminus_cia_entry(index: int, target_wavelengths: np.ndarray, spec) -> CiaRegistryEntry:
-    lam = np.asarray(target_wavelengths, dtype=float)
-
-    # Rectangularise to the expected H2-He grid size
-    nT = 334
-    T = np.linspace(100.0, 6000.0, nT, dtype=float)
-
-    floor = -199.0
-
-    # Base validity window from configured constants
-    lam_min_base = float(lam_min)   # module constant
-    lam0_base = float(lam_0)        # module constant
-    valid = (lam >= lam_min_base) & (lam <= lam0_base)
-
-    # Start with everything floored in log10 space
-    # Use float64 for log10 cross sections to keep dtype consistent.
-    log10_sigma = np.full((nT, lam.size), floor, dtype=np.float64)
-
-    if np.any(valid):
-        lam_v = lam[valid]
-        base = (1.0 / lam_v) - (1.0 / lam0_base)  # >= 0 in valid region
-
-        # fbf(lam) = sum_{n=1..6} Cn_bf[n-1] * base^((n-1)/2)
-        fbf = np.zeros_like(lam_v, dtype=float)
-        for n in range(1, 7):
-            fbf += Cn_bf[n - 1] * (base ** ((n - 1) / 2.0))
-
-        # xbf linear
-        xbf_v = 1.0e-18 * (lam_v ** 3) * (base ** 1.5) * fbf
-
-        # Convert to log10 safely and broadcast across T (this snippet is λ-only)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            log10_v = np.where(xbf_v > 0.0, np.log10(xbf_v), floor).astype(np.float64)
-
-        log10_sigma[:, valid] = log10_v[None, :]
-
-    # enforce floor
-    log10_sigma = np.maximum(log10_sigma, floor)
-
-    # Return NumPy arrays (will be converted to JAX later)
-    # Float64 for grids and cross sections.
-    return CiaRegistryEntry(
-        name="H-",
-        idx=index,
-        temperatures=T.astype(np.float64),
-        wavelengths=lam.astype(np.float64),
-        cross_sections=log10_sigma,
-    )
-
-
 # Load in the CIA table data - add the data to global scope cache files
 def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir: Optional[Path] = None) -> None:
 
@@ -250,19 +178,20 @@ def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_di
     # Read in each CIA table data
     for index, spec in enumerate(cfg.opac.cia):
         name = getattr(spec, "species", spec)
-        if name == 'H-':
-            print("[CIA] Computing CIA xs for", name, "on master grid")
-            entry = _build_hminus_cia_entry(index, wavelengths, spec)
-        else:
-            cia_path = Path(spec.path).expanduser()
-            if not cia_path.is_absolute():
-                if base_dir is not None:
-                    cia_path = (Path(base_dir) / cia_path).resolve()
-                else:
-                    cia_path = cia_path.resolve()
-            path_str = str(cia_path)
-            print("[CIA] Reading cia xs for", name, "@", path_str)
-            entry = _load_cia_npz(index, path_str, wavelengths)
+        if name == "H-":
+            print("[warn] cfg.opac.cia includes 'H-': this is no longer treated as a CIA table.")
+            print("[warn] Enable H- continuum under cfg.opac.special instead (bf/ff handled as special opacity).")
+            continue
+
+        cia_path = Path(spec.path).expanduser()
+        if not cia_path.is_absolute():
+            if base_dir is not None:
+                cia_path = (Path(base_dir) / cia_path).resolve()
+            else:
+                cia_path = cia_path.resolve()
+        path_str = str(cia_path)
+        print("[CIA] Reading cia xs for", name, "@", path_str)
+        entry = _load_cia_npz(index, path_str, wavelengths)
         entries.append(entry)
 
     # For JAX, need to pad to make the tables rectangular with the same nummber of T grids

@@ -240,7 +240,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
             if has_offsets:
                 offset_values = jnp.array([params[n] for n in offset_param_names])
                 offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
-                y_shifted = y_obs - offset_vec
+                y_shifted = y_obs + offset_vec  # positive offset shifts data UP
             else:
                 y_shifted = y_obs
 

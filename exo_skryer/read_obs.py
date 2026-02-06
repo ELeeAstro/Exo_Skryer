@@ -109,6 +109,13 @@ def read_obs_data(path, base_dir=None):
         offset_group = raw[:, offset_group_col].astype("<U32")
         unique_groups = np.unique(offset_group)
         print(f'[info] Found {len(unique_groups)} offset groups: {unique_groups.tolist()}')
+        # Print wavelength range for each offset group
+        for grp in unique_groups:
+            mask = offset_group == grp
+            wl_min, wl_max = wl[mask].min(), wl[mask].max()
+            n_pts = mask.sum()
+            print(f'[info]   -> {grp}: {wl_min:.4f} - {wl_max:.4f} um ({n_pts} points)')
+        print('[info] Define offset_<group> parameters in YAML to fit instrument offsets')
     else:
         # Default: all data in single group (no offset needed)
         offset_group = np.full(wl.shape, "__no_offset__", dtype="<U32")

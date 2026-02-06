@@ -58,7 +58,10 @@ def compute_mu(vmr_lay: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     mu_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Mean molecular weight profile in g mol⁻¹.
     """
-    species_list = sorted(species for species in vmr_lay.keys() if species in _SPECIES_MASS)
+    # Electrons (e-) have negligible mass and should not affect mean molecular weight.
+    species_list = sorted(
+        species for species in vmr_lay.keys() if species in _SPECIES_MASS and species != "e-"
+    )
     if not species_list:
         raise ValueError("No valid species provided to compute mean molecular weight.")
 

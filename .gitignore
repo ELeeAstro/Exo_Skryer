@@ -1,3 +1,6 @@
+experiments/WASP-76*/*
+obs_data/WASP-76*
+
 # Dev ignore
 FastChem/
 stash/

@@ -1,0 +1,86 @@
+data:
+
+  obs: None
+  stellar: None
+
+physics:
+
+  nlay: 99
+
+  vert_Tp: Guillot
+  vert_alt: p_ref
+  vert_chem: constant_vmr
+  vert_mu: dynamic
+  vert_cloud: exponential_decay_profile
+
+  opac_line: ck
+  opac_ray: ck
+  opac_cia: ck
+  opac_cloud: F18
+  opac_special: None
+  cloud_dist: mono
+
+  rt_scheme: transit_1d
+  em_scheme: None
+  emission_mode: planet
+  contri_func: False
+
+opac:
+
+  wl_master: ../../opac_data/ck/wl_ck_R250.txt
+  full_grid: True
+  ck: True
+  ck_mix: TRANS
+
+  line:
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
+    - {species: CO2, path: ../../opac_data/ck/CO2_ck_R250.npz}
+    - {species: CO, path: ../../opac_data/ck/CO_ck_R250.npz}
+    - {species: CH4, path: ../../opac_data/ck/CH4_ck_R250.npz}
+  ray:
+    - {species: H2}
+    - {species: He}
+  cia:
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+  cloud: None
+
+params:
+
+  # System parameters
+  - { name: R_s,          dist: delta, value: 1.0,   transform: identity, init: 1.0 }
+  - { name: p_bot,        dist: delta, value: 1000.0, transform: identity, init: 1000.0 }
+  - { name: p_top,        dist: delta, value: 1e-8,   transform: identity, init: 1e-8 }
+  - { name: log_10_p_ref, dist: delta, value: 1.0,    transform: identity, init: 1.0 }
+
+  # Planet parameters
+  - { name: log_10_g, dist: delta, value: 3.0, transform: identity, init: 3.0 }
+  - { name: R_p,      dist: delta, value: 1.0, transform: identity, init: 1.0 }
+
+  # Guillot T-P profile parameters
+  - { name: T_eq,        dist: delta, value: 1000.0,  transform: identity, init: 1000.0 }
+  - { name: T_int,       dist: delta, value: 100.0,  transform: identity, init: 100.0 }
+  - { name: log_10_k_ir, dist: delta, value: -2.0,   transform: identity, init: -2.0 }
+  - { name: log_10_gam_v, dist: delta, value: -1.0,  transform: identity, init: -1.0 }
+  - { name: f_hem,       dist: delta, value: 0.25,   transform: identity, init: 0.25 }
+
+  # Gas abundances (log10 VMR)
+  - { name: log_10_f_H2O, dist: delta, value: -3.5, transform: identity, init: -3.5 }
+  - { name: log_10_f_CO2, dist: delta, value: -7.0, transform: identity, init: -7.0 }
+  - { name: log_10_f_CO,  dist: delta, value: -3.0, transform: identity, init: -3.0 }
+  - { name: log_10_f_CH4, dist: delta, value: -6.0, transform: identity, init: -6.0 }
+
+  # Cloud parameters (exponential decay + F18)
+  - { name: log_10_q_c,        dist: delta, value: -6.0, transform: identity, init: -6.0 }
+  - { name: log_10_p_base,     dist: delta, value: 0.0,  transform: identity, init: 0.0 }
+  - { name: log_10_cld_r,      dist: delta, value: -1.0, transform: identity, init: -1.0 }
+  - { name: log_10_alpha_cld,  dist: delta, value: 0.0,  transform: identity, init: 0.0 }
+  - { name: cld_rho,           dist: delta, value: 1.0,  transform: identity, init: 1.0 }
+  - { name: cld_Q0,            dist: delta, value: 20.0, transform: identity, init: 20.0 }
+  - { name: cld_Q1,            dist: delta, value: 1.0,  transform: identity, init: 1.0 }
+  - { name: cld_a,             dist: delta, value: 4.0,  transform: identity, init: 4.0 }
+  - { name: cld_sigma,         dist: delta, value: 1.0,  transform: identity, init: 1.0 }
+
+runtime:
+  platform: cpu
+  threads: 1

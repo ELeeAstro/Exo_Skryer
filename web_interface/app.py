@@ -40,14 +40,30 @@ st.set_page_config(
 # =============================================================================
 # CUSTOM YAML HANDLING
 # =============================================================================
-# By default, PyYAML represents Python None as an empty string.
-# This custom representer ensures None becomes the literal string "null" in YAML.
+
+class FlowStyleDict(dict):
+    """Marker class for dicts that should be rendered in YAML flow style (single line)."""
+    pass
+
+
+class CustomDumper(yaml.SafeDumper):
+    """Custom YAML dumper that renders FlowStyleDict in flow style."""
+    pass
+
+
+def represent_flow_dict(dumper, data):
+    """Represent FlowStyleDict in flow style (e.g., {name: R_s, dist: delta, ...})."""
+    return dumper.represent_mapping('tag:yaml.org,2002:map', data.items(), flow_style=True)
+
+
 def represent_none(dumper, _):
     """Tell PyYAML how to represent Python None values in YAML output."""
     return dumper.represent_scalar('tag:yaml.org,2002:null', 'null')
 
-# Register the custom representer with the yaml module
-yaml.add_representer(type(None), represent_none)
+
+# Register custom representers
+CustomDumper.add_representer(FlowStyleDict, represent_flow_dict)
+CustomDumper.add_representer(type(None), represent_none)
 
 
 # =============================================================================
@@ -180,8 +196,11 @@ COMMON_LINE_SPECIES = ["H2O", "CO", "CO2", "CH4", "NH3", "H2S", "HCN", "C2H2", "
 COMMON_RAY_SPECIES = ["H2", "He", "N2", "CO", "CO2", "CH4", "O2", "NH3", "Ar", "H2O", "H2S", "HCN", "SO2", "C2H2"]
 
 # Collision-induced absorption pairs (from opac_data/cia directory)
-# Note: H- is for bound-free and free-free opacity (negative hydrogen ion)
-COMMON_CIA_PAIRS = ["H2-H2", "H2-He", "H2-H", "He-H", "H-"]
+# Note: H- is handled as a special opacity source (bound-free/free-free), not a CIA pair.
+COMMON_CIA_PAIRS = ["H2-H2", "H2-He", "H2-H", "He-H"]
+
+# Special opacity sources (currently only H- continuum)
+COMMON_SPECIAL_SPECIES = ["H-"]
 
 # Prior distribution types for retrieval parameters
 # - uniform: Flat prior between low and high bounds
@@ -220,6 +239,10 @@ def init_session_state():
         'line_species': [],
         'ray_species': ['H2', 'He'],      # Common defaults for gas giants
         'cia_species': ['H2-H2', 'H2-He'], # Common CIA pairs
+        # Special opacity toggles
+        'special_hminus_enabled': False,
+        'special_hminus_bf': True,
+        'special_hminus_ff': True,
         # Parameters list (will hold retrieval parameter definitions)
         'params': [],
         # Sampling
@@ -344,17 +367,18 @@ def build_config() -> dict:
         config['opac']['ck_mix'] = st.session_state.get('ck_mix', 'RORR')
 
     # Line opacity species (the main absorbers like H2O, CO, etc.)
+    # Use FlowStyleDict for compact single-line YAML output
     if st.session_state.line_species:
         config['opac']['line'] = []
         for species in st.session_state.line_species:
             entry = {'species': species['name']}
             if species.get('path'):  # Path is optional (can use defaults)
                 entry['path'] = species['path']
-            config['opac']['line'].append(entry)
+            config['opac']['line'].append(FlowStyleDict(entry))
 
     # Rayleigh scattering species (simpler format - no paths needed)
     if st.session_state.ray_species:
-        config['opac']['ray'] = [{'species': s} for s in st.session_state.ray_species]
+        config['opac']['ray'] = [FlowStyleDict({'species': s}) for s in st.session_state.ray_species]
 
     # Collision-induced absorption pairs
     if st.session_state.cia_species:
@@ -365,7 +389,13 @@ def build_config() -> dict:
             cia_path = st.session_state.get(f'cia_path_{pair}')
             if cia_path:
                 entry['path'] = cia_path
-            config['opac']['cia'].append(entry)
+            config['opac']['cia'].append(FlowStyleDict(entry))
+
+    # Special opacity sources (e.g., H- bf/ff)
+    if st.session_state.get("special_hminus_enabled", False):
+        bf_on = bool(st.session_state.get("special_hminus_bf", True))
+        ff_on = bool(st.session_state.get("special_hminus_ff", True))
+        config['opac']['special'] = [FlowStyleDict({'species': 'H-', 'bf': bf_on, 'ff': ff_on})]
 
     # Cloud opacity data path
     if st.session_state.get('cloud_opac_path'):
@@ -374,10 +404,11 @@ def build_config() -> dict:
     # -------------------------------------------------------------------------
     # PARAMS SECTION
     # List of retrieval parameters with their priors
+    # Wrap each param dict in FlowStyleDict for single-line YAML output
     # -------------------------------------------------------------------------
     if st.session_state.params:
-        # Make a copy to avoid modifying the session state
-        config['params'] = st.session_state.params.copy()
+        # Wrap each param in FlowStyleDict for compact YAML output
+        config['params'] = [FlowStyleDict(p) for p in st.session_state.params]
 
     # -------------------------------------------------------------------------
     # SAMPLING SECTION
@@ -534,6 +565,9 @@ def config_to_yaml(config: dict) -> str:
     """
     Convert a configuration dictionary to a YAML-formatted string.
 
+    Uses CustomDumper to render params in flow style (single-line format)
+    matching the style used in experiment config files.
+
     Args:
         config: The configuration dictionary from build_config()
 
@@ -542,7 +576,8 @@ def config_to_yaml(config: dict) -> str:
     """
     return yaml.dump(
         config,
-        default_flow_style=False,  # Use block style (readable multi-line format)
+        Dumper=CustomDumper,       # Use custom dumper for flow-style params
+        default_flow_style=False,  # Block style for everything else
         sort_keys=False,           # Preserve insertion order (Python 3.7+)
         allow_unicode=True         # Allow unicode characters
     )
@@ -710,6 +745,15 @@ def render_opac_section():
                                   default=st.session_state.cia_species, key="cia_select")
     st.session_state.cia_species = cia_species
 
+    st.subheader("Special Opacity Sources")
+    special_on = st.checkbox("Enable H- continuum (bf/ff)", key="special_hminus_enabled")
+    if special_on:
+        col_bf, col_ff = st.columns(2)
+        with col_bf:
+            st.checkbox("H- bound-free (bf)", value=st.session_state.get("special_hminus_bf", True), key="special_hminus_bf")
+        with col_ff:
+            st.checkbox("H- free-free (ff)", value=st.session_state.get("special_hminus_ff", True), key="special_hminus_ff")
+
     # Cloud opacity path (only show if cloud opacity is enabled)
     if st.session_state.get('opac_cloud') and st.session_state.opac_cloud != 'None':
         st.subheader("Cloud Opacity")
@@ -780,6 +824,24 @@ def render_params_section():
     # =========================================================================
     st.subheader("Sampled Parameters (retrieved)")
     st.markdown("These parameters are retrieved with uniform priors.")
+
+    # Quick-add helpers for common parameter bundles
+    if st.session_state.get("special_hminus_enabled", False):
+        st.markdown("**H- helper**: H- free-free uses `log_10_ne_over_ntot` (log10 of n_e/n_tot) and `log_10_H_over_H2` (log10 of H/H2).")
+        if st.button("Add H- params (recommended)", key="add_hminus_param_bundle"):
+            existing = {p.get("name") for p in st.session_state.params}
+
+            def ensure_uniform(name, low, high, init):
+                if name in existing:
+                    return
+                add_parameter(name, "uniform", low=low, high=high, transform="logit", init=init)
+                existing.add(name)
+
+            ensure_uniform("log_10_f_H-", low=-12, high=-2, init=-6)
+            if st.session_state.get("special_hminus_ff", True):
+                ensure_uniform("log_10_H_over_H2", low=-12, high=2, init=-6)
+                ensure_uniform("log_10_ne_over_ntot", low=-12, high=-2, init=-7)
+            st.rerun()
 
     # Input form for sampled parameters
     col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1.5, 1.5, 1])

@@ -628,7 +628,7 @@ def compute_component_spectra(
     from exo_skryer.registry_bandpass import load_bandpass_registry
     from exo_skryer.RT_trans_1D_lbl import _build_transit_geometry, _transit_depth_from_opacity
     from exo_skryer.opacity_cloud import compute_cloud_opacity
-    from exo_skryer.opacity_special import compute_hminus_opacity
+    from exo_skryer.opacity_special import compute_special_opacity
     from exo_skryer import build_opacities as XS
 
     # Load config
@@ -666,13 +666,13 @@ def compute_component_spectra(
         print(f"[component_spectra] Loading samples from CSV: {csv_file}")
         param_draws, N_total = _build_param_draws_from_csv(csv_file, params_cfg)
     else:
-        import arviz as az
         posterior_path = exp_dir / "posterior.nc"
         if not posterior_path.exists():
             raise FileNotFoundError(f"Missing {posterior_path}")
         print(f"[component_spectra] Loading samples from NetCDF: {posterior_path}")
-        idata = az.from_netcdf(posterior_path)
-        posterior_ds = idata.posterior
+        # Avoid ArviZ import-time side effects (writes to ~/arviz_data).
+        import xarray as xr
+        posterior_ds = xr.open_dataset(posterior_path, group="posterior")
         param_draws, N_total = _build_param_draws_from_idata(posterior_ds, params_cfg)
 
     # Get median parameters
@@ -683,15 +683,22 @@ def compute_component_spectra(
     print("[component_spectra] Building atmospheric state...")
     state = build_atmospheric_state(cfg, theta_median, hi_wl_jax)
 
+    # Convert params to JAX-compatible (used by opacity/RT kernels)
+    full_params = {k: jnp.asarray(v) for k, v in theta_median.items()}
+
+    use_ck = bool(getattr(getattr(cfg, "opac", None), "ck", False))
+    ck_mix = str(getattr(getattr(cfg, "opac", None), "ck_mix", "RORR")).upper()
+
     # Compute per-species opacities
     print("[component_spectra] Computing per-species opacities...")
     all_opacities = {}
 
     # Line opacities
-    line_opacs = compute_line_opacity_per_species(state, theta_median)
-    all_opacities.update(line_opacs)
-    if line_opacs:
-        print(f"  - Line species: {list(line_opacs.keys())}")
+    if not use_ck:
+        line_opacs = compute_line_opacity_per_species(state, theta_median)
+        all_opacities.update(line_opacs)
+        if line_opacs:
+            print(f"  - Line species: {list(line_opacs.keys())}")
 
     # Rayleigh opacities
     ray_opacs = compute_ray_opacity_per_species(state, theta_median)
@@ -723,7 +730,6 @@ def compute_component_spectra(
             }
             cloud_fn = cloud_schemes.get(cloud_scheme)
             if cloud_fn is not None:
-                full_params = {k: jnp.asarray(v) for k, v in theta_median.items()}
                 k_cld, _, _ = cloud_fn(state, full_params)
                 all_opacities["cloud"] = k_cld
                 print(f"  - Cloud: {cloud_scheme}")
@@ -734,8 +740,23 @@ def compute_component_spectra(
     special_scheme = str(getattr(phys, "opac_special", "none")).lower()
     if special_scheme not in ("none", "null", "off"):
         try:
-            full_params = {k: jnp.asarray(v) for k, v in theta_median.items()}
-            hminus_k = compute_hminus_opacity(state, full_params)
+            if XS.has_special_data():
+                special_opac = {
+                    "hminus_master_wavelength": XS.special_master_wavelength(),
+                    "hminus_temperature_grid": XS.hminus_temperature_grid(),
+                    "hminus_log10_temperature_grid": XS.hminus_log10_temperature_grid(),
+                }
+                try:
+                    special_opac["hminus_bf_log10_sigma"] = XS.hminus_bf_log10_sigma_table()
+                except RuntimeError:
+                    pass
+                try:
+                    special_opac["hminus_ff_log10_sigma"] = XS.hminus_ff_log10_sigma_table()
+                except RuntimeError:
+                    pass
+            else:
+                special_opac = {}
+            hminus_k = compute_special_opacity(state, special_opac, full_params)
             if jnp.any(hminus_k > 0):
                 all_opacities["special_H-"] = hminus_k
                 print("  - Special: H-")
@@ -746,16 +767,126 @@ def compute_component_spectra(
     print("[component_spectra] Computing transit depth for each component...")
     geometry = _build_transit_geometry(state)
 
+    if use_ck:
+        # Correlated-k RT requires g-points/weights in the opac cache.
+        opac_ck = {
+            "ck_sigma_cube": XS.ck_sigma_cube(),
+            "ck_log10_pressure_grid": XS.ck_log10_pressure_grid(),
+            "ck_log10_temperature_grids": XS.ck_log10_temperature_grids(),
+            "ck_g_points": XS.ck_g_points(),
+            "ck_g_weights": XS.ck_g_weights(),
+        }
+        g_weights = opac_ck["ck_g_weights"]
+        if g_weights.ndim > 1:
+            g_weights = g_weights[0]
+        g_points = opac_ck["ck_g_points"]
+        if g_points.ndim > 1:
+            g_points = g_points[0]
+        opac_ck["g_weights"] = g_weights
+        opac_ck["g_points"] = g_points
+
+        # Pick the CK transit kernel and prepare line opacities.
+        if ck_mix == "TRANS":
+            from exo_skryer.opacity_ck import compute_ck_opacity_perspecies
+            from exo_skryer.RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans as _rt_ck
+
+            sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac_ck, full_params)
+            ck_species = XS.ck_species_names()
+        else:
+            from exo_skryer.opacity_ck import compute_ck_opacity_perspecies, compute_ck_opacity
+            from exo_skryer.RT_trans_1D_ck import compute_transit_depth_1d_ck as _rt_ck
+
+            sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac_ck, full_params)
+            line_total = compute_ck_opacity(state, opac_ck, full_params)
+            ck_species = XS.ck_species_names()
+
+        nlay = int(state["nlay"])
+        nwl = int(state["nwl"])
+        ng = int(opac_ck["g_weights"].shape[-1])
+
+        def _empty_line_components():
+            if ck_mix == "TRANS":
+                return {
+                    "line_perspecies": jnp.zeros((0, nlay, nwl, ng), dtype=jnp.float64),
+                    "vmr_perspecies": jnp.zeros((0, nlay), dtype=jnp.float64),
+                }
+            return {}
+
+        def _rt_one(opacity_components: dict) -> jnp.ndarray:
+            D, _ = _rt_ck(state, full_params, opacity_components, opac_ck)
+            return D
+
+        # Line components per species (line-only)
+        line_depths = {}
+        for i, name in enumerate(ck_species):
+            if ck_mix == "TRANS":
+                comps = {
+                    "line_perspecies": sigma_ps[i : i + 1],
+                    "vmr_perspecies": vmr_ps[i : i + 1],
+                }
+            else:
+                kappa_i = sigma_ps[i] * vmr_ps[i][:, None, None]
+                comps = {"line": kappa_i}
+            D_i = _rt_one(comps)
+            line_depths[f"line_{name}"] = D_i
+
+        if line_depths:
+            all_opacities.update(line_depths)
+            print(f"  - Line species (c-k): {list(line_depths.keys())}")
+
+        # Convert each 2D opacity component into a transit depth spectrum under CK RT.
+        depth_components = {"wavelength_um": hi_wl}
+        for name, kappa in all_opacities.items():
+            if name == "wavelength_um":
+                continue
+            if name.startswith("line_"):
+                depth_components[name] = np.asarray(kappa)
+                continue
+            comps = _empty_line_components()
+            if name.startswith("ray_"):
+                comps["rayleigh"] = kappa
+            elif name.startswith("cia_"):
+                comps["cia"] = kappa
+            elif name.startswith("special_"):
+                comps["special"] = kappa
+            elif name == "cloud":
+                comps["cloud"] = kappa
+            else:
+                comps["special"] = kappa
+            D_i = _rt_one(comps)
+            depth_components[name] = np.asarray(D_i)
+
+        # Total spectrum: line mixing is non-linear, so compute via the RT kernel.
+        comps_total = _empty_line_components()
+        if ck_mix == "TRANS":
+            comps_total["line_perspecies"] = sigma_ps
+            comps_total["vmr_perspecies"] = vmr_ps
+        else:
+            comps_total["line"] = line_total
+        if ray_opacs:
+            comps_total["rayleigh"] = sum(ray_opacs.values())
+        cia_only = {k: v for k, v in all_opacities.items() if k.startswith("cia_")}
+        if cia_only:
+            comps_total["cia"] = sum(cia_only.values())
+        if "special_H-" in all_opacities:
+            comps_total["special"] = all_opacities["special_H-"]
+        if "cloud" in all_opacities:
+            comps_total["cloud"] = all_opacities["cloud"]
+        D_total = _rt_one(comps_total)
+        depth_components["total"] = np.asarray(D_total)
+
+        return depth_components
+
     spectra = {"wavelength_um": hi_wl}
     for name, kappa in all_opacities.items():
-        D = _transit_depth_from_opacity(state, kappa, geometry)
+        D = _transit_depth_from_opacity(state, kappa, geometry, refraction_mask=None)
         spectra[name] = np.asarray(D)
         print(f"  - {name}: computed")
 
     # Compute total opacity and transit depth
     if all_opacities:
         total_opacity = sum(all_opacities.values())
-        D_total = _transit_depth_from_opacity(state, total_opacity, geometry)
+        D_total = _transit_depth_from_opacity(state, total_opacity, geometry, refraction_mask=None)
         spectra["total"] = np.asarray(D_total)
         print("  - total: computed")
 

@@ -212,6 +212,7 @@ def main() -> None:
         y=obs["y"],
         dy=obs["dy"],
         response_mode=obs.get("response_mode"),
+        offset_group=obs.get("offset_group"),
     )
 
     print(f"[info] Results saved to: {exp_dir.resolve()}")
