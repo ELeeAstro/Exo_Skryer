@@ -51,8 +51,90 @@ Some input correlated-k tables, opacity sampled tables and CIA tables can be fou
 
 Exo Skryer can also use the TauREX (opacity sampling mode) and petitRADTRANS (correlated-k mode) tables available from the `ExoMol website <https://www.exomol.com/>`__
 
-Your first model
-----------------
+Your first forward model (transmission)
+---------------------------------------
+
+Before running a full retrieval, it is useful to generate a single forward model spectrum to check that the configuration is sensible and produces a reasonable output.
+The ``experiments/forward_model_trans`` directory contains a ready-to-run transmission forward model example.
+
+The key difference from a retrieval configuration is that **all parameters use** ``dist: delta`` with explicit values, so no sampling is performed.
+The ``sampling`` section is omitted entirely.
+
+From the repository root, run::
+
+    cd experiments/forward_model_trans
+    python run_forward_model.py --config forward_config.yaml
+
+.. note::
+    Make sure that the forward_config.yaml file points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example.
+
+.. code-block:: yaml
+
+   wl_master: ../../opac_data/ck/wl_ck_R250.txt
+
+   line:
+     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
+     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.npz}
+     - {species: K, path: ../../opac_data/ck/K_ck_R250.npz}
+
+   cia:
+     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+
+This will produce a high-resolution spectrum file ``forward_spectrum_highres.txt`` containing two columns: wavelength (um) and transit depth.
+
+If you also want the spectrum convolved to an observational bandpass, pass the ``--obs`` flag with a path to an observational data file::
+
+    python run_forward_model.py --config forward_config.yaml --obs ../../obs_data/WASP-107b_JWST.txt
+
+This additionally produces ``forward_spectrum_binned.txt`` with three columns: wavelength (um), half bin width (um), and transit depth.
+
+To plot the output spectrum::
+
+    python plot_spectrum.py --spectrum forward_spectrum_highres.txt
+
+Or with an observational data overlay::
+
+    python plot_spectrum.py --spectrum forward_spectrum_binned.txt --obs ../../obs_data/WASP-107b_JWST.txt
+
+The example ``forward_config.yaml`` uses a Guillot temperature-pressure profile, correlated-k opacities at R=250, constant VMR chemistry with H2O, CO2, CO and CH4, and an exponential decay cloud with F18 opacity.
+To adjust the model, simply edit the parameter values in the ``params`` section of the YAML file and re-run.
+
+.. note::
+   When ``data.obs`` is set to ``None`` in the config (the default), only the high-resolution spectrum is produced.
+   The ``--obs`` CLI flag overrides this setting.
+
+
+Your first forward model (emission)
+------------------------------------
+
+The ``experiments/forward_model_em`` directory provides an emission forward model example configured for a brown dwarf, outputting the absolute planetary flux.
+
+From the repository root, run::
+
+    cd experiments/forward_model_em
+    python run_forward_model.py --config forward_config.yaml
+
+This produces ``forward_spectrum_highres.txt`` with two columns: wavelength (um) and flux (erg s\ :sup:`-1` cm\ :sup:`-2` cm\ :sup:`-1`).
+
+To plot the emission spectrum::
+
+    python plot_spectrum.py --spectrum forward_spectrum_highres.txt
+
+The example ``forward_config.yaml`` uses:
+
+* ``rt_scheme: emission_1d`` with ``emission_mode: brown_dwarf`` and the ``eaa`` emission solver
+* A modified Milne temperature-pressure profile (``vert_Tp: Milne_modified``) with parameters ``T_int``, ``T_ratio``, ``log_10_k_ir``, ``log_10_p_t`` and ``beta``
+* Gravity-consistent altitude grid (``vert_alt: hypsometric_variable_g_pref``) using the mass parameter ``M_p``
+* Correlated-k opacities at R=250 with H2O, CO, CH4, NH3, Na and K
+* Distance parameter ``D`` (parsecs) for absolute flux scaling: :math:`F = (R_0 / D)^2 \times I_{\rm TOA}`
+
+.. note::
+   In brown dwarf mode, ``R_s`` is set to 0.0 (unused) and the output is absolute flux rather than a planet-to-star flux ratio.
+
+
+Your first retrieval model
+--------------------------
 
 The "experiments/HD209_Barstow_2020_trans_setup" provides a first taste of how to use Exo Skryer, performing a first retrieval model, as well as postprocessing, testing individual functions and other things.
 From the repository root, run the example HD 209458b retrieval model::
