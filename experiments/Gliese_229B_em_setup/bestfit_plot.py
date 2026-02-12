@@ -211,7 +211,8 @@ def _load_observed(exp_dir: Path, cfg):
         y = arr[:, 2].astype(float) if arr.shape[1] >= 3 else None
         dy = arr[:, 3].astype(float) if arr.shape[1] >= 4 else None
         resp = arr[:, 4] if arr.shape[1] >= 5 else np.full_like(lam, "boxcar", dtype=object)
-        return lam, dlam, y, dy, resp
+        offset_group = arr[:, 5] if arr.shape[1] >= 6 else np.full(lam.shape, "__no_offset__", dtype=object)
+        return lam, dlam, y, dy, resp, offset_group
 
     # Fall back to raw obs file from YAML
     data_cfg = getattr(cfg, "data", None)
@@ -265,7 +266,8 @@ def _load_observed(exp_dir: Path, cfg):
         dy = None
         resp = np.full_like(lam, "boxcar", dtype=object)
 
-    return lam, dlam, y, dy, resp
+    offset_group = arr[:, 5] if arr.shape[1] >= 6 else np.full(lam.shape, "__no_offset__", dtype=object)
+    return lam, dlam, y, dy, resp, offset_group
 
 
 # ---------------- chain handling (ArviZ posterior.nc) ----------------
@@ -426,6 +428,32 @@ def _bump_opacity_paths_one_level(cfg, exp_dir: Path):
             setattr(val, "path", str(resolved))
 
 
+# ---------------- offset handling ----------------
+
+
+def _compute_offset_corrections(
+    offset_group: np.ndarray,
+    param_draws: Dict[str, np.ndarray],
+) -> np.ndarray:
+    """Compute median offset correction (fractional units) for each data point."""
+    unique_groups = np.unique(offset_group)
+    offset_params = {k: v for k, v in param_draws.items() if k.startswith("offset_")}
+    if not offset_params:
+        return np.zeros(len(offset_group))
+
+    group_offsets = {}
+    for group in unique_groups:
+        param_name = f"offset_{group}"
+        if param_name in param_draws:
+            offset_ppm = np.median(param_draws[param_name])
+            group_offsets[group] = offset_ppm / 1e6
+            print(f"[plot] Applying median offset for {group}: {offset_ppm:.1f} ppm")
+        else:
+            group_offsets[group] = 0.0
+
+    return np.array([group_offsets.get(g, 0.0) for g in offset_group])
+
+
 # ---------------- plotting / main logic ----------------
 
 
@@ -466,9 +494,10 @@ def plot_model_band(
     _bump_opacity_paths_one_level(cfg, exp_dir)
 
     # Load observed data
-    lam, dlam, y_obs, dy_obs, response_mode = _load_observed(exp_dir, cfg)
+    lam, dlam, y_obs, dy_obs, response_mode, offset_group = _load_observed(exp_dir, cfg)
     lam_arr = np.asarray(lam, dtype=float)
     dlam_arr = np.asarray(dlam, dtype=float)
+    offset_group_arr = np.asarray(offset_group, dtype=object)
 
     # Build obs dict for forward model & bandpass
     obs = {
@@ -516,6 +545,12 @@ def plot_model_band(
         idata = az.from_netcdf(posterior_path)
         posterior_ds = idata.posterior
         param_draws, N_total = _build_param_draws_from_idata(posterior_ds, params_cfg)
+
+    offset_corrections = _compute_offset_corrections(offset_group_arr, param_draws)
+    if y_obs is not None:
+        y_obs_corrected = np.asarray(y_obs, dtype=float) + offset_corrections
+    else:
+        y_obs_corrected = None
 
     # Sub-sample draws for model evaluation
     rng = np.random.default_rng(random_seed)
@@ -582,9 +617,9 @@ def plot_model_band(
     ax.plot(lam_arr, q50, lw=2, label="Median", color=palette[1])
 
     # observations (if available)
-    y_plot = y_obs * 100.0 if y_obs is not None else None
+    y_plot = y_obs_corrected * 100.0 if y_obs_corrected is not None else None
     dy_plot = dy_obs * 100.0 if dy_obs is not None else None
-    if show_data and y_obs is not None:
+    if show_data and y_obs_corrected is not None:
         if dy_plot is not None:
             ax.errorbar(
                 lam_arr,
@@ -661,7 +696,7 @@ def plot_model_band(
             label="Median",
             color=palette[1],
         )
-        if show_data and y_obs is not None:
+        if show_data and y_obs_corrected is not None:
             if dy_plot is not None:
                 ax_zoom.errorbar(
                     lam_arr[bin_mask],

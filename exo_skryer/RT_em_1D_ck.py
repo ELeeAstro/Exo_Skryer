@@ -100,15 +100,11 @@ def _scale_flux_ratio(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    stellar_flux = state.get("stellar_flux")
-    has_stellar_flux = state.get("has_stellar_flux")
-    use_stellar = (has_stellar_flux is not None) & (has_stellar_flux != 0)
-    if stellar_flux is not None and use_stellar:
-        F_star = stellar_flux.astype(jnp.float64)
-    else:
-        if "F_star" not in params:
-            raise ValueError("compute_emission_spectrum_1d_ck requires stellar_flux or parameter 'F_star'.")
-        F_star = params["F_star"].astype(jnp.float64)
+    stellar_flux = jnp.asarray(state.get("stellar_flux", jnp.ones_like(flux)), dtype=jnp.float64)
+    has_stellar_flux = jnp.asarray(state.get("has_stellar_flux", 0), dtype=jnp.int32)
+    f_star_param = jnp.asarray(params.get("F_star", jnp.ones_like(stellar_flux)), dtype=jnp.float64)
+    use_stellar = has_stellar_flux != 0
+    F_star = jnp.where(use_stellar, stellar_flux, f_star_param)
     R0 = state["R0"].astype(jnp.float64)
     R_s = state["R_s"].astype(jnp.float64)
     scale = (R0**2) / (jnp.maximum(F_star, 1.0e-30) * (R_s**2))

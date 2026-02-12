@@ -13,7 +13,17 @@ import numpy as np
 from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
 from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-from .vert_Tp import isothermal, Milne, Guillot, Line, Barstow, MandS, picket_fence, Milne_modified
+from .vert_Tp import (
+    isothermal,
+    Milne,
+    Guillot,
+    Modified_Guillot,
+    Line,
+    Barstow,
+    MandS,
+    picket_fence,
+    Milne_modified,
+)
 from .vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
 from .vert_mu import constant_mu, compute_mu
 from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
@@ -120,11 +130,10 @@ def build_forward_model(
     nlay = int(getattr(cfg.physics, "nlay", 99))
     nlev = nlay + 1
 
-    # Observational wavelengths/widths (currently only used by bandpass loader, not here)
-    obs_wl_np = np.asarray(obs["wl"], dtype=float)
-    obs_dwl_np = np.asarray(obs["dwl"], dtype=float)
-    lam_obs = jnp.asarray(obs_wl_np)
-    dlam_obs = jnp.asarray(obs_dwl_np)
+    # Observational wavelengths/widths are consumed by response-function caches,
+    # not directly by this function body.
+    _ = np.asarray(obs["wl"], dtype=float)
+    _ = np.asarray(obs["dwl"], dtype=float)
 
     # Get the kernel for forward model
     phys = cfg.physics
@@ -143,6 +152,8 @@ def build_forward_model(
         Tp_kernel = Milne
     elif vert_tp_name == "guillot":
         Tp_kernel = Guillot
+    elif vert_tp_name in ("modified_guillot", "guillot_modified", "guillot_2"):
+        Tp_kernel = Modified_Guillot
     elif vert_tp_name == "line":
         Tp_kernel = Line     
     elif vert_tp_name == "picket_fence":
@@ -440,6 +451,25 @@ def build_forward_model(
     emission_mode = str(emission_mode).lower().replace(" ", "_")
     is_brown_dwarf = emission_mode in ("brown_dwarf", "browndwarf", "bd")
 
+    # For planet emission, require stellar normalization information up front.
+    # This avoids silent fallbacks inside JIT code paths.
+    if rt_scheme == "emission_1d" and (not is_brown_dwarf) and (stellar_flux is None):
+        param_names = {p.name for p in cfg.params}
+        if "F_star" not in param_names:
+            raise ValueError(
+                "Planet emission mode requires either stellar_flux input or parameter 'F_star'."
+            )
+
+    # Resolve ck_mix once (static config), not inside the JIT function.
+    ck_mix_code_static = None
+    if ck:
+        if ck_mix_str == "PRAS":
+            ck_mix_code_static = 2
+        elif ck_mix_str == "TRANS":
+            ck_mix_code_static = 3
+        else:
+            ck_mix_code_static = 1
+
     chemistry_kernel, trace_species = prepare_chemistry_kernel(
         cfg,
         chemistry_kernel,
@@ -507,7 +537,6 @@ def build_forward_model(
 
         # Opacity cache for kernels (separate from atmospheric state)
         opac = opac_cache_runtime
-        ck_mix_code = None
         if ck:
             if "ck_g_weights" not in opac:
                 raise RuntimeError("Missing opac['ck_g_weights'] for c-k mode.")
@@ -522,17 +551,6 @@ def build_forward_model(
             opac = dict(opac)
             opac["g_weights"] = g_weights
             opac["g_points"] = g_points
-
-        # Get ck_mix option from config (static)
-        if ck:
-            ck_mix_raw = getattr(cfg.opac, "ck_mix", "RORR")
-            ck_mix_raw = str(ck_mix_raw).upper()
-            if ck_mix_raw == "PRAS":
-                ck_mix_code = 2
-            elif ck_mix_raw == "TRANS":
-                ck_mix_code = 3
-            else:
-                ck_mix_code = 1
 
         state = {
             "nwl": nwl,
@@ -561,8 +579,8 @@ def build_forward_model(
             state["cloud_nk_k"] = opac["cloud_nk_k"]
         state["stellar_flux"] = stellar_flux_runtime
         state["has_stellar_flux"] = has_stellar_flux_runtime
-        if ck_mix_code is not None:
-            state["ck_mix"] = ck_mix_code
+        if ck_mix_code_static is not None:
+            state["ck_mix"] = ck_mix_code_static
 
         if ck:
             line_zero = zero_ck_opacity(state, opac, full_params)
@@ -580,7 +598,7 @@ def build_forward_model(
         }
         if line_opac_kernel is not None:
             # For TRANS method, compute per-species opacities (mixing happens in RT)
-            if ck and ck_mix_code == 3:  # TRANS
+            if ck and ck_mix_code_static == 3:  # TRANS
                 sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac, full_params)
                 opacity_components["line_perspecies"] = sigma_ps
                 opacity_components["vmr_perspecies"] = vmr_ps

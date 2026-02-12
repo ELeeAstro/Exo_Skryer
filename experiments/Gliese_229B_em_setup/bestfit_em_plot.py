@@ -127,7 +127,8 @@ def _load_observed(exp_dir: Path, cfg):
         y = arr[:, 2].astype(float)
         dy = arr[:, 3].astype(float)
         resp = arr[:, 4] if arr.shape[1] >= 5 else np.full_like(lam, "boxcar", dtype=object)
-        return lam, dlam, y, dy, resp
+        offset_group = arr[:, 5] if arr.shape[1] >= 6 else np.full(lam.shape, "__no_offset__", dtype=object)
+        return lam, dlam, y, dy, resp, offset_group
     data_cfg = getattr(cfg, "data", None)
     obs_path = getattr(data_cfg, "obs", None) if data_cfg is not None else None
     if obs_path is None:
@@ -144,7 +145,8 @@ def _load_observed(exp_dir: Path, cfg):
     y = arr[:, 2].astype(float)
     dy = arr[:, 3].astype(float)
     resp = arr[:, 4] if arr.shape[1] >= 5 else np.full_like(lam, "boxcar", dtype=object)
-    return lam, dlam, y, dy, resp
+    offset_group = arr[:, 5] if arr.shape[1] >= 6 else np.full(lam.shape, "__no_offset__", dtype=object)
+    return lam, dlam, y, dy, resp, offset_group
 
 
 def _flatten_param(a: np.ndarray) -> np.ndarray:
@@ -181,6 +183,29 @@ def _build_param_draws_from_idata(posterior_ds, params_cfg):
         else:
             raise KeyError(f"Free parameter '{name}' missing from posterior.")
     return out, N_total
+
+
+def _compute_offset_corrections(
+    offset_group: np.ndarray,
+    param_draws: Dict[str, np.ndarray],
+) -> np.ndarray:
+    """Compute median offset correction (fractional units) for each data point."""
+    unique_groups = np.unique(offset_group)
+    offset_params = {k: v for k, v in param_draws.items() if k.startswith("offset_")}
+    if not offset_params:
+        return np.zeros(len(offset_group))
+
+    group_offsets = {}
+    for group in unique_groups:
+        param_name = f"offset_{group}"
+        if param_name in param_draws:
+            offset_ppm = np.median(param_draws[param_name])
+            group_offsets[group] = offset_ppm / 1e6
+            print(f"[plot] Applying median offset for {group}: {offset_ppm:.1f} ppm")
+        else:
+            group_offsets[group] = 0.0
+
+    return np.array([group_offsets.get(g, 0.0) for g in offset_group])
 
 
 def _flux_to_brightness_temperature(flux: np.ndarray, lam_um: np.ndarray) -> np.ndarray:
@@ -283,9 +308,10 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     from exo_skryer.registry_bandpass import load_bandpass_registry
     from exo_skryer.read_stellar import read_stellar_spectrum
 
-    lam_obs, dlam_obs, y_obs, dy_obs, resp_obs = _load_observed(exp_dir, cfg)
+    lam_obs, dlam_obs, y_obs, dy_obs, resp_obs, offset_group = _load_observed(exp_dir, cfg)
     lam_obs = np.asarray(lam_obs, dtype=float)
     dlam_obs = np.asarray(dlam_obs, dtype=float)
+    offset_group_arr = np.asarray(offset_group, dtype=object)
     obs = {
         "wl": lam_obs,
         "dwl": dlam_obs,
@@ -309,6 +335,9 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     idata = az.from_netcdf(posterior_path)
     params_cfg = getattr(cfg, "params", [])
     draws, N_total = _build_param_draws_from_idata(idata.posterior, params_cfg)
+
+    offset_corrections = _compute_offset_corrections(offset_group_arr, draws)
+    y_obs_corrected = np.asarray(y_obs, dtype=float) + offset_corrections
 
     # Compute median parameters
     theta_median = {name: float(np.median(arr)) for name, arr in draws.items()}
@@ -439,10 +468,10 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
             # Interpolate stellar flux in log10 space for accuracy across orders of magnitude
             log10_stellar = np.log10(stellar_flux_np)
             interp_stellar = 10.0 ** np.interp(lam, hires, log10_stellar)
-            obs_flux = _recover_planet_flux(y_obs, interp_stellar, R_p_med, R_s_med)
+            obs_flux = _recover_planet_flux(y_obs_corrected, interp_stellar, R_p_med, R_s_med)
         else:
             # Brown dwarf - observed data is already in flux units
-            obs_flux = y_obs
+            obs_flux = y_obs_corrected
 
         if obs_flux is not None:
             Tb_obs = _flux_to_brightness_temperature(obs_flux, lam)
@@ -473,7 +502,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
         ax_ratio.plot(lam, q_med, lw=1.5, label="Median model", color=palette[4], alpha=0.8, rasterized=True)
         if q_maxlike is not None:
             ax_ratio.plot(lam, q_maxlike, lw=1.5, label="Highest likelihood", color=palette[1], alpha=0.8, rasterized=True, linestyle='--')
-        ax_ratio.plot(lam, y_obs * 100.0, lw=2, label="Observed", color="black", zorder=3)
+        ax_ratio.plot(lam, y_obs_corrected * 100.0, lw=2, label="Observed", color="black", zorder=3)
         ax_ratio.set_xscale("log")
         ax_ratio.set_yscale("log")
         ax_ratio.set_xlabel("Wavelength [µm]", fontsize=14)

@@ -25,6 +25,7 @@ __all__ = [
     "Milne",
     "Milne_modified",
     "Guillot",
+    "Modified_Guillot",
     "MandS",
     "picket_fence",
     "dry_convective_adjustment"
@@ -274,6 +275,80 @@ def Guillot(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     T_lev = (milne + guillot) ** 0.25
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
+
+
+def Modified_Guillot(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Generate a modified Guillot profile with a flexible irradiated Hopf term.
+
+    This profile keeps the Guillot (2010) semi-grey structure but replaces the
+    fixed 2/3 term in the irradiation component with a stretched-exponential
+    Hopf-like transition in pressure.
+
+    Parameters
+    ----------
+    p_lev : `~jax.numpy.ndarray`, shape (nlev,)
+        Pressure at atmospheric levels.
+    params : dict[str, `~jax.numpy.ndarray`]
+        Parameter dictionary containing:
+
+        - `T_int` : float
+            Internal temperature in Kelvin.
+        - `T_eq` : float
+            Equilibrium temperature in Kelvin.
+        - `log_10_k_ir` : float
+            Log10 infrared opacity in cm^2 g^-1.
+        - `log_10_gam_v` : float
+            Log10 visible-to-IR opacity ratio.
+        - `log_10_g` : float
+            Log10 surface gravity in cm s^-2.
+        - `f_hem` : float
+            Hemispheric redistribution factor.
+        - `q_irr_0` : float
+            Irradiated Hopf value at low optical depth.
+        - `log_10_p_t` : float
+            Log10 transition pressure in bar.
+        - `beta` : float
+            Stretching exponent for the Hopf transition.
+
+    Returns
+    -------
+    T_lev : `~jax.numpy.ndarray`, shape (nlev,)
+        Temperature at levels in Kelvin.
+    T_lay : `~jax.numpy.ndarray`, shape (nlev-1,)
+        Temperature at layer midpoints in Kelvin.
+    """
+    T_int = params["T_int"]
+    T_eq = params["T_eq"]
+    k_ir = 10.0 ** params["log_10_k_ir"]
+    gam = 10.0 ** params["log_10_gam_v"]
+    g = 10.0 ** params["log_10_g"]
+    f = params["f_hem"]
+    q_irr_0 = params["q_irr_0"]
+    p_t = (10.0 ** params["log_10_p_t"]) * bar
+    beta = params["beta"]
+
+    tau_ir = (k_ir / g) * p_lev
+    sqrt3 = jnp.sqrt(3.0)
+
+    # Keep internal Hopf at the Eddington limit.
+    q_int = 2.0 / 3.0
+
+    # Flexible irradiated Hopf term: q_irr -> 2/3 at depth.
+    q_inf = 0.710446
+    sig = jnp.exp(-((p_lev / p_t) ** beta))
+    q_irr = q_inf + (q_irr_0 - q_inf) * sig
+
+    internal = 0.75 * T_int**4 * (q_int + tau_ir)
+    irradiated = 0.75 * T_eq**4 * 4.0 * f * (
+        q_irr
+        + 1.0 / (gam * sqrt3)
+        + (gam / sqrt3 - 1.0 / (gam * sqrt3)) * jnp.exp(-gam * tau_ir * sqrt3)
+    )
+
+    T_lev = jnp.maximum(internal + irradiated, 0.0) ** 0.25
+    T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
+    return T_lev, T_lay
+
 
 def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a Madhusudhan & Seager (2009) three-region T-P profile.

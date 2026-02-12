@@ -182,6 +182,83 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm eq}` [K], :math:`\lo
      - { name: f_hem, dist: delta, value: 0.25, transform: identity, init: 0.25}
 
 
+Modified Guillot
+----------------
+
+The modified Guillot profile generalises `Guillot (2010) <https://www.aanda.org/articles/aa/abs/2010/10/aa13396-09/aa13396-09.html>`_ by replacing the fixed irradiated Hopf term with a stretched-exponential transition in pressure.
+This reduces the strict upper-atmosphere isothermal tendency while retaining the deep-atmosphere semi-grey behavior.
+
+.. math::
+
+   T^{4}(\tau) = \frac{3T_{\rm int}^{4}}{4}\left[q_{\rm int} + \tau\right]
+   + \frac{3T_{\rm eq}^{4}}{4}4f_{\rm hem}\left[q_{\rm irr}(p) + \frac{1}{\gamma_{\rm v}\sqrt{3}} + \left(\frac{\gamma_{\rm v}}{\sqrt{3}} - \frac{1}{\gamma_{\rm v}\sqrt{3}}\right)e^{-\gamma_{\rm v}\tau\sqrt{3}}\right]
+
+.. math::
+
+   q_{\rm irr}(p) = q_{\infty} + \left(q_{{\rm irr},0} - q_{\infty}\right)\exp\left[-\left(\frac{p}{p_{t}}\right)^{\beta}\right], \quad q_{\infty}=0.71
+
+with :math:`\tau = (\kappa_{\rm ir}/g)\,p`.
+In the current implementation, :math:`q_{\rm int}=2/3` is fixed.
+
+Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm eq}` [K], :math:`\log_{10}\kappa_{\rm ir}` [cm\ :sup:`2` g\ :sup:`-1`], :math:`\log_{10}\gamma_v`, :math:`\log_{10}g` [cm s\ :sup:`-2`], :math:`f_{\rm hem}`, :math:`q_{{\rm irr},0}`, :math:`\log_{10}p_t` [bar], :math:`\beta`
+
+.. plot::
+   :include-source:
+
+   import numpy as np
+   import matplotlib.pyplot as plt
+   from exo_skryer.vert_Tp import Modified_Guillot
+   from exo_skryer.data_constants import bar
+
+   # Create pressure grid
+   nlev = 100
+   p_bot = np.log10(100.0)
+   p_top = np.log10(1e-6)
+   p_lev = np.logspace(p_bot, p_top, nlev) * bar
+
+   # Example parameters
+   params = {
+       "T_int": 100.0,
+       "T_eq": 1000.0,
+       "log_10_k_ir": -2.0,
+       "log_10_gam_v": -2.0,
+       "log_10_g": 3.0,
+       "f_hem": 0.25,
+       "q_irr_0": 0.1,
+       "log_10_p_t": -1.0,
+       "beta": 0.5
+   }
+   T_lev, T_lay = Modified_Guillot(p_lev, params)
+
+   # Plot
+   fig, ax = plt.subplots(figsize=(10, 5))
+   ax.semilogy(T_lev, p_lev/bar, c='goldenrod')
+   ax.set_xlabel('Temperature [K]', fontsize=16)
+   ax.set_ylabel('pressure [bar]', fontsize=16)
+   ax.set_title('Modified Guillot T-p Profile', fontsize=14)
+   ax.tick_params(labelsize=14)
+   ax.invert_yaxis()
+   plt.tight_layout()
+
+**YAML Configuration:**
+
+.. code-block:: yaml
+
+   physics:
+     vert_Tp: modified_guillot
+
+   params:
+     - { name: T_int, dist: uniform, low: 100.0, high: 1000.0, transform: logit, init: 500.0 }
+     - { name: T_eq, dist: uniform, low: 1000.0, high: 3000.0, transform: logit, init: 1500.0 }
+     - { name: log_10_k_ir, dist: uniform, low: -6, high: 6, transform: logit, init: -2.0 }
+     - { name: log_10_gam_v, dist: uniform, low: -3, high: 3, transform: logit, init: 0.0 }
+     - { name: log_10_g, dist: uniform, low: 2.0, high: 4.0, transform: logit, init: 3.0 }
+     - { name: f_hem, dist: delta, value: 0.25, transform: identity, init: 0.25 }
+     - { name: q_irr_0, dist: uniform, low: 0.01, high: 1.0, transform: logit, init: 0.3 }
+     - { name: log_10_p_t, dist: uniform, low: -8.0, high: 2.0, transform: logit, init: -2.0 }
+     - { name: beta, dist: uniform, low: 0.1, high: 1.0, transform: logit, init: 0.5 }
+
+
 Line (2013)
 -----------
 

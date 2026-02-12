@@ -110,4 +110,13 @@ def read_stellar_spectrum(
             right=log10_flux_native[-1],
         )
         flux_master = 10.0 ** log10_flux_master
+
+    print(
+        "[read_stellar] Loaded stellar spectrum: "
+        f"path={path}, mode={'ck_bin_avg' if ck_mode else 'lbl_interp'}, "
+        f"native_N={wl_native.size}, master_N={lam_master.size}, "
+        f"wl_native=[{wl_native.min():.5g}, {wl_native.max():.5g}] um, "
+        f"wl_master=[{lam_master.min():.5g}, {lam_master.max():.5g}] um, "
+        f"flux_master=[{flux_master.min():.5e}, {flux_master.max():.5e}]"
+    )
     return jnp.asarray(flux_master)
