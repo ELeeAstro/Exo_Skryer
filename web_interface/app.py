@@ -80,7 +80,7 @@ RT_SCHEMES = ["emission_1d", "transit_1d"]
 # Passed to get_emission_solver() in RT_em_schemes.py
 # - eaa / alpha_eaa: Alpha-EAA single-angle approximation (fast)
 # - toon89 / toon89_picaso: Toon et al. (1989) multi-stream method (accurate for scattering)
-EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso", "None"]
+EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso"]
 
 # Temperature-Pressure profile parameterizations
 # From build_model.py lines 137-153 (vert_Tp selector)
@@ -92,7 +92,7 @@ EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso", "None"]
 # - Milne_modified: Modified Milne profile
 # - picket_fence: Picket-fence approximation
 # - MandS: Madhusudhan & Seager profile
-VERT_TP_OPTIONS = ["isothermal", "Guillot", "Barstow", "Line", "Milne", "Milne_modified", "picket_fence", "MandS"]
+VERT_TP_OPTIONS = ["isothermal", "Guillot", "Modified_Guillot", "Barstow", "Line", "Milne", "Milne_modified", "picket_fence", "MandS"]
 
 # How altitude/height is calculated in the atmosphere model
 # From build_model.py lines 158-166 (vert_alt selector)
@@ -172,7 +172,7 @@ EMISSION_MODES = ["planet", "brown_dwarf"]
 # From build_model.py lines 482-489 (ck_mix selector)
 # - RORR: Random Overlap with Resorting and Rebinning (default, most accurate)
 # - TRANS: Transmission-optimized method (only for transit_1d)
-CK_MIX_OPTIONS = ["RORR", "TRANS"]
+CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space

@@ -19,6 +19,9 @@ Reference/API
 .. automodapi:: exo_skryer.build_opacities
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.data_constants
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.ck_mix_PRAS
     :no-inheritance-diagram:
 
@@ -109,7 +112,16 @@ Reference/API
 .. automodapi:: exo_skryer.RT_trans_1D_ck
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.RT_trans_1D_ck_trans
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.RT_trans_1D_lbl
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.refraction
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.registry_special
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.run_retrieval

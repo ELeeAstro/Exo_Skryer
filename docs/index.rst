@@ -29,6 +29,7 @@ A JAX accelerated retrieval code.
   exo_skryer/opacity_cia.rst
   exo_skryer/opacity_cloud.rst
   exo_skryer/opacity_special.rst
+  exo_skryer/preparing_obs_data.rst
   exo_skryer/samplers.rst
   exo_skryer/testing_forward_model.rst
   exo_skryer/postprocessing.rst
