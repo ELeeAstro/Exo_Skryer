@@ -77,16 +77,16 @@ def refraction_cutoff_mask(
     H = (kb * state["T_lay"]) / (state["mu_lay"] * amu * g_z)  # (nlay,)
 
     # Build (n-1)(layer, wl) from STP refractivities + ideal-gas scaling with number density.
-    nm1_ref = opac["ray_nm1_table"].astype(jnp.float64)  # (nspec, nwl)
-    nd_ref = opac["ray_nd_ref"].astype(jnp.float64)      # (nspec,)
+    nm1_ref = opac["ray_nm1_table"]  # (nspec, nwl)
+    nd_ref = opac["ray_nd_ref"]      # (nspec,)
 
     species_names = XR.ray_species_names()
     vmr_lay = state["vmr_lay"]
-    nd_lay = state["nd_lay"].astype(jnp.float64)  # (nlay,)
+    nd_lay = state["nd_lay"]  # (nlay,)
 
-    nm1_coeff = jnp.zeros((nlay, nwl), dtype=jnp.float64)
+    nm1_coeff = jnp.zeros((nlay, nwl), dtype=nm1_ref.dtype)
     for i, name in enumerate(species_names):
-        vmr_i = jnp.broadcast_to(vmr_lay[name], (nlay,)).astype(jnp.float64)  # (nlay,)
+        vmr_i = jnp.broadcast_to(vmr_lay[name], (nlay,))  # (nlay,)
         coeff_i = nm1_ref[i][None, :] / nd_ref[i]  # (1, nwl)
         nm1_coeff = nm1_coeff + vmr_i[:, None] * coeff_i
 
@@ -97,4 +97,3 @@ def refraction_cutoff_mask(
     alpha = nm1_layer * jnp.sqrt(2.0 * jnp.pi * b[:, None] / jnp.maximum(H[:, None], 1.0))
 
     return alpha > theta_star
-

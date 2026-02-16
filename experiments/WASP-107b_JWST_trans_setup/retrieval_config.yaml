@@ -1,13 +1,13 @@
 data:
 
-  obs: ../../obs_data/WASP-107b_JWST.txt
+  obs: ../../obs_data/WASP-107b_JWST_2.txt
   stellar: None
 
 physics:
 
   nlay: 99
 
-  vert_Tp: Guillot
+  vert_Tp: MandS
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic
@@ -27,7 +27,7 @@ physics:
 
 opac:
 
-  wl_master: wl_R20000.txt
+  wl_master: ../../opac_data/lbl/wl_R20000.txt
   full_grid: False
   ck: False
   ck_mix: RORR
@@ -59,12 +59,21 @@ params:
   - { name: log_10_g,  dist: uniform, low: 2.0,   high: 3.5,  transform: logit, init: 3.0}
   - { name: R_p, dist: uniform, low: 0.66,   high: 1.22,  transform: logit, init: 1.4}
 
-  - {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
-  - {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
-  - {name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
-  - {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
-  - { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
+    #- {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
+    #- {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
+    #- {name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
+    #- {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
+    #- { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
   
+  - { name: a1,        dist: uniform, low: 0.02, high: 2.00, transform: logit, init: 0.50 }
+  - { name: a2,        dist: uniform, low: 0.02, high: 2.00, transform: logit, init: 0.50 }
+
+  - { name: log_10_P1, dist: uniform, low: -7.0, high: -4.0, transform: logit, init: -4.5 }  # bar
+  - { name: log_10_P2, dist: uniform, low: -4.0, high: -1.0, transform: logit, init: -2.2 }  # bar
+  - { name: log_10_P3, dist: uniform, low: -1.0, high:  3.0, transform: logit, init:  0.8 }  # bar
+
+  - { name: T_ref,     dist: uniform, low: 100.0, high: 4000.0, transform: logit, init: 1400.0 }
+
   - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
   - { name: log_10_f_CO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
   - { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
@@ -83,7 +92,10 @@ params:
   - {name: cld_Q1, dist: delta, value: 1.0, transform: identity, init: 1.0}
   - {name: cld_a, dist: uniform, low: 3.0, high: 5.0, transform: logit, init: 4.0}
   - {name: cld_sigma, dist: delta, value: 1.0, transform: identity, init: 1.0}
-    #- {name: f_cloud, dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}
+  - {name: f_cloud, dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}
+
+  - {name: offset_1, dist: delta, value: 0, transform: identity, init: 0}
+  - {name: offset_MIRI, dist: uniform, low: -50, high: 500, transform: logit, init: 0}
 
 sampling:
 
@@ -141,7 +153,7 @@ sampling:
     nlive: 1000
     bound: multi
     sample: auto
-    dlogz: 0.25
+    dlogz: 0.1
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -169,6 +181,6 @@ sampling:
 
 runtime:
   platform: gpu           # cpu | gpu | cuda | metal
-  cuda_visible_devices: 0  # or "0,1"
+  cuda_visible_devices: 1  # or "0,1"
   threads: 1
 

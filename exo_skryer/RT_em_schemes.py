@@ -54,12 +54,13 @@ def _tridiag_solve_batched_jax(a: jnp.ndarray, b: jnp.ndarray, c: jnp.ndarray, d
     a,b,c,d : (L, nwl)
     returns : (L, nwl)
     """
-    a = jnp.asarray(a, dtype=jnp.float64)
-    b = jnp.asarray(b, dtype=jnp.float64)
-    c = jnp.asarray(c, dtype=jnp.float64)
-    d = jnp.asarray(d, dtype=jnp.float64)
+    dtype = jnp.result_type(a, b, c, d)
+    a = jnp.asarray(a, dtype=dtype)
+    b = jnp.asarray(b, dtype=dtype)
+    c = jnp.asarray(c, dtype=dtype)
+    d = jnp.asarray(d, dtype=dtype)
 
-    tiny = jnp.asarray(1.0e-300, dtype=jnp.float64)
+    tiny = jnp.asarray(1.0e-300, dtype=dtype)
 
     denom0 = jnp.where(jnp.abs(b[0]) > 0.0, b[0], tiny)
     c0 = c[0] / denom0
@@ -253,16 +254,17 @@ def _solve_toon89_picaso_jax(
     This routine integrates over µ using the module-level `_MU_NODES/_MU_WEIGHTS`
     convention in the same way as the original driver.
     """
-    be_levels = jnp.asarray(be_levels, dtype=jnp.float64)
-    dtau = jnp.asarray(dtau_layers, dtype=jnp.float64)
-    w0_in = jnp.asarray(ssa, dtype=jnp.float64)
-    g_in = jnp.asarray(g_phase, dtype=jnp.float64)
-    be_internal = jnp.asarray(be_internal, dtype=jnp.float64)
+    dtype = jnp.result_type(be_levels, dtau_layers, ssa, g_phase, be_internal)
+    be_levels = jnp.asarray(be_levels, dtype=dtype)
+    dtau = jnp.asarray(dtau_layers, dtype=dtype)
+    w0_in = jnp.asarray(ssa, dtype=dtype)
+    g_in = jnp.asarray(g_phase, dtype=dtype)
+    be_internal = jnp.asarray(be_internal, dtype=dtype)
 
     nlev, nwl = be_levels.shape
     nlay = nlev - 1
-    mu1 = jnp.asarray(0.5, dtype=jnp.float64)
-    pi = jnp.asarray(jnp.pi, dtype=jnp.float64)
+    mu1 = jnp.asarray(0.5, dtype=dtype)
+    pi = jnp.asarray(jnp.pi, dtype=dtype)
     twopi = 2.0 * pi
 
     b0 = be_levels[:-1, :]
@@ -302,10 +304,10 @@ def _solve_toon89_picaso_jax(
     e3 = gamma * exp_pos + exp_neg
     e4 = gamma * exp_pos - exp_neg
 
-    A = jnp.zeros((L, nwl), dtype=jnp.float64)
-    B = jnp.zeros((L, nwl), dtype=jnp.float64)
-    C = jnp.zeros((L, nwl), dtype=jnp.float64)
-    D = jnp.zeros((L, nwl), dtype=jnp.float64)
+    A = jnp.zeros((L, nwl), dtype=dtype)
+    B = jnp.zeros((L, nwl), dtype=dtype)
+    C = jnp.zeros((L, nwl), dtype=dtype)
+    D = jnp.zeros((L, nwl), dtype=dtype)
 
     A = A.at[0].set(0.0)
     B = B.at[0].set(gamma[0] + 1.0)
@@ -355,10 +357,8 @@ def _solve_toon89_picaso_jax(
     sigma1 = twopi * (b0 - b1 * (g1_plus_g2 - mu1))
     sigma2 = twopi * b1
 
-    mu_nodes = jnp.asarray(_MU_NODES, dtype=jnp.float64)
-    wmu = jnp.asarray(_MU_WEIGHTS, dtype=jnp.float64)/2.0
-
-    be_int = jnp.broadcast_to(be_internal, (nwl,)).astype(jnp.float64)
+    mu_nodes = jnp.asarray(_MU_NODES, dtype=dtype)
+    wmu = jnp.asarray(_MU_WEIGHTS, dtype=dtype) / 2.0
 
     def one_mu_step(carry, inp2):
         flx_up_acc, flx_down_acc = carry
@@ -434,7 +434,7 @@ def _solve_toon89_picaso_jax(
         flx_down_acc = flx_down_acc + w_mu * flux_minus
         return (flx_up_acc, flx_down_acc), None
 
-    init = (jnp.zeros((nlev, nwl), dtype=jnp.float64), jnp.zeros((nlev, nwl), dtype=jnp.float64))
+    init = (jnp.zeros((nlev, nwl), dtype=dtype), jnp.zeros((nlev, nwl), dtype=dtype))
     (flx_up, flx_down), _ = lax.scan(one_mu_step, init, (mu_nodes, wmu))
     # Apply the "lw_net_bottom" scheme:
     #   lw_net = lw_up - lw_down
@@ -524,10 +524,10 @@ def solve_alpha_eaa(
     nlev, nwl = be_levels.shape
     nlay = nlev - 1
 
-    be_levels = be_levels.astype(jnp.float64)[::-1]
-    dtau_layers = dtau_layers.astype(jnp.float64)[::-1]
-    ssa = ssa.astype(jnp.float64)[::-1]
-    g_phase = g_phase.astype(jnp.float64)[::-1]
+    be_levels = jnp.asarray(be_levels)[::-1]
+    dtau_layers = jnp.asarray(dtau_layers)[::-1]
+    ssa = jnp.asarray(ssa)[::-1]
+    g_phase = jnp.asarray(g_phase)[::-1]
 
     al = be_levels[1:] - be_levels[:-1]
 

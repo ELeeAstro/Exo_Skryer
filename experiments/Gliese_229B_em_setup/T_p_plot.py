@@ -342,14 +342,23 @@ def plot_Tp_band(
         T_lev_samples[k, :] = T_lev
         T_lay_samples[k, :] = T_lay
 
-    # Pointwise quantiles in T at each layer
-    T_lay_q02_5 = np.quantile(T_lay_samples, 0.025, axis=0)
-    T_lay_q50   = np.quantile(T_lay_samples, 0.50,  axis=0)
-    T_lay_q97_5 = np.quantile(T_lay_samples, 0.975, axis=0)
+    # Pointwise quantiles in T at each layer/level
+    # Central Gaussian-equivalent intervals:
+    # 1σ: 15.8655% .. 84.1345%, 2σ: 2.2750% .. 97.7250%
+    q1_lo, q1_hi = 0.15865525393145707, 0.8413447460685429
+    q2_lo, q2_hi = 0.02275013194817921, 0.9772498680518208
 
-    T_lev_q02_5 = np.quantile(T_lev_samples, 0.025, axis=0)
-    T_lev_q50   = np.quantile(T_lev_samples, 0.50,  axis=0)
-    T_lev_q97_5 = np.quantile(T_lev_samples, 0.975, axis=0)
+    T_lay_q1_lo = np.quantile(T_lay_samples, q1_lo, axis=0)
+    T_lay_q50   = np.quantile(T_lay_samples, 0.50, axis=0)
+    T_lay_q1_hi = np.quantile(T_lay_samples, q1_hi, axis=0)
+    T_lay_q2_lo = np.quantile(T_lay_samples, q2_lo, axis=0)
+    T_lay_q2_hi = np.quantile(T_lay_samples, q2_hi, axis=0)
+
+    T_lev_q1_lo = np.quantile(T_lev_samples, q1_lo, axis=0)
+    T_lev_q50   = np.quantile(T_lev_samples, 0.50, axis=0)
+    T_lev_q1_hi = np.quantile(T_lev_samples, q1_hi, axis=0)
+    T_lev_q2_lo = np.quantile(T_lev_samples, q2_lo, axis=0)
+    T_lev_q2_hi = np.quantile(T_lev_samples, q2_hi, axis=0)
 
     # Optional comparison: standard Milne profile at median parameter values
     milne_T_lay_median_params = None
@@ -382,31 +391,43 @@ def plot_Tp_band(
         exp_dir / f"{outname}_quantiles.npz",
         p_lev=p_lev,
         p_lay=p_lay,
-        T_lay_q02_5=T_lay_q02_5,
+        T_lay_q1_lo=T_lay_q1_lo,
+        T_lay_q1_hi=T_lay_q1_hi,
+        T_lay_q2_lo=T_lay_q2_lo,
+        T_lay_q2_hi=T_lay_q2_hi,
         T_lay_q50=T_lay_q50,
-        T_lay_q97_5=T_lay_q97_5,
-        T_lev_q02_5=T_lev_q02_5,
+        T_lev_q1_lo=T_lev_q1_lo,
+        T_lev_q1_hi=T_lev_q1_hi,
+        T_lev_q2_lo=T_lev_q2_lo,
+        T_lev_q2_hi=T_lev_q2_hi,
         T_lev_q50=T_lev_q50,
-        T_lev_q97_5=T_lev_q97_5,
         draw_idx=idx,
     )
 
     # Plot T–p profile with credible band
     #sns.set_theme(style="whitegrid")
-    palette = sns.color_palette("colorblind", 3)
+    palette = sns.color_palette("colorblind", 4)
     fig, ax = plt.subplots(figsize=(5, 6))
 
-    # Shaded 95% credible band
+    # Shaded credible bands (2σ underneath, then 1σ)
     ax.fill_betweenx(
         p_lay/1e6,
-        T_lay_q02_5,
-        T_lay_q97_5,
-        alpha=0.3,
+        T_lay_q2_lo,
+        T_lay_q2_hi,
+        alpha=0.25,
         label=r"2$\sigma$",
         color=palette[0],
     )
+    ax.fill_betweenx(
+        p_lay/1e6,
+        T_lay_q1_lo,
+        T_lay_q1_hi,
+        alpha=0.35,
+        label=r"1$\sigma$",
+        color=palette[1],
+    )
     # Median profile (acts as "best-fit" summary)
-    ax.plot(T_lay_q50, p_lay/1e6, lw=2, label="Median", color=palette[1])
+    ax.plot(T_lay_q50, p_lay/1e6, lw=2, label="Median", color=palette[3])
 
     if milne_T_lay_median_params is not None:
         ax.plot(

@@ -139,8 +139,8 @@ def _load_line_h5(index: int, path: str, target_wavelengths: np.ndarray) -> Line
     # Dimensions of the master wavelength
     wavelength_count = target_wavelengths.size
 
-    # Interpolate to target wavelength grid
-    # Use float32 to save memory (log10 cross sections don't need float64 precision)
+    # Interpolate to target wavelength grid.
+    # Keep NumPy-side preprocessing in float64; downcast happens at JAX cache transfer.
     xs_interp = np.empty((n_temperatures, n_pressures, wavelength_count), dtype=np.float64)
     for iT in range(n_temperatures):
         for iP in range(n_pressures):
@@ -152,15 +152,15 @@ def _load_line_h5(index: int, path: str, target_wavelengths: np.ndarray) -> Line
                 right=-99.0
             )
 
-    # Return a dataclass with NumPy arrays (will be converted to JAX later)
-    # Mixed precision: float64 for grids (better interpolation accuracy), float32 for cross sections
+    # Return a dataclass with NumPy arrays (will be converted to JAX later).
+    # Keep NumPy-side arrays float64 for preprocessing consistency.
     return LineRegistryEntry(
         name=name,
         idx=index,
         pressures=pressures.astype(np.float64),
         temperatures=temperatures.astype(np.float64),
         wavelengths=target_wavelengths.astype(np.float64),
-        cross_sections=xs_interp.astype(np.float64),  # Already float32
+        cross_sections=xs_interp.astype(np.float64),
     )
 
 
@@ -209,7 +209,7 @@ def _load_line_npz(index: int, path: str, target_wavelengths: np.ndarray) -> Lin
     if native_wavelengths.shape == target_wavelengths.shape and np.allclose(native_wavelengths, target_wavelengths):
         xs_interp = xs
     else:
-        # Use float32 to save memory
+        # Keep NumPy-side preprocessing in float64; downcast happens at JAX cache transfer.
         xs_interp = np.empty((n_temperatures, n_pressures, target_wavelengths.size), dtype=np.float64)
         for iT in range(n_temperatures):
             for iP in range(n_pressures):
@@ -221,15 +221,15 @@ def _load_line_npz(index: int, path: str, target_wavelengths: np.ndarray) -> Lin
                     right=-99.0,
                 )
 
-    # Return NumPy arrays (will be converted to JAX later)
-    # Mixed precision: float64 for grids (better interpolation accuracy), float32 for cross sections
+    # Return NumPy arrays (will be converted to JAX later).
+    # Keep NumPy-side arrays float64 for preprocessing consistency.
     return LineRegistryEntry(
         name=name,
         idx=index,
         pressures=pressures.astype(np.float64),
         temperatures=temperatures.astype(np.float64),
         wavelengths=target_wavelengths.astype(np.float64),
-        cross_sections=xs_interp.astype(np.float64),  # Already float32
+        cross_sections=xs_interp.astype(np.float64),
     )
 
 # Pad the tables to a rectangle (in dimension) - usually only in T as wavelength and pressure grids are the same lengths

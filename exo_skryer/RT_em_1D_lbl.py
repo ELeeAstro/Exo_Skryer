@@ -82,13 +82,14 @@ def _scale_flux_ratio(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    stellar_flux = jnp.asarray(state.get("stellar_flux", jnp.ones_like(flux)), dtype=jnp.float64)
+    dtype = flux.dtype
+    stellar_flux = jnp.asarray(state.get("stellar_flux", jnp.ones_like(flux)), dtype=dtype)
     has_stellar_flux = jnp.asarray(state.get("has_stellar_flux", 0), dtype=jnp.int32)
-    f_star_param = jnp.asarray(params.get("F_star", jnp.ones_like(stellar_flux)), dtype=jnp.float64)
+    f_star_param = jnp.asarray(params.get("F_star", jnp.ones_like(stellar_flux)), dtype=dtype)
     use_stellar = has_stellar_flux != 0
     F_star = jnp.where(use_stellar, stellar_flux, f_star_param)
-    R0 = state["R0"].astype(jnp.float64)
-    R_s = state["R_s"].astype(jnp.float64)
+    R0 = jnp.asarray(state["R0"], dtype=dtype)
+    R_s = jnp.asarray(state["R_s"], dtype=dtype)
     scale = (R0**2) / (jnp.maximum(F_star, 1.0e-30) * (R_s**2))
     return flux * scale
 
@@ -100,13 +101,14 @@ def compute_emission_spectrum_1d_lbl(
     emission_solver=solve_alpha_eaa,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     contri_func = state.get("contri_func", False)
-    wl_cm = state["wl"].astype(jnp.float64) * 1.0e-4
-    T_lev = state["T_lev"].astype(jnp.float64)
-    rho_lay = state["rho_lay"].astype(jnp.float64)
-    dz = state["dz"].astype(jnp.float64)
+    dtype = state["wl"].dtype
+    wl_cm = jnp.asarray(state["wl"], dtype=dtype) * 1.0e-4
+    T_lev = jnp.asarray(state["T_lev"], dtype=dtype)
+    rho_lay = jnp.asarray(state["rho_lay"], dtype=dtype)
+    dz = jnp.asarray(state["dz"], dtype=dtype)
     be_levels = _planck_lambda(wl_cm[None, :], T_lev[:, None])
     if "T_int" in params:
-        T_int = params["T_int"].astype(jnp.float64)
+        T_int = jnp.asarray(params["T_int"], dtype=dtype)
         be_internal = _planck_lambda(wl_cm[None, :], T_int[None, None])[0]
     else:
         be_internal = jnp.zeros_like(be_levels[-1])
@@ -146,7 +148,7 @@ def compute_emission_spectrum_1d_lbl(
 
     top_flux = lw_up[0]
     if state.get("is_brown_dwarf", False):
-        R0 = state["R0"].astype(jnp.float64)
+        R0 = jnp.asarray(state["R0"], dtype=top_flux.dtype)
         D = params["D"]
         distance = D * pc
         final_spectrum = top_flux * (R0 / distance) ** 2

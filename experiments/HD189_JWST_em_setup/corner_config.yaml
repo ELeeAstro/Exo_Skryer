@@ -1,8 +1,10 @@
 
 
-log_10_k_ir: {label: "$k_{\\mathrm{int}}$ [K]", order: 1}
-log_10_gam_v: {label: "$g_{\\mathrm{int}}$ [K]", order: 1}
-
+log_10_p_t: {label: "$q_{t}$", order: 1}
+q_irr_0: {label: "$q_{irr}$", order: 1}
+beta: {label: "$\\beta$", order: 1}
+log_10_k_ir: {label: "$\\kappa_{ir}$", order: 1}
+log_10_gam_v: {label: "$\\gamma_{\\mathrm{v}}$", order: 1}
 log_10_g: {label: "$\\log_{10} g$ [cm s$^{-2}$]", order: 2}
 R_p: {label: "$R_{\\rm p}$ [$R_{\\mathrm{Jup}}$]", order: 1}
 T_eq: {label: "$T_{\\mathrm{eq}}$ [K]", order: 3}

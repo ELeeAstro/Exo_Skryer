@@ -39,6 +39,7 @@ import sys
 
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import seaborn as sns
 import yaml
 import arviz as az
@@ -223,6 +224,54 @@ def _choose_vert_struct_model(cfg) -> str:
     return str(name)
 
 
+def _resolve_vert_struct_fn(vs_mod, requested_name: str):
+    """
+    Resolve a vertical-structure function name robustly.
+
+    Supports:
+      - exact attribute match,
+      - case-insensitive match,
+      - normalized match (drop non-alnum chars),
+      - a few explicit aliases for legacy naming.
+    """
+    if hasattr(vs_mod, requested_name):
+        return getattr(vs_mod, requested_name), requested_name
+
+    attrs = {
+        name: obj for name, obj in vars(vs_mod).items()
+        if callable(obj) and not name.startswith("_")
+    }
+
+    # Common aliases used in configs
+    alias_map = {
+        "modified_guillot": "Modified_Guillot",
+        "guillot_modified": "Modified_Guillot",
+        "milne_modified": "Milne_modified",
+    }
+    alias_target = alias_map.get(requested_name.lower())
+    if alias_target and alias_target in attrs:
+        return attrs[alias_target], alias_target
+
+    req_lower = requested_name.lower()
+    for name, fn in attrs.items():
+        if name.lower() == req_lower:
+            return fn, name
+
+    def _norm(s: str) -> str:
+        return "".join(ch for ch in s.lower() if ch.isalnum())
+
+    req_norm = _norm(requested_name)
+    for name, fn in attrs.items():
+        if _norm(name) == req_norm:
+            return fn, name
+
+    expected = ", ".join(sorted(attrs.keys()))
+    raise AttributeError(
+        f"{vs_mod.__name__} has no function '{requested_name}'. "
+        f"Available callables: {expected}"
+    )
+
+
 # ---------------- main plotting logic ----------------
 
 def plot_Tp_band(
@@ -270,13 +319,7 @@ def plot_Tp_band(
 
     # Select vertical structure model
     model_name = _choose_vert_struct_model(cfg)
-    try:
-        vert_struct_fn = getattr(vs_mod, model_name)
-    except AttributeError:
-        raise AttributeError(
-            f"{vs_mod.__name__} has no function '{model_name}'. "
-            "Expected one of: isothermal, Milne, Guillot, ..."
-        )
+    vert_struct_fn, resolved_model_name = _resolve_vert_struct_fn(vs_mod, model_name)
 
     # Load posterior from ArviZ NetCDF
     posterior_path = exp_dir / "posterior.nc"
@@ -319,11 +362,11 @@ def plot_Tp_band(
                 Mp = pars["M_p"] * M_jup
                 Rp = pars["R_p"] * R_jup
                 g_val = G * Mp / max(Rp**2, 1e-30)
-                pars["log_g"] = float(np.log10(max(g_val, 1e-30)))
+                pars["log_10_g"] = float(np.log10(max(g_val, 1e-30)))
             else:
                 raise KeyError(
-                    "Parameter samples must include 'log_g' or both 'M_p' and 'R_p' "
-                    "to reconstruct log_g for T(p) evaluation."
+                    "Parameter samples must include 'log_10_g' or both 'M_p' and 'R_p' "
+                    "to reconstruct log_10_g for T(p) evaluation."
                 )
 
         T_lev, T_lay = vert_struct_fn(p_lev, pars)
@@ -331,65 +374,144 @@ def plot_Tp_band(
         T_lay = np.asarray(T_lay, dtype=float)
         if T_lev.shape[0] != p_lev.shape[0]:
             raise ValueError(
-                f"{model_name} returned {T_lev.shape[0]} level temps but "
+                f"{resolved_model_name} returned {T_lev.shape[0]} level temps but "
                 f"{p_lev.shape[0]} pressures were requested."
             )
         if T_lay.shape[0] != n_lay:
             raise ValueError(
-                f"{model_name} returned {T_lay.shape[0]} layer temps but "
+                f"{resolved_model_name} returned {T_lay.shape[0]} layer temps but "
                 f"{n_lay} layers were requested."
             )
         T_lev_samples[k, :] = T_lev
         T_lay_samples[k, :] = T_lay
 
-    # Pointwise quantiles in T at each layer
-    T_lay_q02_5 = np.quantile(T_lay_samples, 0.025, axis=0)
-    T_lay_q50   = np.quantile(T_lay_samples, 0.50,  axis=0)
-    T_lay_q97_5 = np.quantile(T_lay_samples, 0.975, axis=0)
+    # Pointwise quantiles in T at each layer/level
+    # Central Gaussian-equivalent intervals:
+    # 1σ: 15.8655% .. 84.1345%, 2σ: 2.2750% .. 97.7250%
+    q1_lo, q1_hi = 0.15865525393145707, 0.8413447460685429
+    q2_lo, q2_hi = 0.02275013194817921, 0.9772498680518208
 
-    T_lev_q02_5 = np.quantile(T_lev_samples, 0.025, axis=0)
-    T_lev_q50   = np.quantile(T_lev_samples, 0.50,  axis=0)
-    T_lev_q97_5 = np.quantile(T_lev_samples, 0.975, axis=0)
+    T_lay_q1_lo = np.quantile(T_lay_samples, q1_lo, axis=0)
+    T_lay_q50   = np.quantile(T_lay_samples, 0.50, axis=0)
+    T_lay_q1_hi = np.quantile(T_lay_samples, q1_hi, axis=0)
+    T_lay_q2_lo = np.quantile(T_lay_samples, q2_lo, axis=0)
+    T_lay_q2_hi = np.quantile(T_lay_samples, q2_hi, axis=0)
+
+    T_lev_q1_lo = np.quantile(T_lev_samples, q1_lo, axis=0)
+    T_lev_q50   = np.quantile(T_lev_samples, 0.50, axis=0)
+    T_lev_q1_hi = np.quantile(T_lev_samples, q1_hi, axis=0)
+    T_lev_q2_lo = np.quantile(T_lev_samples, q2_lo, axis=0)
+    T_lev_q2_hi = np.quantile(T_lev_samples, q2_hi, axis=0)
+
+    # Optional comparison: standard Guillot profile at median parameter values
+    guillot_T_lay_median_params = None
+    if resolved_model_name == "Modified_Guillot" and hasattr(vs_mod, "Guillot"):
+        median_pars: Dict[str, float] = {}
+        for p_cfg in params_cfg:
+            name = getattr(p_cfg, "name", None)
+            if not name:
+                continue
+            median_pars[name] = float(np.median(param_draws[name][idx]))
+
+        # Ensure log_10_g exists (same reconstruction logic as the sampling loop)
+        if "log_10_g" not in median_pars:
+            if "M_p" in median_pars and "R_p" in median_pars:
+                Mp = median_pars["M_p"] * M_jup
+                Rp = median_pars["R_p"] * R_jup
+                g_val = G * Mp / max(Rp**2, 1e-30)
+                median_pars["log_10_g"] = float(np.log10(max(g_val, 1e-30)))
+            else:
+                raise KeyError(
+                    "Median parameter set must include 'log_10_g' or both 'M_p' and 'R_p' "
+                    "to reconstruct log_10_g for Guillot comparison."
+                )
+
+        required_guillot = ("T_int", "T_eq", "log_10_k_ir", "log_10_gam_v", "log_10_g", "f_hem")
+        missing = [k for k in required_guillot if k not in median_pars]
+        if missing:
+            raise KeyError(
+                "Cannot evaluate Guillot comparison at median parameters; "
+                f"missing required parameter(s): {', '.join(missing)}"
+            )
+
+        _, guillot_T_lay_median_params = vs_mod.Guillot(p_lev, median_pars)
+        guillot_T_lay_median_params = np.asarray(guillot_T_lay_median_params, dtype=float)
 
     # Save quantiles
     np.savez_compressed(
         exp_dir / f"{outname}_quantiles.npz",
         p_lev=p_lev,
         p_lay=p_lay,
-        T_lay_q02_5=T_lay_q02_5,
+        T_lay_q1_lo=T_lay_q1_lo,
+        T_lay_q1_hi=T_lay_q1_hi,
+        T_lay_q2_lo=T_lay_q2_lo,
+        T_lay_q2_hi=T_lay_q2_hi,
         T_lay_q50=T_lay_q50,
-        T_lay_q97_5=T_lay_q97_5,
-        T_lev_q02_5=T_lev_q02_5,
+        T_lev_q1_lo=T_lev_q1_lo,
+        T_lev_q1_hi=T_lev_q1_hi,
+        T_lev_q2_lo=T_lev_q2_lo,
+        T_lev_q2_hi=T_lev_q2_hi,
         T_lev_q50=T_lev_q50,
-        T_lev_q97_5=T_lev_q97_5,
         draw_idx=idx,
     )
 
     # Plot T–p profile with credible band
-    sns.set_theme(style="whitegrid")
-    palette = sns.color_palette("colorblind", 2)
+    #sns.set_theme(style="whitegrid")
+    palette = sns.color_palette("colorblind", 4)
     fig, ax = plt.subplots(figsize=(5, 6))
 
-    # Shaded 95% credible band
+    # Shaded credible bands (2σ underneath, then 1σ)
     ax.fill_betweenx(
         p_lay/1e6,
-        T_lay_q02_5,
-        T_lay_q97_5,
-        alpha=0.3,
-        label="95% credible band",
+        T_lay_q2_lo,
+        T_lay_q2_hi,
+        alpha=0.25,
+        label=r"2$\sigma$",
         color=palette[0],
     )
+    ax.fill_betweenx(
+        p_lay/1e6,
+        T_lay_q1_lo,
+        T_lay_q1_hi,
+        alpha=0.35,
+        label=r"1$\sigma$",
+        color=palette[1],
+    )
     # Median profile (acts as "best-fit" summary)
-    ax.plot(T_lay_q50, p_lay/1e6, lw=2, label="Median T(p)", color=palette[1])
+    ax.plot(T_lay_q50, p_lay/1e6, lw=2, label="Median", color=palette[3])
+    if guillot_T_lay_median_params is not None:
+        ax.plot(
+            guillot_T_lay_median_params,
+            p_lay / 1e6,
+            lw=2,
+            ls="--",
+            label="Guillot (median params)",
+            color=palette[2],
+        )
 
     ax.set_yscale("log")
     ax.invert_yaxis()  # low pressures at top
+    ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
+    ax.yaxis.set_major_formatter(mticker.LogFormatterMathtext(base=10.0))
+    ax.yaxis.set_minor_locator(mticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
+    ax.yaxis.set_minor_formatter(mticker.NullFormatter())
 
-    ax.set_xlabel("Temperature [K]")
-    ax.set_ylabel("Pressure [bar]")
-    ax.set_title(f"T–p structure: {model_name}")
+    ax.set_xlabel(r"Temperature [K]", fontsize=14)
+    ax.set_ylabel(r"pressure [bar]", fontsize=14)
+    ax.tick_params(axis="both", labelsize=12)
 
-    ax.legend()
+    ax.set_ylim(1e2,1e-8)
+
+    ax.legend(
+        fontsize=12,
+        frameon=True,
+        fancybox=True,
+        framealpha=0.95,
+        borderpad=0.8,
+        labelspacing=0.6,
+        handlelength=2.2,
+        handletextpad=0.8,
+    )
     fig.tight_layout()
 
     png = exp_dir / f"{outname}.png"

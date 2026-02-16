@@ -17,7 +17,7 @@ physics:
   nlay: 99
 
   # Vertical structure schemes
-  vert_Tp: modified_guillot
+  vert_Tp: Modified_Guillot
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic    
@@ -36,13 +36,14 @@ physics:
   em_scheme: eaa
   emission_mode: planet
   contri_func: false
+  refractin: false
 
 # ----------------------------------------------------------------------------------
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_R20000.txt
-  full_grid: false
+  wl_master: ../../opac_data/lbl/wl_R20000.txt
+  full_grid: true
   ck: false
   ck_mix: RORR
 
@@ -86,8 +87,8 @@ params:
   - {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
   - {name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
   - {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -1.0}
-  - {name: q_irr_0, dist: uniform, low: 0.01, high: 1.0, transform: logit, init: 0.3}
-  - {name: log_10_p_t, dist: uniform, low: -8, high: 2, transform: logit, init: -2}
+  - {name: q_irr_0, dist: uniform, low: 0.01, high: 0.66, transform: logit, init: 0.3}
+  - {name: log_10_p_t, dist: uniform, low: -7, high: 1, transform: logit, init: -2}
   - {name: beta, dist: uniform, low: 0.1, high: 1.0, transform: logit, init: 0.5}
 
   # Chemistry parameters

@@ -86,7 +86,7 @@ def _sum_opacity_components_2d(
     """
     nlay = state["nlay"]
     nwl = state["nwl"]
-    zeros_2d = jnp.zeros((nlay, nwl), dtype=jnp.float64)
+    zeros_2d = jnp.zeros((nlay, nwl), dtype=state["rho_lay"].dtype)
 
     component_keys = ("rayleigh", "cia", "special", "cloud")
     components = jnp.stack([opacity_components.get(k, zeros_2d) for k in component_keys], axis=0)
@@ -136,18 +136,18 @@ def _integrate_g_points_trans(
 
     nspec = sigma_perspecies.shape[0]
     ng = sigma_perspecies.shape[-1]
-    w = g_weights[:ng].astype(jnp.float64)
+    w = g_weights[:ng].astype(sigma_perspecies.dtype)
 
     # Multiply mean transmissions over species at each (impact parameter, wavelength)
-    T_prod0 = jnp.ones((nlay, nwl), dtype=jnp.float64)
+    T_prod0 = jnp.ones((nlay, nwl), dtype=sigma_perspecies.dtype)
 
     def _body(spec_idx: int, T_prod: jnp.ndarray) -> jnp.ndarray:
-        kappa_s = sigma_perspecies[spec_idx].astype(jnp.float64)  # (nlay, nwl, ng)
-        vmr_s = vmr_perspecies[spec_idx].astype(jnp.float64)      # (nlay,)
+        kappa_s = sigma_perspecies[spec_idx]  # (nlay, nwl, ng)
+        vmr_s = vmr_perspecies[spec_idx]      # (nlay,)
 
         dtau_v_s = kappa_s * vmr_s[:, None, None] * scale[:, None, None]  # (nlay, nwl, ng)
         tau_path_s = jnp.einsum("ij,jwg->iwg", P1D, dtau_v_s)             # (nlay, nwl, ng)
-        tau_path_s = jnp.clip(tau_path_s, 0.0, 100.0)
+        tau_path_s = jnp.clip(tau_path_s, 0.0, 300.0)
         T_s_g = jnp.exp(-tau_path_s)                                      # (nlay, nwl, ng)
         T_s = jnp.sum(T_s_g * w[None, None, :], axis=-1)                  # (nlay, nwl)
         return T_prod * jnp.clip(T_s, 1e-99, 1.0)
@@ -160,7 +160,7 @@ def _integrate_g_points_trans(
     else:
         T_prod = lax.fori_loop(0, nspec, _body, T_prod0)  # (nlay, nwl)
 
-    T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 100.0)) * T_prod  # (nlay, nwl)
+    T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 300.0)) * T_prod  # (nlay, nwl)
     if refraction_mask is not None:
         T_total = jnp.where(refraction_mask, 0.0, T_total)
     one_minus_trans = 1.0 - jnp.clip(T_total, 0.0, 1.0)               # (nlay, nwl)

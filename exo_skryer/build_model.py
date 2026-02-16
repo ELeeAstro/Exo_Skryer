@@ -337,8 +337,15 @@ def build_forward_model(
 
     # Get ck_mix for RT kernel selection (TRANS uses different RT kernel)
     ck_mix_str = str(getattr(cfg.opac, "ck_mix", "RORR")).upper()
-    if ck_mix_str == "TRANS" and rt_scheme != "transit_1d":
-        raise NotImplementedError("ck_mix: TRANS is only supported for rt_scheme: transit_1d.")
+    contri_func_enabled = bool(getattr(phys, "contri_func", False))
+    if ck:
+        if ck_mix_str == "TRANS" and rt_scheme != "transit_1d":
+            raise NotImplementedError("ck_mix: TRANS is only supported for rt_scheme: transit_1d.")
+        if ck_mix_str == "TRANS" and contri_func_enabled:
+            raise ValueError(
+                "physics.contri_func=True is not supported with opac.ck_mix=TRANS. "
+                "Use ck_mix=RORR/PRAS or disable contribution functions."
+            )
 
     if rt_scheme == "transit_1d":
         if ck:
@@ -571,7 +578,7 @@ def build_forward_model(
             "nd_lay": nd_lay,
             "q_c_lay": q_c_lay,
             "vmr_lay": vmr_lay,
-            "contri_func": bool(getattr(phys, "contri_func", False)),
+            "contri_func": contri_func_enabled,
             "refraction_mode": refraction_mode,
         }
         if "cloud_nk_n" in opac:

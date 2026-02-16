@@ -131,14 +131,14 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
         s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
         s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1  # log10 sigma
 
-        sigma_linear = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl) in cm^2
+        sigma_linear = 10.0 ** s_interp  # (nlay, nwl) in cm^2
         return acc + sigma_linear * mixing_ratios[i, :, None]
 
     weighted_sigma = lax.fori_loop(
         0,
         n_species,
         _accumulate_one,
-        jnp.zeros((layer_count, n_wl), dtype=jnp.float64),
+        jnp.zeros((layer_count, n_wl), dtype=sigma_cube.dtype),
     )
 
     return weighted_sigma / (layer_mu[:, None] * amu)

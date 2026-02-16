@@ -12,8 +12,6 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 
-jax.config.update("jax_enable_x64", True)
-
 _DEFAULT_CF_EPS = 1e-10
 _RESCALE_THRESH = 1e150
 

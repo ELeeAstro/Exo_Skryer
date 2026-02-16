@@ -81,7 +81,7 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
             return (1.0 - t_weight) * s_t0 + t_weight * s_t1
 
         sigma_log_layer = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)  # (nspec, nwl, ng)
-        return sigma_log_layer.astype(jnp.float64)
+        return sigma_log_layer
 
     # NOTE: This returns a large (nspec, nlay, nwl, ng) array; callers that care about peak
     # memory should perform layer-wise interpolation + mixing instead of using this helper.
@@ -265,7 +265,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
             s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
             return (1.0 - t_weight) * s_t0 + t_weight * s_t1
 
-        return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids).astype(jnp.float64)
+        return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
 
     def _mix_one_layer(layer_idx: jnp.ndarray, out: jnp.ndarray) -> jnp.ndarray:
         log_p = log_p_layers[layer_idx]
@@ -295,7 +295,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
         0,
         layer_count,
         _mix_one_layer,
-        jnp.zeros((layer_count, n_wl, n_g), dtype=jnp.float64),
+        jnp.zeros((layer_count, n_wl, n_g), dtype=sigma_cube.dtype),
     )
 
     # Convert to mass opacity (cm^2 / g)
@@ -387,7 +387,7 @@ def compute_ck_opacity_perspecies(
             s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
             return (1.0 - t_weight) * s_t0 + t_weight * s_t1
 
-        return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids).astype(jnp.float64)
+        return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
 
     # Interpolate for all layers - returns (nlay, nspec, nwl, ng) then transpose
     sigma_log_all = jax.vmap(_interp_sigma_log_layer)(log_p_layers, log_t_layers)
