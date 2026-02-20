@@ -246,7 +246,7 @@ def _resolve_vert_struct_fn(vs_mod, requested_name: str):
     alias_map = {
         "modified_guillot": "Modified_Guillot",
         "guillot_modified": "Modified_Guillot",
-        "milne_modified": "Milne_modified",
+        "milne_modified": "Modified_Milne",
     }
     alias_target = alias_map.get(requested_name.lower())
     if alias_target and alias_target in attrs:

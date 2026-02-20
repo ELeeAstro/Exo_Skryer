@@ -163,7 +163,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
     log_t_layers = jnp.log10(layer_temperatures)
 
     weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)
-    out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=sigma_cube.dtype)
+    out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float64)
 
     # Accumulate species one-by-one to avoid materializing (n_species, nlay, nwl).
     # Use a Python loop so CIA pair parsing and vmr dict lookups happen at trace time.
@@ -186,7 +186,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         tiny = jnp.array(-199.0, dtype=s_interp.dtype)
         s_interp = jnp.where(below_min[:, None], tiny, s_interp)
 
-        sigma_val = 10.0 ** s_interp  # (nlay, nwl)
+        sigma_val = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl)
         pair_weight = _compute_pair_weight(species_names[spec_idx], layer_count, layer_vmr)  # (nlay,)
         normalization = pair_weight * weights_nd2_over_rho  # (nlay,)
         out = out + normalization[:, None] * sigma_val

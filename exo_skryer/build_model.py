@@ -22,7 +22,7 @@ from .vert_Tp import (
     Barstow,
     MandS,
     picket_fence,
-    Milne_modified,
+    Modified_Milne,
 )
 from .vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
 from .vert_mu import constant_mu, compute_mu
@@ -160,8 +160,8 @@ def build_forward_model(
         Tp_kernel = picket_fence
     elif vert_tp_name == "mands":
         Tp_kernel = MandS
-    elif vert_tp_name in ("milne_2", "milne_modified"):
-        Tp_kernel = Milne_modified
+    elif vert_tp_name in ("milne_2", "milne_modified", "modified_milne"):
+        Tp_kernel = Modified_Milne
     else:
         raise NotImplementedError(f"Unknown vert_Tp='{vert_tp_name}'")
 

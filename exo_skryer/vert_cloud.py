@@ -143,7 +143,7 @@ def slab_profile(
         - `log_10_p_top_slab` : float
             Log₁₀ pressure at the top of the slab in bar.
         - `log_10_dp_slab` : float
-            Log₁₀ pressure extent of the slab (P_bot = P_top * 10^Δlog_P).
+            Log₁₀ linear pressure width of the slab in bar (Δp = 10^log_10_dp_slab).
 
     Returns
     -------
@@ -154,11 +154,9 @@ def slab_profile(
     q_c_slab = 10.0 ** params["log_10_q_c"]
 
     # Slab boundaries in pressure (bars → dyne cm⁻²)
-    log_P_top = params["log_10_p_top_slab"]
-    Delta_log_P = params["log_10_dp_slab"]
-
-    P_top = 10.0 ** log_P_top * bar  # bar → dyne cm⁻²
-    P_bot = 10.0 ** (log_P_top + Delta_log_P) * bar  # bar → dyne cm⁻²
+    P_top = 10.0 ** params["log_10_p_top_slab"] * bar  # bar → dyne cm⁻²
+    Delta_p = 10.0 ** params["log_10_dp_slab"] * bar   # bar → dyne cm⁻²
+    P_bot = P_top + Delta_p                             # P_c,top + Δp
 
     # Hard slab cutoff: 1 inside [P_top, P_bot], 0 outside
     slab_mask = jnp.logical_and(p_lay >= P_top, p_lay <= P_bot)

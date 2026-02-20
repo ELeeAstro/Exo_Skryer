@@ -152,7 +152,7 @@ def compute_hminus_bf_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
     temperature_grid = opac["hminus_temperature_grid"]
     sigma_values = 10.0 ** _interpolate_logsigma_1d(
         sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
-    )
+    ).astype(jnp.float64)
 
     # VMR value is already a JAX array, no need to wrap
     vmr_hm = jnp.broadcast_to(layer_vmr["H-"], (layer_count,))
@@ -206,7 +206,7 @@ def compute_hminus_ff_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
     temperature_grid = opac["hminus_temperature_grid"]
     sigma_values = 10.0 ** _interpolate_logsigma_1d(
         sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
-    )
+    ).astype(jnp.float64)
 
     vmr_e = jnp.broadcast_to(10.0 ** params["log_10_ne_over_ntot"], (layer_count,))
     vmr_e = jnp.clip(vmr_e, 0.0, 1.0)

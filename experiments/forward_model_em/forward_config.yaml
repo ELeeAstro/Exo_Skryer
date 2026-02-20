@@ -7,7 +7,7 @@ physics:
 
   nlay: 99
 
-  vert_Tp: Milne_modified
+  vert_Tp: Modified_Milne
   vert_alt: hypsometric_variable_g_pref
   vert_chem: constant_vmr
   vert_mu: dynamic

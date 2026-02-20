@@ -128,7 +128,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``Line``
   * ``Barstow``
   * ``Milne``
-  * ``Milne_modified`` (aliases: ``milne_2``, ``milne_modified``)
+  * ``Modified_Milne`` (aliases: ``milne_2``, ``milne_modified``, ``modified_milne``)
   * ``picket_fence``
   * ``MandS`` (alias: ``mands``)
 
@@ -139,7 +139,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``Line``: ``T_int, T_eq, f_hem, log_10_k_ir, log_10_g, log_10_gam_v1, log_10_gam_v2, alpha``
   * ``Barstow``: ``T_strat`` (plus other fixed constants in the implementation)
   * ``Milne``: ``T_int, log_10_k_ir, log_10_g``
-  * ``Milne_modified``: ``T_int, log_10_k_ir, log_10_g, T_ratio, log_10_p_t, beta``
+  * ``Modified_Milne``: ``T_int, log_10_k_ir, log_10_g, T_ratio, log_10_p_t, beta``
   * ``picket_fence``: ``T_int, T_eq, log_10_k_ir, log_10_gam_v, log_10_R, Beta, log_10_g, f_hem``
   * ``MandS``: ``a1, a2, log_10_P1, log_10_P2, log_10_P3, T_ref``
 

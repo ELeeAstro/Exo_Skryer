@@ -23,7 +23,7 @@ __all__ = [
     "isothermal",
     "Barstow",
     "Milne",
-    "Milne_modified",
+    "Modified_Milne",
     "Guillot",
     "Modified_Guillot",
     "MandS",
@@ -135,7 +135,7 @@ def Barstow(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.nda
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
 
-def Milne_modified(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
+def Modified_Milne(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a modified Milne temperature profile with stretched exponential transition.
 
     This profile uses a grey optical depth model with a stretched exponential

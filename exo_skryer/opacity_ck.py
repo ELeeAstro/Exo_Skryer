@@ -282,7 +282,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
             )[0]
         else:
             mixed = mix_k_tables_rorr(
-                10.0 ** sigma_log_layer[:, None, :, :],
+                10.0 ** sigma_log_layer[:, None, :, :].astype(jnp.float64),
                 vmr_layer[:, None],
                 g_points,
                 g_weights,
@@ -295,7 +295,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
         0,
         layer_count,
         _mix_one_layer,
-        jnp.zeros((layer_count, n_wl, n_g), dtype=sigma_cube.dtype),
+        jnp.zeros((layer_count, n_wl, n_g), dtype=jnp.float64),
     )
 
     # Convert to mass opacity (cm^2 / g)
@@ -395,7 +395,7 @@ def compute_ck_opacity_perspecies(
     sigma_log_all = jnp.transpose(sigma_log_all, (1, 0, 2, 3))
 
     # Convert from log10 to linear space
-    sigma_linear = 10.0 ** sigma_log_all
+    sigma_linear = 10.0 ** sigma_log_all.astype(jnp.float64)
 
     # Convert to mass opacity (cm² / g)
     # sigma_linear is cross-section (cm² molecule⁻¹)

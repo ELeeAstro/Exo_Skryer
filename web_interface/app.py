@@ -89,10 +89,10 @@ EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso"]
 # - Barstow: Profile with stratospheric temperature (T_strat)
 # - Line: Line profile
 # - Milne: Eddington-Milne approximation
-# - Milne_modified: Modified Milne profile
+# - Modified_Milne: Modified Milne profile
 # - picket_fence: Picket-fence approximation
 # - MandS: Madhusudhan & Seager profile
-VERT_TP_OPTIONS = ["isothermal", "Guillot", "Modified_Guillot", "Barstow", "Line", "Milne", "Milne_modified", "picket_fence", "MandS"]
+VERT_TP_OPTIONS = ["isothermal", "Guillot", "Modified_Guillot", "Barstow", "Line", "Milne", "Modified_Milne", "picket_fence", "MandS"]
 
 # How altitude/height is calculated in the atmosphere model
 # From build_model.py lines 158-166 (vert_alt selector)

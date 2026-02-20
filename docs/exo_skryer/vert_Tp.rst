@@ -487,7 +487,7 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm ratio}`, :math:`\log
 
    import numpy as np
    import matplotlib.pyplot as plt
-   from exo_skryer.vert_Tp import Milne_modified
+   from exo_skryer.vert_Tp import Modified_Milne
    from exo_skryer.data_constants import bar
 
    # Create pressure grid
@@ -505,7 +505,7 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm ratio}`, :math:`\log
        "log_10_p_t": 0.0,
        "beta": 0.55
    }
-   T_lev, T_lay = Milne_modified(p_lev, params)
+   T_lev, T_lay = Modified_Milne(p_lev, params)
 
    # Plot
    fig, ax = plt.subplots(figsize=(10, 5))
@@ -522,7 +522,7 @@ Required parameters: :math:`T_{\rm int}` [K], :math:`T_{\rm ratio}`, :math:`\log
 .. code-block:: yaml
 
    physics:
-     vert_Tp: Milne_modified
+     vert_Tp: Modified_Milne
 
    params:
      - { name: log_10_g, dist: uniform, low: 4.0, high: 5.5, transform: logit, init: 4.5 }

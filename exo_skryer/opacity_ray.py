@@ -83,7 +83,7 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         raise ValueError("Rayleigh wavelength grid must match forward-model grid.")
 
     sigma_log = opac["ray_sigma_table"]
-    sigma_values = 10.0**sigma_log  # (n_species, nwl)
+    sigma_values = 10.0 ** sigma_log.astype(jnp.float64)  # (n_species, nwl)
     species_names = XR.ray_species_names()
     # Accumulate directly into (nlay, nwl) without materializing (n_species, nlay).
     # Use a Python loop so species-name dict lookups happen at trace time (no dynamic indexing).

@@ -362,7 +362,7 @@ def plot_Tp_band(
 
     # Optional comparison: standard Milne profile at median parameter values
     milne_T_lay_median_params = None
-    if model_name == "Milne_modified" and hasattr(vs_mod, "Milne"):
+    if model_name == "Modified_Milne" and hasattr(vs_mod, "Milne"):
         median_pars: Dict[str, float] = {}
         for p_cfg in params_cfg:
             name = getattr(p_cfg, "name", None)

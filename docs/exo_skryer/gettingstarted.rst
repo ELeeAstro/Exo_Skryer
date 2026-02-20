@@ -124,7 +124,7 @@ To plot the emission spectrum::
 The example ``forward_config.yaml`` uses:
 
 * ``rt_scheme: emission_1d`` with ``emission_mode: brown_dwarf`` and the ``eaa`` emission solver
-* A modified Milne temperature-pressure profile (``vert_Tp: Milne_modified``) with parameters ``T_int``, ``T_ratio``, ``log_10_k_ir``, ``log_10_p_t`` and ``beta``
+* A modified Milne temperature-pressure profile (``vert_Tp: Modified_Milne``) with parameters ``T_int``, ``T_ratio``, ``log_10_k_ir``, ``log_10_p_t`` and ``beta``
 * Gravity-consistent altitude grid (``vert_alt: hypsometric_variable_g_pref``) using the mass parameter ``M_p``
 * Correlated-k opacities at R=250 with H2O, CO, CH4, NH3, Na and K
 * Distance parameter ``D`` (parsecs) for absolute flux scaling: :math:`F = (R_0 / D)^2 \times I_{\rm TOA}`

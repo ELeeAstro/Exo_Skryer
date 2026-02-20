@@ -32,7 +32,7 @@ The constant VMR profile assumes a constant value for each species as given by t
 
    import numpy as np
    import matplotlib.pyplot as plt
-   from exo_skryer.vert_Tp import Milne_modified
+   from exo_skryer.vert_Tp import Modified_Milne
    from exo_skryer.vert_chem import constant_vmr
    from exo_skryer.data_constants import bar
 
@@ -49,7 +49,7 @@ The constant VMR profile assumes a constant value for each species as given by t
        "log_10_p_t": 0.0,
        "beta": 0.55
    }
-   T_lev, T_lay = Milne_modified(p_lev, params_tp)
+   T_lev, T_lay = Modified_Milne(p_lev, params_tp)
    p_lay = (p_lev[1:] - p_lev[:-1]) / np.log(p_lev[1:] / p_lev[:-1])
 
    species_order = ("H2O", "CO", "CO2", "CH4")
@@ -101,7 +101,7 @@ This was converted into JAX compabitile python from the origional python code fo
    import matplotlib.pyplot as plt
    from pathlib import Path
    from exo_skryer.rate_jax import load_nasa9_cache
-   from exo_skryer.vert_Tp import Milne_modified
+   from exo_skryer.vert_Tp import Modified_Milne
    from exo_skryer.vert_chem import CE_rate_jax
    from exo_skryer.data_constants import bar
 
@@ -128,7 +128,7 @@ This was converted into JAX compabitile python from the origional python code fo
        "log_10_p_t": 0.0,
        "beta": 0.55
    }
-   T_lev, T_lay = Milne_modified(p_lev, params_tp)
+   T_lev, T_lay = Modified_Milne(p_lev, params_tp)
    p_lay = (p_lev[1:] - p_lev[:-1]) / np.log(p_lev[1:] / p_lev[:-1])
 
    params = {"M/H": 0.0, "C/O": 0.55}
@@ -179,7 +179,7 @@ Quenching Timescale Approximation
    import matplotlib.pyplot as plt
    from pathlib import Path
    from exo_skryer.rate_jax import load_nasa9_cache
-   from exo_skryer.vert_Tp import Milne_modified
+   from exo_skryer.vert_Tp import Modified_Milne
    from exo_skryer.vert_chem import quench_approx
    from exo_skryer.data_constants import bar
 
@@ -206,7 +206,7 @@ Quenching Timescale Approximation
        "log_10_p_t": 0.0,
        "beta": 0.55
    }
-   T_lev, T_lay = Milne_modified(p_lev, params_tp)
+   T_lev, T_lay = Modified_Milne(p_lev, params_tp)
    p_lay = (p_lev[1:] - p_lev[:-1]) / np.log(p_lev[1:] / p_lev[:-1])
 
    params = {"M/H": 0.0, "C/O": 0.55, "Kzz": 1e8, "log_10_g": 4.5}

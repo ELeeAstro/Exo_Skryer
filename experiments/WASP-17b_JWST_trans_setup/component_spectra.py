@@ -438,7 +438,7 @@ def build_atmospheric_state(cfg, params, wl):
     """
     from exo_skryer.data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
     from exo_skryer.vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-    from exo_skryer.vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Milne_modified
+    from exo_skryer.vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Modified_Milne
     from exo_skryer.vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
     from exo_skryer.vert_mu import constant_mu, compute_mu
     from exo_skryer.vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
@@ -457,7 +457,7 @@ def build_atmospheric_state(cfg, params, wl):
         "isothermal": isothermal, "constant": isothermal,
         "barstow": Barstow, "milne": Milne, "guillot": Guillot,
         "picket_fence": picket_fence, "mands": MandS,
-        "milne_2": Milne_modified, "milne_modified": Milne_modified,
+        "milne_2": Modified_Milne, "milne_modified": Modified_Milne, "modified_milne": Modified_Milne,
     }
     Tp_kernel = Tp_kernels.get(vert_tp_name, isothermal)
 
