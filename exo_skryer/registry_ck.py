@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import List, Tuple, Optional, Any
+from typing import List, Tuple, Optional
 from pathlib import Path
 
 import jax.numpy as jnp

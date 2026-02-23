@@ -24,10 +24,9 @@ from __future__ import annotations
 import os
 import sys
 import time
-import copy
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Dict, Any
+from typing import Dict
 
 import numpy as np
 import matplotlib.pyplot as plt

@@ -7,9 +7,6 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 
-import jax
-
-from .aux_functions import simpson_padded
 from .registry_bandpass import (
     bandpass_num_bins,
     bandpass_wavelengths_padded,

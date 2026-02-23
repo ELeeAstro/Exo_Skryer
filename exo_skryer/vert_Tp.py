@@ -12,7 +12,6 @@ import jax.numpy as jnp
 import jax.scipy as jsp
 
 from .data_constants import bar
-from .aux_functions import pchip_1d
 
 # ---------------- Hopf function ----------------
 FIT_P = jnp.asarray([0.6162, -0.3799, 2.395, -2.041, 2.578])

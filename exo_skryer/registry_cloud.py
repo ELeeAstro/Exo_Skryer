@@ -3,7 +3,7 @@ registry_cloud.py
 =================
 """
 
-from typing import Dict, NamedTuple, Optional, Tuple
+from typing import Dict, NamedTuple
 from pathlib import Path
 import numpy as np
 import jax.numpy as jnp

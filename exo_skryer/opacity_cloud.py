@@ -8,7 +8,6 @@ import jax
 import jax.numpy as jnp
 
 from .aux_functions import pchip_1d
-from .registry_cloud import get_or_create_kk_cache, KKGridCache
 from .mie_schemes import rayleigh, madt
 from .lxmie_mod import lxmie_jax
 

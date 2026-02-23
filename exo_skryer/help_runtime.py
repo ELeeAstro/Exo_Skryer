@@ -4,7 +4,6 @@ help_runtime.py
 """
 
 import os
-import multiprocessing  # available for auto-detection of core count if needed
 
 __all__ = ['apply_runtime_env']
 

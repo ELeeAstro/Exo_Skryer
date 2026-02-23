@@ -5,7 +5,6 @@ opacity_line.py
 
 from typing import Dict
 
-import jax
 import jax.numpy as jnp
 from jax import lax
 

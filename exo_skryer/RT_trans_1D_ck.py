@@ -7,9 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Mapping, Tuple
 
-import jax
 import jax.numpy as jnp
-from . import build_opacities as XS
 
 from .refraction import refraction_cutoff_mask
 

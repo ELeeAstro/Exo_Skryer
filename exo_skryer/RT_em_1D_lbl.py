@@ -7,9 +7,7 @@ from __future__ import annotations
 
 from typing import Dict, Mapping, Tuple
 
-import jax
 import jax.numpy as jnp
-from jax import lax
 
 from .data_constants import kb, h, c_light, pc
 from .RT_em_schemes import solve_alpha_eaa

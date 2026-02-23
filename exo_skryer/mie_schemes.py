@@ -8,9 +8,7 @@ index k, and size parameter x.
 """
 
 from typing import Tuple
-import jax
 import jax.numpy as jnp
-from functools import partial
 
 __all__ = [
     "rayleigh",

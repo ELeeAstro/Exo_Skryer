@@ -18,11 +18,9 @@ from __future__ import annotations
 
 from typing import Dict, Mapping, Tuple
 
-import jax
 import jax.numpy as jnp
 from jax import lax
 
-from . import build_opacities as XS
 from .refraction import refraction_cutoff_mask
 
 __all__ = ["compute_transit_depth_1d_ck_trans"]
