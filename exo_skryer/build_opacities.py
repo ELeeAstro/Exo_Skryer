@@ -54,6 +54,8 @@ from .registry_ray import (
     has_ray_data,
     ray_master_wavelength,
     ray_sigma_table,
+    ray_nm1_table,
+    ray_nd_ref,
     ray_species_names,
     ray_pick_arrays,
     load_ray_registry,
