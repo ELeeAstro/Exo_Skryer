@@ -4,6 +4,7 @@ build_model.py
 """
 
 from __future__ import annotations
+from types import SimpleNamespace
 from typing import Dict, Callable, Optional, Union
 
 import jax
@@ -12,28 +13,12 @@ import numpy as np
 
 from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 
-from .vert_alt import hypsometric, hypsometric_variable_g, hypsometric_variable_g_pref
-from .vert_Tp import (
-    isothermal,
-    Milne,
-    Guillot,
-    Modified_Guillot,
-    Line,
-    Barstow,
-    MandS,
-    picket_fence,
-    Modified_Milne,
-)
-from .vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
-from .vert_mu import constant_mu, compute_mu
-from .vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
-
 from .opacity_line import zero_line_opacity, compute_line_opacity
 from .opacity_ck import zero_ck_opacity, compute_ck_opacity, compute_ck_opacity_perspecies
 from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
-from .opacity_cloud import compute_cloud_opacity, zero_cloud_opacity, grey_cloud, deck_and_powerlaw, direct_nk
+from .opacity_cloud import zero_cloud_opacity
 
 from . import build_opacities as XS
 from .build_chem import prepare_chemistry_kernel
@@ -47,10 +32,366 @@ from .RT_em_schemes import get_emission_solver
 
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
 
+from . import kernel_registry as KR
+
 __all__ = [
     'build_forward_model'
 ]
 
+# ---------------------------------------------------------------------------
+# Private helpers
+# ---------------------------------------------------------------------------
+
+def _extract_fixed_params(cfg) -> Dict[str, jnp.ndarray]:
+    """Extract delta-distribution parameters and static cloud_dist into a fixed-params dict."""
+    fixed_params: Dict[str, jnp.ndarray] = {}
+    for param in cfg.params:
+        if param.dist == "delta":
+            raw_value = getattr(param, "value", None)
+            if isinstance(raw_value, str):
+                raw_lower = raw_value.strip().lower()
+                if raw_lower in ("true", "false"):
+                    raw_value = (raw_lower == "true")
+                else:
+                    raw_value = float(raw_value)
+            fixed_params[param.name] = jnp.asarray(raw_value)
+
+    cloud_dist_raw = getattr(cfg.physics, "cloud_dist", None)
+    if cloud_dist_raw is not None:
+        cloud_dist_str = str(cloud_dist_raw).lower().strip()
+        if cloud_dist_str in ("1", "mono", "monodisperse"):
+            fixed_params["cloud_dist"] = jnp.asarray(1, dtype=jnp.int32)
+        elif cloud_dist_str in ("2", "log_normal", "lognormal", "log-normal", "ln"):
+            fixed_params["cloud_dist"] = jnp.asarray(2, dtype=jnp.int32)
+        else:
+            raise ValueError("physics.cloud_dist must be 'mono' or 'log_normal' (or 1/2).")
+
+    return fixed_params
+
+
+def _resolve_lbl_ck_opac(phys, key: str, fn: Callable):
+    """Resolve a simple none/lbl/ck opacity setting.
+
+    Returns ``(scheme_str, kernel_or_None)``.  The scheme string is lowercased.
+    """
+    raw = getattr(phys, key, None)
+    if raw is None:
+        raise ValueError(
+            f"physics.{key} must be specified explicitly (use 'None' to disable)."
+        )
+    s = str(raw).lower()
+    if s == "none":
+        print(f"[info] {key} is None:", raw)
+        return s, None
+    if s in ("lbl", "ck"):
+        return s, fn
+    raise NotImplementedError(
+        f"Unknown physics.{key}='{raw}'. Options: none | lbl | ck"
+    )
+
+
+def _resolve_refraction(phys) -> int:
+    """Return the refraction mode integer (0 = off, 1 = cutoff)."""
+    refraction_raw = getattr(phys, "refraction", None)
+    if refraction_raw is None:
+        return 0
+    s = str(refraction_raw).strip().lower()
+    if s in ("none", "off", "false", "0"):
+        return 0
+    if s in ("cutoff", "refractive_cutoff", "refraction_cutoff"):
+        return 1
+    raise NotImplementedError(f"Unknown physics.refraction='{refraction_raw}'")
+
+
+def _build_rt_kernel(phys, rt_scheme: str, ck: bool, ck_mix_str: str) -> Callable:
+    """Select and return the radiative-transfer kernel for the given scheme."""
+    if rt_scheme == "transit_1d":
+        if ck:
+            return compute_transit_depth_1d_ck_trans if ck_mix_str == "TRANS" else compute_transit_depth_1d_ck
+        return compute_transit_depth_1d_lbl
+    if rt_scheme == "emission_1d":
+        em_scheme = getattr(phys, "em_scheme", "eaa")
+        emission_solver = get_emission_solver(em_scheme)
+        if ck:
+            return lambda state, params, components, opac: compute_emission_spectrum_1d_ck(
+                state, params, components, opac, emission_solver=emission_solver
+            )
+        return lambda state, params, components: compute_emission_spectrum_1d_lbl(
+            state, params, components, emission_solver=emission_solver
+        )
+    raise NotImplementedError(
+        f"Unknown physics.rt_scheme='{rt_scheme}'. Options: transit_1d | emission_1d"
+    )
+
+
+def _select_kernels(cfg) -> SimpleNamespace:
+    """Select all physics and opacity kernels from the YAML config.
+
+    Returns a :class:`~types.SimpleNamespace` with the following fields:
+
+    Kernels
+        ``Tp_kernel``, ``altitude_kernel``, ``chemistry_kernel``,
+        ``mu_kernel``, ``vert_cloud_kernel``, ``line_opac_kernel``,
+        ``ray_opac_kernel``, ``cia_opac_kernel``, ``cld_opac_kernel``,
+        ``special_opac_kernel``, ``rt_kernel``
+
+    Metadata used by validation / forward model
+        ``ck``, ``rt_scheme``, ``ck_mix_str``, ``ck_mix_code_static``,
+        ``contri_func_enabled``, ``refraction_mode``,
+        ``line_opac_str``, ``ray_opac_str``, ``cia_opac_str``,
+        ``cld_opac_str``, ``special_opac_str``
+    """
+    phys = cfg.physics
+
+    # --- vertical structure ---
+    vert_tp_raw = getattr(phys, "vert_Tp", None) or getattr(phys, "vert_struct", None)
+    Tp_kernel = KR.resolve(vert_tp_raw, KR.VERT_TP, "physics.vert_Tp")
+
+    altitude_kernel = KR.resolve(
+        getattr(phys, "vert_alt", None), KR.VERT_ALT, "physics.vert_alt"
+    )
+
+    chemistry_kernel = KR.resolve(
+        getattr(phys, "vert_chem", None), KR.VERT_CHEM, "physics.vert_chem"
+    )
+
+    mu_kernel = KR.resolve(
+        getattr(phys, "vert_mu", None), KR.VERT_MU, "physics.vert_mu"
+    )
+
+    # vert_cloud defaults to "none" if absent from YAML
+    vert_cloud_raw = getattr(phys, "vert_cloud", "none") or "none"
+    vert_cloud_kernel = KR.resolve(vert_cloud_raw, KR.VERT_CLOUD, "physics.vert_cloud")
+
+    # --- line opacity (also determines ck mode) ---
+    line_opac_raw = getattr(phys, "opac_line", None)
+    if line_opac_raw is None:
+        raise ValueError(
+            "physics.opac_line must be specified explicitly (use 'None' to disable)."
+        )
+    line_opac_str = str(line_opac_raw).lower()
+    ck = (line_opac_str == "ck")
+    if line_opac_str == "none":
+        print(f"[info] Line opacity is None:", line_opac_raw)
+        line_opac_kernel = None
+    elif line_opac_str == "lbl":
+        line_opac_kernel = compute_line_opacity
+    elif line_opac_str == "ck":
+        line_opac_kernel = compute_ck_opacity
+    else:
+        raise NotImplementedError(
+            f"Unknown physics.opac_line='{line_opac_raw}'. Options: none | lbl | ck"
+        )
+
+    # --- continuum opacities ---
+    ray_opac_str, ray_opac_kernel = _resolve_lbl_ck_opac(phys, "opac_ray", compute_ray_opacity)
+    cia_opac_str, cia_opac_kernel = _resolve_lbl_ck_opac(phys, "opac_cia", compute_cia_opacity)
+
+    # --- cloud opacity ---
+    cld_opac_raw = getattr(phys, "opac_cloud", None)
+    if cld_opac_raw is None:
+        raise ValueError(
+            "physics.opac_cloud must be specified explicitly (use 'None' to disable)."
+        )
+    cld_opac_str = str(cld_opac_raw).lower()
+    if cld_opac_str == "none":
+        print(f"[info] Cloud opacity is None:", cld_opac_raw)
+    cld_opac_kernel = KR.resolve(cld_opac_raw, KR.OPAC_CLOUD, "physics.opac_cloud")
+
+    # --- special opacity (H-) ---
+    special_opac_str = str(getattr(phys, "opac_special", "on")).lower()
+    special_opac_kernel = (
+        None if special_opac_str in ("none", "off", "false", "0")
+        else compute_special_opacity
+    )
+
+    # --- RT scheme ---
+    rt_raw = getattr(phys, "rt_scheme", None)
+    if rt_raw is None or str(rt_raw).lower() == "none":
+        raise ValueError("physics.rt_scheme must be specified explicitly.")
+    rt_scheme = str(rt_raw).lower()
+
+    refraction_mode = _resolve_refraction(phys)
+
+    ck_mix_str = str(getattr(cfg.opac, "ck_mix", "RORR")).upper()
+    contri_func_enabled = bool(getattr(phys, "contri_func", False))
+
+    ck_mix_code_static = None
+    if ck:
+        if ck_mix_str == "PRAS":
+            ck_mix_code_static = 2
+        elif ck_mix_str == "TRANS":
+            ck_mix_code_static = 3
+        else:
+            ck_mix_code_static = 1
+
+    rt_kernel = _build_rt_kernel(phys, rt_scheme, ck, ck_mix_str)
+
+    return SimpleNamespace(
+        Tp_kernel=Tp_kernel,
+        altitude_kernel=altitude_kernel,
+        chemistry_kernel=chemistry_kernel,
+        mu_kernel=mu_kernel,
+        vert_cloud_kernel=vert_cloud_kernel,
+        line_opac_kernel=line_opac_kernel,
+        ray_opac_kernel=ray_opac_kernel,
+        cia_opac_kernel=cia_opac_kernel,
+        cld_opac_kernel=cld_opac_kernel,
+        special_opac_kernel=special_opac_kernel,
+        rt_kernel=rt_kernel,
+        ck=ck,
+        rt_scheme=rt_scheme,
+        ck_mix_str=ck_mix_str,
+        ck_mix_code_static=ck_mix_code_static,
+        contri_func_enabled=contri_func_enabled,
+        refraction_mode=refraction_mode,
+        line_opac_str=line_opac_str,
+        ray_opac_str=ray_opac_str,
+        cia_opac_str=cia_opac_str,
+        cld_opac_str=cld_opac_str,
+        special_opac_str=special_opac_str,
+    )
+
+
+def _build_opac_cache() -> Dict[str, jnp.ndarray]:
+    """Assemble the runtime opacity cache dict from all loaded registries."""
+    opac_cache: Dict[str, jnp.ndarray] = {}
+    if XS.has_ck_data():
+        opac_cache["ck_sigma_cube"] = XS.ck_sigma_cube()
+        opac_cache["ck_log10_pressure_grid"] = XS.ck_log10_pressure_grid()
+        opac_cache["ck_log10_temperature_grids"] = XS.ck_log10_temperature_grids()
+        opac_cache["ck_g_points"] = XS.ck_g_points()
+        opac_cache["ck_g_weights"] = XS.ck_g_weights()
+    if XS.has_line_data():
+        opac_cache["line_sigma_cube"] = XS.line_sigma_cube()
+        opac_cache["line_log10_pressure_grid"] = XS.line_log10_pressure_grid()
+        opac_cache["line_log10_temperature_grids"] = XS.line_log10_temperature_grids()
+    if XS.has_cia_data():
+        opac_cache["cia_master_wavelength"] = XS.cia_master_wavelength()
+        opac_cache["cia_sigma_cube"] = XS.cia_sigma_cube()
+        opac_cache["cia_log10_temperature_grids"] = XS.cia_log10_temperature_grids()
+        opac_cache["cia_temperature_grids"] = XS.cia_temperature_grids()
+    if XS.has_ray_data():
+        opac_cache["ray_master_wavelength"] = XS.ray_master_wavelength()
+        opac_cache["ray_sigma_table"] = XS.ray_sigma_table()
+        opac_cache["ray_nm1_table"] = XS.ray_nm1_table()
+        opac_cache["ray_nd_ref"] = XS.ray_nd_ref()
+    if XS.has_cloud_nk_data():
+        opac_cache["cloud_nk_n"] = XS.cloud_nk_n()
+        opac_cache["cloud_nk_k"] = XS.cloud_nk_k()
+    if XS.has_special_data():
+        opac_cache["hminus_master_wavelength"] = XS.special_master_wavelength()
+        opac_cache["hminus_temperature_grid"] = XS.hminus_temperature_grid()
+        opac_cache["hminus_log10_temperature_grid"] = XS.hminus_log10_temperature_grid()
+        # Table presence depends on cfg.opac.special flags; only include those that exist.
+        try:
+            opac_cache["hminus_bf_log10_sigma"] = XS.hminus_bf_log10_sigma_table()
+        except RuntimeError:
+            pass
+        try:
+            opac_cache["hminus_ff_log10_sigma"] = XS.hminus_ff_log10_sigma_table()
+        except RuntimeError:
+            pass
+    return opac_cache
+
+
+def _require_cache_keys(opac_cache: dict, keys: tuple, label: str) -> None:
+    missing = [k for k in keys if k not in opac_cache]
+    if missing:
+        raise RuntimeError(f"Missing {label} cache entries: {missing}")
+
+
+def _validate_config(
+    cfg,
+    k: SimpleNamespace,
+    opac_cache: Dict[str, jnp.ndarray],
+) -> None:
+    """Validate consistency of config, kernel selection, and loaded opacity data.
+
+    Raises ``ValueError`` or ``RuntimeError`` on any inconsistency so that
+    problems surface at build time rather than silently producing wrong results.
+    """
+    # Line opacity data present in registries
+    if k.line_opac_str == "lbl" and not XS.has_line_data():
+        raise RuntimeError(
+            "Line opacity requested but registry is empty. "
+            "Check cfg.opac.line and ensure build_opacities() loaded line tables."
+        )
+    if k.ck and not XS.has_ck_data():
+        raise RuntimeError(
+            "CK opacity requested but registry is empty. "
+            "Check cfg.opac and ensure build_opacities() loaded ck tables."
+        )
+
+    # Refraction constraints
+    if k.refraction_mode == 1:
+        if k.rt_scheme != "transit_1d":
+            raise NotImplementedError(
+                "physics.refraction is only supported for rt_scheme: transit_1d."
+            )
+        param_names = {p.name for p in cfg.params}
+        if "a_sm" not in param_names:
+            raise ValueError(
+                "physics.refraction: cutoff requires a delta parameter "
+                "'a_sm' (semi-major axis in AU)."
+            )
+        if not XS.has_ray_data():
+            raise RuntimeError(
+                "physics.refraction: cutoff requires Rayleigh registry data (cfg.opac.ray)."
+            )
+
+    # CK-mix constraints
+    if k.ck:
+        if k.ck_mix_str == "TRANS" and k.rt_scheme != "transit_1d":
+            raise NotImplementedError(
+                "ck_mix: TRANS is only supported for rt_scheme: transit_1d."
+            )
+        if k.ck_mix_str == "TRANS" and k.contri_func_enabled:
+            raise ValueError(
+                "physics.contri_func=True is not supported with opac.ck_mix=TRANS. "
+                "Use ck_mix=RORR/PRAS or disable contribution functions."
+            )
+
+    # Required opacity cache entries
+    if k.ck and k.line_opac_str == "ck":
+        _require_cache_keys(
+            opac_cache,
+            ("ck_sigma_cube", "ck_log10_pressure_grid", "ck_log10_temperature_grids",
+             "ck_g_points", "ck_g_weights"),
+            "correlated-k",
+        )
+    if (not k.ck) and k.line_opac_str == "lbl":
+        _require_cache_keys(
+            opac_cache,
+            ("line_sigma_cube", "line_log10_pressure_grid", "line_log10_temperature_grids"),
+            "line-by-line",
+        )
+    if k.cia_opac_kernel is not None:
+        _require_cache_keys(
+            opac_cache,
+            ("cia_master_wavelength", "cia_sigma_cube",
+             "cia_log10_temperature_grids", "cia_temperature_grids"),
+            "CIA",
+        )
+    if k.ray_opac_kernel is not None:
+        _require_cache_keys(opac_cache, ("ray_master_wavelength", "ray_sigma_table"), "Rayleigh")
+    if k.special_opac_kernel is not None and XS.has_special_data():
+        _require_cache_keys(
+            opac_cache,
+            ("hminus_master_wavelength", "hminus_temperature_grid",
+             "hminus_log10_temperature_grid"),
+            "special-opacity",
+        )
+
+    # Mie cloud schemes require cached n,k
+    if k.cld_opac_str in ("madt_rayleigh", "madt-rayleigh", "mie_madt",
+                           "lxmie", "mie_full", "full_mie"):
+        _require_cache_keys(opac_cache, ("cloud_nk_n", "cloud_nk_k"), "cloud n,k")
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 def build_forward_model(
     cfg,
@@ -101,32 +442,8 @@ def build_forward_model(
           'binned' (convolved spectrum)
     """
 
-    # Extract fixed (delta) parameters from cfg.params
-    fixed_params = {}
-    for param in cfg.params:
-        if param.dist == "delta":
-            raw_value = getattr(param, "value", None)
-            if isinstance(raw_value, str):
-                raw_lower = raw_value.strip().lower()
-                if raw_lower in ("true", "false"):
-                    raw_value = (raw_lower == "true")
-                else:
-                    raw_value = float(raw_value)
-            fixed_params[param.name] = jnp.asarray(raw_value)
+    fixed_params = _extract_fixed_params(cfg)
 
-    # Cloud size distribution selector from YAML (static, not sampled).
-    # 1 = monodisperse, 2 = polydisperse (lognormal)
-    cloud_dist_raw = getattr(cfg.physics, "cloud_dist", None)
-    if cloud_dist_raw is not None:
-        cloud_dist_str = str(cloud_dist_raw).lower().strip()
-        if cloud_dist_str in ("1", "mono", "monodisperse"):
-            fixed_params["cloud_dist"] = jnp.asarray(1, dtype=jnp.int32)
-        elif cloud_dist_str in ("2", "log_normal", "lognormal", "log-normal", "ln"):
-            fixed_params["cloud_dist"] = jnp.asarray(2, dtype=jnp.int32)
-        else:
-            raise ValueError("physics.cloud_dist must be 'mono' or 'log_normal' (or 1/2).")
-
-    # Example: number of layers from YAML
     nlay = int(getattr(cfg.physics, "nlay", 99))
     nlev = nlay + 1
 
@@ -135,239 +452,28 @@ def build_forward_model(
     _ = np.asarray(obs["wl"], dtype=float)
     _ = np.asarray(obs["dwl"], dtype=float)
 
-    # Get the kernel for forward model
-    phys = cfg.physics
+    # Select all physics and opacity kernels
+    k = _select_kernels(cfg)
 
-    vert_tp_raw = getattr(phys, "vert_Tp", None)
-    if vert_tp_raw in (None, "None"):
-        vert_tp_raw = getattr(phys, "vert_struct", None)
-    if vert_tp_raw in (None, "None"):
-        raise ValueError("physics.vert_Tp (or vert_struct) must be specified explicitly.")
-    vert_tp_name = str(vert_tp_raw).lower()
-    if vert_tp_name in ("isothermal", "constant"):
-        Tp_kernel = isothermal
-    elif vert_tp_name == "barstow":
-        Tp_kernel = Barstow
-    elif vert_tp_name == "milne":
-        Tp_kernel = Milne
-    elif vert_tp_name == "guillot":
-        Tp_kernel = Guillot
-    elif vert_tp_name in ("modified_guillot", "guillot_modified", "guillot_2"):
-        Tp_kernel = Modified_Guillot
-    elif vert_tp_name == "line":
-        Tp_kernel = Line     
-    elif vert_tp_name == "picket_fence":
-        Tp_kernel = picket_fence
-    elif vert_tp_name == "mands":
-        Tp_kernel = MandS
-    elif vert_tp_name in ("milne_2", "milne_modified", "modified_milne"):
-        Tp_kernel = Modified_Milne
-    else:
-        raise NotImplementedError(f"Unknown vert_Tp='{vert_tp_name}'")
+    # Assemble runtime opacity cache from loaded registries
+    opac_cache = _build_opac_cache()
 
-    vert_alt_raw = getattr(phys, "vert_alt", None)
-    if vert_alt_raw in (None, "None"):
-        raise ValueError("physics.vert_alt must be specified explicitly.")
-    vert_alt_name = str(vert_alt_raw).lower()
-    if vert_alt_name in ("constant", "constant_g", "fixed", "hypsometric"):
-        altitude_kernel = hypsometric
-    elif vert_alt_name in ("variable", "variable_g", "hypsometric_variable_g"):
-        altitude_kernel = hypsometric_variable_g
-    elif vert_alt_name in ("p_ref", "hypsometric_variable_g_pref"):
-        altitude_kernel = hypsometric_variable_g_pref
-    else:
-        raise NotImplementedError(f"Unknown altitude scheme='{vert_alt_name}'")
+    # Validate consistency of the full configuration
+    _validate_config(cfg, k, opac_cache)
 
-    vert_chem_raw = getattr(phys, "vert_chem", None)
-    if vert_chem_raw in (None, "None"):
-        raise ValueError("physics.vert_chem must be specified explicitly.")
-    vert_chem_name = str(vert_chem_raw).lower()
-    if vert_chem_name in ("constant", "constant_vmr"):
-        chemistry_kernel = constant_vmr
-    elif vert_chem_name in ("constant_vmr_clr", "constant_clr", "clr"):
-        chemistry_kernel = constant_vmr_clr
-    elif vert_chem_name in ("ce", "chemical_equilibrium", "ce_fastchem_jax", "fastchem_jax"):
-        chemistry_kernel = CE_fastchem_jax
-    elif vert_chem_name in ("rate_ce", "rate_jax", "ce_rate_jax"):
-        chemistry_kernel = CE_rate_jax
-    elif vert_chem_name in ("quench", "quench_approx"):
-        chemistry_kernel = quench_approx
-    else:
-        raise NotImplementedError(f"Unknown chemistry scheme='{vert_chem_name}'")
+    emission_mode = str(getattr(cfg.physics, "emission_mode", "planet")).lower().replace(" ", "_")
+    if emission_mode is None:
+        emission_mode = "planet"
+    is_brown_dwarf = emission_mode in ("brown_dwarf", "browndwarf", "bd")
 
-    vert_mu_raw = getattr(phys, "vert_mu", None)
-    if vert_mu_raw in (None, "None"):
-        raise ValueError("physics.vert_mu must be specified explicitly.")
-    vert_mu_name = str(vert_mu_raw).lower()
-    if vert_mu_name == "auto":
-        def mu_kernel(params, vmr_lay, nlay):
-            if "mu" in params:
-                return constant_mu(params, nlay)
-            return compute_mu(vmr_lay)
-    elif vert_mu_name in ("constant", "fixed"):
-        def mu_kernel(params, vmr_lay, nlay):
-            del vmr_lay
-            return constant_mu(params, nlay)
-    elif vert_mu_name in ("dynamic", "variable", "vmr"):
-        def mu_kernel(params, vmr_lay, nlay):
-            del params, nlay
-            return compute_mu(vmr_lay)
-    else:
-        raise NotImplementedError(f"Unknown mean-molecular-weight scheme='{vert_mu_name}'")
-
-    vert_cloud_raw = getattr(phys, "vert_cloud", None)
-    if vert_cloud_raw in (None, "None"):
-        vert_cloud_name = "none"
-    else:
-        vert_cloud_name = str(vert_cloud_raw).lower()
-
-    if vert_cloud_name in ("none", "off", "no_cloud"):
-        vert_cloud_kernel = no_cloud
-    elif vert_cloud_name in ("exponential", "exp_decay", "exponential_decay", "exponential_decay_profile"):
-        vert_cloud_kernel = exponential_decay_profile
-    elif vert_cloud_name in ("slab", "slab_profile"):
-        vert_cloud_kernel = slab_profile
-    elif vert_cloud_name in ("const", "constant", "const_profile"):
-        vert_cloud_kernel = const_profile
-    else:
-        raise NotImplementedError(f"Unknown vert_cloud scheme='{vert_cloud_name}'")
-
-    ck = False
-    line_opac_scheme = getattr(phys, "opac_line", None)
-    if line_opac_scheme is None:
-        raise ValueError("physics.opac_line must be specified explicitly (use 'None' to disable).")
-    line_opac_scheme_str = str(line_opac_scheme)
-    if line_opac_scheme_str.lower() == "none":
-        print(f"[info] Line opacity is None:", line_opac_scheme)
-        line_opac_kernel = None
-    elif line_opac_scheme_str.lower() == "lbl":
-        if not XS.has_line_data():
-            raise RuntimeError(
-                "Line opacity requested but registry is empty. "
-                "Check cfg.opac.line and ensure build_opacities() loaded line tables."
-            )
-        line_opac_kernel = compute_line_opacity
-    elif line_opac_scheme_str.lower() == "ck":
-        ck = True
-        line_opac_kernel = compute_ck_opacity
-    else:
-        raise NotImplementedError(f"Unknown line_opac_scheme='{line_opac_scheme}'")
-
-    ray_opac_scheme = getattr(phys, "opac_ray", None)
-    if ray_opac_scheme is None:
-        raise ValueError("physics.opac_ray must be specified explicitly (use 'None' to disable).")
-    ray_opac_scheme_str = str(ray_opac_scheme)
-    if ray_opac_scheme_str.lower() == "none":
-        print(f"[info] Rayleigh opacity is None:", ray_opac_scheme)
-        ray_opac_kernel = None
-    elif ray_opac_scheme_str.lower() in ("lbl", "ck"):
-        ray_opac_kernel = compute_ray_opacity
-    else:
-        raise NotImplementedError(f"Unknown ray_opac_scheme='{ray_opac_scheme}'")
-
-    cia_opac_scheme = getattr(phys, "opac_cia", None)
-    if cia_opac_scheme is None:
-        raise ValueError("physics.opac_cia must be specified explicitly (use 'None' to disable).")
-    cia_opac_scheme_str = str(cia_opac_scheme)
-    if cia_opac_scheme_str.lower() == "none":
-        print(f"[info] CIA opacity is None:", cia_opac_scheme)
-        cia_opac_kernel = None
-    elif cia_opac_scheme_str.lower() in ("lbl", "ck"):
-        cia_opac_kernel = compute_cia_opacity
-    else:
-        raise NotImplementedError(f"Unknown cia_opac_scheme='{cia_opac_scheme}'")
-
-    cld_opac_scheme = getattr(phys, "opac_cloud", None)
-    if cld_opac_scheme is None:
-        raise ValueError("physics.opac_cloud must be specified explicitly (use 'None' to disable).")
-    cld_opac_scheme_str = str(cld_opac_scheme)
-    if cld_opac_scheme_str.lower() == "none":
-        print(f"[info] Cloud opacity is None:", cld_opac_scheme)
-        cld_opac_kernel = None
-    elif cld_opac_scheme_str.lower() == "grey":
-        cld_opac_kernel = grey_cloud
-    elif cld_opac_scheme_str.lower() in ("powerlaw", "deck_and_powerlaw"):
-        cld_opac_kernel = deck_and_powerlaw
-    elif cld_opac_scheme_str.lower() == "f18":
-        cld_opac_kernel = lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="f18")
-    elif cld_opac_scheme_str.lower() in ("madt_rayleigh", "madt-rayleigh", "mie_madt"):
-        cld_opac_kernel = lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="madt_rayleigh")
-    elif cld_opac_scheme_str.lower() in ("lxmie", "mie_full", "full_mie"):
-        cld_opac_kernel = lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="lxmie")
-    elif cld_opac_scheme_str.lower() in ("nk", "direct_nk"):
-        cld_opac_kernel = direct_nk
-    else:
-        raise NotImplementedError(f"Unknown cld_opac_scheme='{cld_opac_scheme}'")
-
-    special_opac_scheme = getattr(phys, "opac_special", "on")
-    special_opac_scheme_str = str(special_opac_scheme).lower()
-    if special_opac_scheme_str in ("none", "off", "false", "0"):
-        special_opac_kernel = None
-    elif special_opac_scheme_str in ("on", "lbl", "ck"):
-        special_opac_kernel = compute_special_opacity
-    else:
-        raise NotImplementedError(f"Unknown opac_special='{special_opac_scheme}'")
-
-    rt_raw = getattr(phys, "rt_scheme", None)
-    if rt_raw in (None, "None"):
-        raise ValueError("physics.rt_scheme must be specified explicitly.")
-    rt_scheme = str(rt_raw).lower()
-
-    # Refraction (transmission only): apply a refractive cutoff without ray tracing.
-    refraction_raw = getattr(phys, "refraction", None)
-    if refraction_raw in (None, "None"):
-        refraction_mode = 0
-    else:
-        refraction_str = str(refraction_raw).strip().lower()
-        if refraction_str in ("none", "off", "false", "0"):
-            refraction_mode = 0
-        elif refraction_str in ("cutoff", "refractive_cutoff", "refraction_cutoff"):
-            refraction_mode = 1
-        else:
-            raise NotImplementedError(f"Unknown physics.refraction='{refraction_raw}'")
-
-    if refraction_mode == 1:
-        if rt_scheme != "transit_1d":
-            raise NotImplementedError("physics.refraction is only supported for rt_scheme: transit_1d.")
+    # For planet emission, require stellar normalization information up front.
+    # This avoids silent fallbacks inside JIT code paths.
+    if k.rt_scheme == "emission_1d" and (not is_brown_dwarf) and (stellar_flux is None):
         param_names = {p.name for p in cfg.params}
-        if "a_sm" not in param_names:
-            raise ValueError("physics.refraction: cutoff requires a delta parameter 'a_sm' (semi-major axis in AU).")
-        if not XS.has_ray_data():
-            raise RuntimeError("physics.refraction: cutoff requires Rayleigh registry data (cfg.opac.ray).")
-
-    # Get ck_mix for RT kernel selection (TRANS uses different RT kernel)
-    ck_mix_str = str(getattr(cfg.opac, "ck_mix", "RORR")).upper()
-    contri_func_enabled = bool(getattr(phys, "contri_func", False))
-    if ck:
-        if ck_mix_str == "TRANS" and rt_scheme != "transit_1d":
-            raise NotImplementedError("ck_mix: TRANS is only supported for rt_scheme: transit_1d.")
-        if ck_mix_str == "TRANS" and contri_func_enabled:
+        if "F_star" not in param_names:
             raise ValueError(
-                "physics.contri_func=True is not supported with opac.ck_mix=TRANS. "
-                "Use ck_mix=RORR/PRAS or disable contribution functions."
+                "Planet emission mode requires either stellar_flux input or parameter 'F_star'."
             )
-
-    if rt_scheme == "transit_1d":
-        if ck:
-            if ck_mix_str == "TRANS":
-                rt_kernel = compute_transit_depth_1d_ck_trans
-            else:
-                rt_kernel = compute_transit_depth_1d_ck
-        else:
-            rt_kernel = compute_transit_depth_1d_lbl
-    elif rt_scheme == "emission_1d":
-        em_scheme = getattr(phys, "em_scheme", "eaa")
-        emission_solver = get_emission_solver(em_scheme)
-        if ck:
-            rt_kernel = lambda state, params, components, opac: compute_emission_spectrum_1d_ck(
-                state, params, components, opac, emission_solver=emission_solver
-            )
-        else:
-            rt_kernel = lambda state, params, components: compute_emission_spectrum_1d_lbl(
-                state, params, components, emission_solver=emission_solver
-            )
-    else:
-        raise NotImplementedError(f"Unknown rt_scheme='{rt_scheme}'")
 
     # High-resolution master grid (must match cut_grid used in bandpass loader)
     wl_hi_array = np.asarray(XS.master_wavelength_cut(), dtype=float)
@@ -380,113 +486,33 @@ def build_forward_model(
 
     bandpass_cache = get_bandpass_cache()
 
-    opac_cache: Dict[str, jnp.ndarray] = {}
-    if XS.has_ck_data():
-        opac_cache["ck_sigma_cube"] = XS.ck_sigma_cube()
-        opac_cache["ck_log10_pressure_grid"] = XS.ck_log10_pressure_grid()
-        opac_cache["ck_log10_temperature_grids"] = XS.ck_log10_temperature_grids()
-        opac_cache["ck_g_points"] = XS.ck_g_points()
-        opac_cache["ck_g_weights"] = XS.ck_g_weights()
-    if XS.has_line_data():
-        opac_cache["line_sigma_cube"] = XS.line_sigma_cube()
-        opac_cache["line_log10_pressure_grid"] = XS.line_log10_pressure_grid()
-        opac_cache["line_log10_temperature_grids"] = XS.line_log10_temperature_grids()
-    if XS.has_cia_data():
-        opac_cache["cia_master_wavelength"] = XS.cia_master_wavelength()
-        opac_cache["cia_sigma_cube"] = XS.cia_sigma_cube()
-        opac_cache["cia_log10_temperature_grids"] = XS.cia_log10_temperature_grids()
-        opac_cache["cia_temperature_grids"] = XS.cia_temperature_grids()
-    if XS.has_ray_data():
-        opac_cache["ray_master_wavelength"] = XS.ray_master_wavelength()
-        opac_cache["ray_sigma_table"] = XS.ray_sigma_table()
-        opac_cache["ray_nm1_table"] = XS.ray_nm1_table()
-        opac_cache["ray_nd_ref"] = XS.ray_nd_ref()
-    if XS.has_cloud_nk_data():
-        opac_cache["cloud_nk_n"] = XS.cloud_nk_n()
-        opac_cache["cloud_nk_k"] = XS.cloud_nk_k()
-    if XS.has_special_data():
-        opac_cache["hminus_master_wavelength"] = XS.special_master_wavelength()
-        opac_cache["hminus_temperature_grid"] = XS.hminus_temperature_grid()
-        opac_cache["hminus_log10_temperature_grid"] = XS.hminus_log10_temperature_grid()
-        # Table presence depends on cfg.opac.special flags; only include those that exist.
-        try:
-            opac_cache["hminus_bf_log10_sigma"] = XS.hminus_bf_log10_sigma_table()
-        except RuntimeError:
-            pass
-        try:
-            opac_cache["hminus_ff_log10_sigma"] = XS.hminus_ff_log10_sigma_table()
-        except RuntimeError:
-            pass
-
-    # Opacities must be present in the runtime cache 
-    if ck and line_opac_scheme_str.lower() == "ck":
-        required = ("ck_sigma_cube", "ck_log10_pressure_grid", "ck_log10_temperature_grids", "ck_g_points", "ck_g_weights")
-        missing = [k for k in required if k not in opac_cache]
-        if missing:
-            raise RuntimeError(f"Missing correlated-k cache entries: {missing}")
-    if (not ck) and line_opac_scheme_str.lower() == "lbl":
-        required = ("line_sigma_cube", "line_log10_pressure_grid", "line_log10_temperature_grids")
-        missing = [k for k in required if k not in opac_cache]
-        if missing:
-            raise RuntimeError(f"Missing line-by-line cache entries: {missing}")
-    if cia_opac_kernel is not None:
-        required = ("cia_master_wavelength", "cia_sigma_cube", "cia_log10_temperature_grids", "cia_temperature_grids")
-        missing = [k for k in required if k not in opac_cache]
-        if missing:
-            raise RuntimeError(f"Missing CIA cache entries: {missing}")
-    if ray_opac_kernel is not None:
-        required = ("ray_master_wavelength", "ray_sigma_table")
-        missing = [k for k in required if k not in opac_cache]
-        if missing:
-            raise RuntimeError(f"Missing Rayleigh cache entries: {missing}")
-    if special_opac_kernel is not None and XS.has_special_data():
-        required = ("hminus_master_wavelength", "hminus_temperature_grid", "hminus_log10_temperature_grid")
-        missing = [k for k in required if k not in opac_cache]
-        if missing:
-            raise RuntimeError(f"Missing special-opacity cache entries: {missing}")
-
-    # Mie cloud schemes require cached n,k.
-    if cld_opac_scheme_str.lower() in ("madt_rayleigh", "madt-rayleigh", "mie_madt", "lxmie", "mie_full", "full_mie"):
-        required = ("cloud_nk_n", "cloud_nk_k")
-        missing = [k for k in required if k not in opac_cache]
-        if missing:
-            raise RuntimeError(f"Missing cloud n,k cache entries: {missing}")
-
-    emission_mode = getattr(phys, "emission_mode", "planet")
-    if emission_mode is None:
-        emission_mode = "planet"
-    emission_mode = str(emission_mode).lower().replace(" ", "_")
-    is_brown_dwarf = emission_mode in ("brown_dwarf", "browndwarf", "bd")
-
-    # For planet emission, require stellar normalization information up front.
-    # This avoids silent fallbacks inside JIT code paths.
-    if rt_scheme == "emission_1d" and (not is_brown_dwarf) and (stellar_flux is None):
-        param_names = {p.name for p in cfg.params}
-        if "F_star" not in param_names:
-            raise ValueError(
-                "Planet emission mode requires either stellar_flux input or parameter 'F_star'."
-            )
-
-    # Resolve ck_mix once (static config), not inside the JIT function.
-    ck_mix_code_static = None
-    if ck:
-        if ck_mix_str == "PRAS":
-            ck_mix_code_static = 2
-        elif ck_mix_str == "TRANS":
-            ck_mix_code_static = 3
-        else:
-            ck_mix_code_static = 1
-
     chemistry_kernel, trace_species = prepare_chemistry_kernel(
         cfg,
-        chemistry_kernel,
+        k.chemistry_kernel,
         {
-            'line_opac': line_opac_scheme_str,
-            'ray_opac': ray_opac_scheme_str,
-            'cia_opac': cia_opac_scheme_str,
-            'special_opac': special_opac_scheme_str,
+            'line_opac': k.line_opac_str,
+            'ray_opac': k.ray_opac_str,
+            'cia_opac': k.cia_opac_str,
+            'special_opac': k.special_opac_str,
         }
     )
+
+    # Capture kernel selections into local names for the JIT closure
+    Tp_kernel = k.Tp_kernel
+    altitude_kernel = k.altitude_kernel
+    mu_kernel = k.mu_kernel
+    vert_cloud_kernel = k.vert_cloud_kernel
+    line_opac_kernel = k.line_opac_kernel
+    ray_opac_kernel = k.ray_opac_kernel
+    cia_opac_kernel = k.cia_opac_kernel
+    cld_opac_kernel = k.cld_opac_kernel
+    special_opac_kernel = k.special_opac_kernel
+    rt_kernel = k.rt_kernel
+    ck = k.ck
+    rt_scheme = k.rt_scheme
+    ck_mix_code_static = k.ck_mix_code_static
+    contri_func_enabled = k.contri_func_enabled
+    refraction_mode = k.refraction_mode
 
     @jax.jit
     def _forward_model_impl(

@@ -70,10 +70,10 @@ CustomDumper.add_representer(type(None), represent_none)
 # CONSTANTS AND OPTIONS
 # =============================================================================
 # These lists define all the valid choices for dropdown menus throughout the app.
-# They're extracted from examining your existing retrieval_config.yaml files.
+# Canonical names and aliases are defined in kernel_registry.py.
 
 # Radiative transfer schemes: emission (thermal) vs transit (transmission)
-# From build_model.py lines 296-326
+# See: build_model.py _build_rt_kernel()
 RT_SCHEMES = ["emission_1d", "transit_1d"]
 
 # Emission calculation schemes (only used when rt_scheme is emission_1d)
@@ -83,7 +83,7 @@ RT_SCHEMES = ["emission_1d", "transit_1d"]
 EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso"]
 
 # Temperature-Pressure profile parameterizations
-# From build_model.py lines 137-153 (vert_Tp selector)
+# See: kernel_registry.VERT_TP
 # - isothermal: Constant temperature throughout atmosphere
 # - Guillot: Analytic profile with T_eq, T_int, k_ir, gam_v parameters
 # - Barstow: Profile with stratospheric temperature (T_strat)
@@ -95,14 +95,14 @@ EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso"]
 VERT_TP_OPTIONS = ["isothermal", "Guillot", "Modified_Guillot", "Barstow", "Line", "Milne", "Modified_Milne", "picket_fence", "MandS"]
 
 # How altitude/height is calculated in the atmosphere model
-# From build_model.py lines 158-166 (vert_alt selector)
+# See: kernel_registry.VERT_ALT
 # - hypsometric: Constant gravity (aliases: constant, constant_g, fixed)
 # - variable_g: Gravity varies with altitude (more physical)
 # - p_ref: Variable g with reference pressure level defining the radius
 VERT_ALT_OPTIONS = ["p_ref", "variable_g", "hypsometric"]
 
 # Chemistry profile options
-# From build_model.py lines 171-181 (vert_chem selector)
+# See: kernel_registry.VERT_CHEM
 # - constant_vmr: Volume mixing ratios constant with altitude
 # - CE_fastchem_jax: Chemical equilibrium via FastChem (JAX)
 # - CE_rate_jax: Chemical equilibrium via rate equations (JAX)
@@ -110,14 +110,14 @@ VERT_ALT_OPTIONS = ["p_ref", "variable_g", "hypsometric"]
 VERT_CHEM_OPTIONS = ["constant_vmr", "constant_vmr_clr", "CE_fastchem_jax", "CE_rate_jax", "quench_approx"]
 
 # Mean molecular weight handling
-# From build_model.py lines 186-201 (vert_mu selector)
+# See: kernel_registry.VERT_MU
 # - dynamic: Calculated from VMR composition at each layer
 # - constant: Fixed value (requires 'mu' parameter)
 # - auto: Uses 'mu' param if present, else computes from VMR
 VERT_MU_OPTIONS = ["dynamic", "constant", "auto"]
 
 # Cloud vertical distribution profiles
-# From build_model.py lines 203-218 (vert_cloud selector)
+# See: kernel_registry.VERT_CLOUD
 # - None: No clouds
 # - exponential_decay_profile: Exponential decay from cloud base
 # - slab_profile: Cloud slab between two pressure levels
@@ -125,24 +125,24 @@ VERT_MU_OPTIONS = ["dynamic", "constant", "auto"]
 VERT_CLOUD_OPTIONS = ["None", "exponential_decay_profile", "slab_profile", "const_profile"]
 
 # Line opacity calculation methods
-# From build_model.py lines 221-239 (opac_line selector)
+# See: build_model.py _select_kernels() (opac_line block)
 # - ck: Correlated-k (fast, binned opacities)
 # - lbl: Line-by-line (slow but accurate)
 # - None: No line opacity
 OPAC_LINE_OPTIONS = ["ck", "lbl", "None"]
 
 # Rayleigh scattering opacity
-# From build_model.py lines 241-251 (opac_ray selector)
+# See: build_model.py _resolve_lbl_ck_opac()
 # Both 'lbl' and 'ck' use the same compute_ray_opacity kernel
 OPAC_RAY_OPTIONS = ["ck", "lbl", "None"]
 
 # Collision-Induced Absorption (CIA) opacity
-# From build_model.py lines 253-263 (opac_cia selector)
+# See: build_model.py _resolve_lbl_ck_opac()
 # Both 'lbl' and 'ck' use the same compute_cia_opacity kernel
 OPAC_CIA_OPTIONS = ["ck", "lbl", "None"]
 
 # Cloud opacity models
-# From build_model.py lines 265-285 (opac_cloud selector)
+# See: kernel_registry.OPAC_CLOUD
 # - None: No cloud opacity
 # - grey: Grey (wavelength-independent) cloud opacity
 # - deck_and_powerlaw: Cloud deck with power-law wavelength dependence
@@ -153,23 +153,23 @@ OPAC_CIA_OPTIONS = ["ck", "lbl", "None"]
 OPAC_CLOUD_OPTIONS = ["None", "grey", "deck_and_powerlaw", "F18", "direct_nk", "madt_rayleigh", "lxmie"]
 
 # Special opacity sources (like H- bound-free, free-free)
-# From build_model.py lines 287-294 (opac_special selector)
+# See: build_model.py _select_kernels() (opac_special block)
 OPAC_SPECIAL_OPTIONS = ["ck", "lbl", "None"]
 
 # Cloud particle size distributions
-# From build_model.py lines 109-117 (cloud_dist selector)
+# See: build_model.py _extract_fixed_params() (cloud_dist block)
 # - mono (or monodisperse): Single particle size
 # - lognormal: Log-normal size distribution (requires cld_sigma parameter)
 CLOUD_DIST_OPTIONS = ["mono", "lognormal"]
 
 # Emission mode: how the planet's emission is calculated
-# From build_model.py lines 391-395 (emission_mode selector)
+# See: build_model.py build_forward_model() (emission_mode block)
 # - planet: Standard planet emission (uses stellar flux for contrast)
 # - brown_dwarf: Brown dwarf mode (no stellar flux needed)
 EMISSION_MODES = ["planet", "brown_dwarf"]
 
 # Correlated-k mixing rules for combining opacities from multiple species
-# From build_model.py lines 482-489 (ck_mix selector)
+# See: build_model.py _select_kernels() (ck_mix block)
 # - RORR: Random Overlap with Resorting and Rebinning (default, most accurate)
 # - TRANS: Transmission-optimized method (only for transit_1d)
 CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
@@ -182,7 +182,7 @@ SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "pym
 RUNTIME_PLATFORMS = ["gpu", "cpu"]
 
 # Refraction modes (for transit_1d only)
-# From build_model.py lines 306-325
+# See: build_model.py _resolve_refraction()
 # - None: No refraction
 # - cutoff / refractive_cutoff: Apply refractive cutoff without ray tracing
 REFRACTION_OPTIONS = ["None", "cutoff", "refractive_cutoff", "refraction_cutoff"]

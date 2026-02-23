@@ -14,44 +14,61 @@ data:
 # Physics Section
 # ----------------------------------------------------------------------------------
 physics:
-  nlay: 99
+  nlay: 99       # number of atmospheric layers
 
   # Vertical structure schemes
+  # T-P profile. Options: isothermal | guillot | modified_guillot | milne | modified_milne |
+  #                        barstow | line | picket_fence | mands
   vert_Tp: Barstow
+
+  # Altitude kernel. Options: hypsometric (constant g) | variable_g | p_ref (variable g + p_ref param)
   vert_alt: variable_g
+
+  # Chemistry. Options: constant_vmr | constant_vmr_clr (CLR-parameterised) |
+  #                     ce (FastChem equil.) | rate_ce (rate-based equil.) | quench_approx
   vert_chem: constant_vmr
+
+  # Mean molecular weight. Options: dynamic (computed from VMR) | constant (uses 'mu' param) | auto
   vert_mu: dynamic
+
+  # Cloud vertical profile. Options: none | exponential | slab | constant
   vert_cloud: const_profile
 
   # Opacity sources
+  # Line opacity mode. Options: lbl (line-by-line) | ck (correlated-k) | None (off)
+  # Note: 'ck' here must match opac.ck: True below.
   opac_line: ck
-  opac_ray: ck
-  opac_cia: ck
+  opac_ray: ck      # lbl | ck | None
+  opac_cia: ck      # lbl | ck | None
+  # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk
   opac_cloud: F18
-  opac_special: None
-  cloud_dist: mono
+  opac_special: None  # on (H- bound-free/free-free) | None
+  cloud_dist: mono    # mono (monodisperse) | log_normal (lognormal size distribution)
 
   # Radiative transfer
-  rt_scheme: transit_1d
-  em_scheme: None
-  emission_mode: planet
-  contri_func: false
-  refraction: None
+  rt_scheme: transit_1d   # transit_1d | emission_1d
+  contri_func: false       # True to return contribution functions alongside spectra
+  refraction: None         # none | cutoff (refractive cutoff; requires 'a_sm' param and ray data)
+
+  # --- Emission-only settings (ignored when rt_scheme: transit_1d) ---
+  # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
+  # emission_mode: planet   # planet | brown_dwarf
 
 # ----------------------------------------------------------------------------------
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
   wl_master: ../../opac_data/ck/wl_ck_R250.txt
-  full_grid: false
-  ck: True
+  full_grid: false   # True = use entire master grid; False = cut to observation coverage
+  ck: True           # Must be True when physics.opac_line: ck
+  # CK mixing scheme. Options: RORR (random overlap) | TRANS (per-species)
   ck_mix: TRANS
 
   # Line opacity files
   line:
     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
-    - {species: Na, path: ../../opac_data/ck/Na_ck_R250.npz}
-    - {species: K, path: ../../opac_data/ck/K_ck_R250.npz}
+    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.npz}
+    - {species: K,   path: ../../opac_data/ck/K_ck_R250.npz}
 
   # Rayleigh scattering species
   ray:
@@ -70,35 +87,38 @@ opac:
 # Parameters Section
 # ----------------------------------------------------------------------------------
 params:
-  # Stellar parameters
-  - {name: R_s, dist: delta, value: 1.18655, transform: identity, init: 1.18655}
+  # --- Fixed (delta) system parameters ---
+  - {name: R_s,   dist: delta, value: 1.18655, transform: identity, init: 1.18655}  # stellar radius [R_sun]
+  - {name: p_bot, dist: delta, value: 100.0,   transform: identity, init: 100.0  }  # bottom pressure [bar]
+  - {name: p_top, dist: delta, value: 1e-8,    transform: identity, init: 1e-8   }  # top pressure [bar]
 
-  # Atmospheric boundaries
-  - {name: p_bot, dist: delta, value: 100.0, transform: identity, init: 100.0}
-  - {name: p_top, dist: delta, value: 1e-8, transform: identity, init: 1e-8}
+  # --- Free planetary parameters ---
+  - {name: log_10_g, dist: uniform, low: 2.7, high: 3.3,    transform: logit, init: 3.0   }  # surface gravity [log10 cm/s^2]
+  - {name: R_p,      dist: uniform, low: 1.1, high: 1.5,    transform: logit, init: 1.4   }  # planet radius [R_jup]
 
-  # Planetary parameters
-  - {name: log_10_g, dist: uniform, low: 2.7, high: 3.3, transform: logit, init: 3.0}
-  - {name: R_p, dist: uniform, low: 1.1, high: 1.5, transform: logit, init: 1.4}
+  # --- T-P profile parameters (Barstow) ---
+  - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}  # stratospheric temperature [K]
 
-  - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}
-
+  # --- Chemistry (log10 VMR) ---
   - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
-  - {name: log_10_f_Na, dist: uniform, low: -12, high: -2, transform: logit, init: -6}
-  - {name: log_10_f_K, dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  - {name: log_10_f_Na,  dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  - {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
 
-  - {name: log_10_q_c, dist: uniform, low: -12, high: 0, transform: logit, init: 0}
-  - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
-  - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: cld_Q0, dist: uniform, low: 0.1, high: 65, transform: logit, init: 30.0}
-  - {name: cld_Q1, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: cld_a, dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 4.0}
-  - {name: f_cloud, dist: uniform, low: 0.01, high: 0.99, transform: logit, init: 0.5}
+  # --- Cloud (constant profile + F18 opacity) ---
+  - {name: log_10_q_c,  dist: uniform, low: -12, high: 0,  transform: logit, init: 0   }  # cloud mass mixing ratio [log10]
+  - {name: log_10_cld_r, dist: uniform, low:  -3, high: 2, transform: logit, init: 0   }  # particle radius [log10 micron]
+  - {name: cld_rho, dist: delta,   value: 1.0,             transform: identity, init: 1.0}  # particle density [g/cm^3]
+  - {name: cld_Q0,  dist: uniform, low: 0.1,  high: 65,   transform: logit, init: 30.0 }
+  - {name: cld_Q1,  dist: delta,   value: 1.0,             transform: identity, init: 1.0}
+  - {name: cld_a,   dist: uniform, low: 3.0,  high: 7.0,  transform: logit, init: 4.0  }
+  - {name: f_cloud, dist: uniform, low: 0.01, high: 0.99, transform: logit, init: 0.5  }  # cloud fraction
 
 # ----------------------------------------------------------------------------------
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
+  # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | polychord | pymultinest
+  # Only the section matching 'engine' below is used at runtime.
   engine: dynesty
 
   # NUTS / HMC settings
@@ -190,7 +210,7 @@ sampling:
     nprior: -1                       # Number of prior samples (-1 = nlive * 10)
     do_clustering: true              # Enable multimodal clustering
     feedback: 1                      # Verbosity level (0=silent, 1=normal, 2=detailed, 3=debug)
-    precision_criterion: 1.0       # Evidence stopping criterion (dlogZ)
+    precision_criterion: 1.0         # Evidence stopping criterion (dlogZ)
     max_ndead: -1                    # Maximum number of dead points (-1 = unlimited)
     boost_posterior: 0.0             # Posterior boost factor (0.0 = standard nested sampling)
     read_resume: false               # Resume from previous run
@@ -208,6 +228,6 @@ sampling:
 # Runtime Section
 # ----------------------------------------------------------------------------------
 runtime:
-  platform: cpu
-  cuda_visible_devices: 0
+  platform: cpu           # cpu | gpu | cuda | metal
+  cuda_visible_devices: 0  # or "0,1"
   threads: 1

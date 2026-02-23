@@ -2,131 +2,150 @@ data:
 
   obs: ../../obs_data/WASP-17b_JWST.txt
   stellar: None
-  janaf: ../../JANAF_data/
 
 physics:
 
-  nlay: 99
+  nlay: 99       # number of atmospheric layers
 
+  # T-P profile. Options: isothermal | guillot | modified_guillot | milne | modified_milne |
+  #                        barstow | line | picket_fence | mands
   vert_Tp: isothermal
+
+  # Altitude kernel. Options: hypsometric (constant g) | variable_g | p_ref (variable g + p_ref param)
   vert_alt: p_ref
-  vert_chem: constant_vmr
+
+  # Chemistry. Options: constant_vmr | constant_vmr_clr (CLR-parameterised) |
+  #                     ce (FastChem equil.) | rate_ce (rate-based equil.) | quench_approx
+  vert_chem: constant_vmr_clr
+
+  # Mean molecular weight. Options: dynamic (computed from VMR) | constant (uses 'mu' param) | auto
   vert_mu: dynamic
+
+  # Cloud vertical profile. Options: none | exponential | slab | constant
   vert_cloud: slab_profile
 
+  # Line opacity mode. Options: lbl (line-by-line) | ck (correlated-k) | None (off)
+  # Note: must match opac.ck: False below when using lbl.
   opac_line: lbl
-  opac_ray: lbl
-  opac_cia: lbl
+  opac_ray: lbl    # lbl | ck | None
+  opac_cia: lbl    # lbl | ck | None
+  # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk
   opac_cloud: direct_nk
-  opac_special: lbl
-  cloud_dist: mono
+  opac_special: lbl   # on (H- bound-free/free-free) | None
 
-  rt_scheme: transit_1d
-  em_scheme: None
-  emission_mode: planet
-  contri_func: False
+  cloud_dist: mono  # mono (monodisperse) | log_normal (lognormal size distribution)
+
+  rt_scheme: transit_1d   # transit_1d | emission_1d
+  contri_func: False       # True to return contribution functions alongside spectra
+
+  # --- Emission-only settings (ignored when rt_scheme: transit_1d) ---
+  # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
+  # emission_mode: planet   # planet | brown_dwarf
+
 
 opac:
 
-  wl_master: wl_R20000.txt
-  full_grid: True
-  ck: False
-  ck_mix: RORR
+  wl_master: ../../opac_data/lbl/wl_R20000.txt
+  full_grid: False   # True = use entire master grid; False = cut to observation coverage
+  ck: False          # Must be False when physics.opac_line: lbl
+  ck_mix: RORR       # CK mixing scheme (only used when ck: True). Options: RORR | PRAS | TRANS
 
   line:
     - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
     - {species: CO2, path: ../../opac_data/lbl/CO2_R20000.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_R20000.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}      
-    - {species: Na, path: ../../opac_data/lbl/Na_R20000.npz}  
-    - {species: K, path: ../../opac_data/lbl/K_R20000.npz}
+    - {species: CO,  path: ../../opac_data/lbl/CO_R20000.npz}
+    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}
+    - {species: Na,  path: ../../opac_data/lbl/Na_R20000.npz}
+    - {species: K,   path: ../../opac_data/lbl/K_R20000.npz}
   ray:
     - {species: H2}
     - {species: He}
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
-    - {species: H2-H, path: ../../opac_data/cia/H2-H_2011.npz}
-    - {species: He-H, path: ../../opac_data/cia/He-H_2011.npz}
   special:
-    - {species: H-, bf: true, ff: true}
+    - {species: H-, bf: True, ff: False}
   cloud: None
 
 params:
 
+  # --- Fixed (delta) system parameters ---
+  - { name: R_s,          dist: delta, value: 1.583,  transform: identity, init: 1.583  }  # stellar radius [R_sun]
+  - { name: p_bot,        dist: delta, value: 100.0,  transform: identity, init: 100.0  }  # bottom pressure [bar]
+  - { name: p_top,        dist: delta, value: 1e-8,   transform: identity, init: 1e-8   }  # top pressure [bar]
+  - { name: log_10_p_ref, dist: delta, value: 1.0,    transform: identity, init: 1.0    }  # reference pressure [log10 bar]
 
-  - { name: R_s, dist: delta,   value: 1.583,  transform: identity, init: 1.583 }
-  - { name: p_bot, dist: delta,   value: 100.0,  transform: identity, init: 100.0 }
-  - { name: p_top, dist: delta,   value: 1e-8, transform: identity, init: 1e-8}
-  - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
+  # --- Free planetary parameters ---
+  - { name: log_10_g, dist: uniform, low: 2.2,    high: 3.3,    transform: logit, init: 3.0  }  # surface gravity [log10 cm/s^2]
+  - { name: R_p,      dist: uniform, low: 1.5895, high: 2.1505, transform: logit, init: 1.4  }  # planet radius [R_jup]
+  - { name: T_iso,    dist: uniform, low: 400.0,  high: 2300.0, transform: logit, init: 1500.0}  # isothermal temperature [K]
 
-  - { name: log_10_g,  dist: uniform, low: 2.2,   high: 3.3,  transform: logit, init: 3.0}
-  - { name: R_p, dist: uniform, low: 1.5895,   high: 2.1505,  transform: logit, init: 1.4}
-  - { name: T_iso, dist: uniform, low: 400.0,   high: 2300.0, transform: logit, init: 1500.0 }
+  # --- Chemistry (CLR abundances, log10 VMR) ---
+  - { name: log_10_f_H2O, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_CO2, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_CO,  dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_CH4, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_Na,  dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_K,   dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_H-,  dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
 
-  - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_CO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_CH4, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_Na, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_H-, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_H_over_H2, dist: uniform, low: -12,   high: 2,  transform: logit, init: -6}
-  - { name: log_10_ne_over_ntot, dist: uniform, low: -12,   high: -2,  transform: logit, init: -7}
+  # --- Cloud (slab profile + direct n,k opacity) ---
+  - { name: log_10_q_c,       dist: uniform, low: -12, high:  0, transform: logit, init: 0 }   # cloud mass mixing ratio [log10]
+  - { name: log_10_cld_r,     dist: uniform, low:  -3, high: -1, transform: logit, init: 0 }   # particle radius [log10 micron]
+  - { name: log_10_p_top_slab, dist: uniform, low:  -8, high:  2, transform: logit, init: 0 }  # slab top pressure [log10 bar]
+  - { name: log_10_dp_slab,   dist: uniform, low:   0, high: 10, transform: logit, init: 0 }   # slab thickness [log10 bar]
 
-  - { name: log_10_q_c, dist: uniform, low: -12,   high: -1,  transform: logit, init: 0}
-  - { name: log_10_cld_r, dist: uniform, low: -3,   high: -1,  transform: logit, init: 0}
-  - { name: log_10_p_top_slab, dist: uniform, low: -8,   high: 2,  transform: logit, init: 0}
-  - { name: log_10_dp_slab, dist: uniform, low: 0,   high: 10,  transform: logit, init: 0}
+  - { name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5 }  # particle density [g/cm^3]
 
-  - { name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5}
+  # --- Wavelength nodes for n,k interpolation [micron] ---
+  - { name: wl_node_0,  dist: delta, value: 7.0,  transform: identity, init: 7.0  }
+  - { name: wl_node_1,  dist: delta, value: 7.5,  transform: identity, init: 7.5  }
+  - { name: wl_node_2,  dist: delta, value: 8.0,  transform: identity, init: 8.0  }
+  - { name: wl_node_3,  dist: delta, value: 8.25, transform: identity, init: 8.25 }
+  - { name: wl_node_4,  dist: delta, value: 8.5,  transform: identity, init: 8.5  }
+  - { name: wl_node_5,  dist: delta, value: 8.75, transform: identity, init: 8.75 }
+  - { name: wl_node_6,  dist: delta, value: 9.0,  transform: identity, init: 9.0  }
+  - { name: wl_node_7,  dist: delta, value: 9.25, transform: identity, init: 9.25 }
+  - { name: wl_node_8,  dist: delta, value: 9.5,  transform: identity, init: 9.5  }
+  - { name: wl_node_9,  dist: delta, value: 10.0, transform: identity, init: 10.0 }
+  - { name: wl_node_10, dist: delta, value: 10.5, transform: identity, init: 10.5 }
+  - { name: wl_node_11, dist: delta, value: 11.0, transform: identity, init: 11.0 }
+  - { name: wl_node_12, dist: delta, value: 11.5, transform: identity, init: 11.5 }
 
-  - { name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 7.0}
-  - { name: wl_node_1, dist: delta, value: 7.5, transform: identity, init: 7.5}
-  - { name: wl_node_2, dist: delta, value: 8.0, transform: identity, init: 8.0}
-  - { name: wl_node_3, dist: delta, value: 8.25, transform: identity, init: 8.25}    
-  - { name: wl_node_4, dist: delta, value: 8.5, transform: identity, init: 8.5}
-  - { name: wl_node_5, dist: delta, value: 8.75, transform: identity, init: 8.75}
-  - { name: wl_node_6, dist: delta, value: 9.0, transform: identity, init: 9.0}
-  - { name: wl_node_7, dist: delta, value: 9.25, transform: identity, init: 9.25}
-  - { name: wl_node_8, dist: delta, value: 9.5, transform: identity, init: 9.5}
-  - { name: wl_node_9, dist: delta, value: 10.0, transform: identity, init: 10.0}
-  - { name: wl_node_10, dist: delta, value: 10.5, transform: identity, init: 10.5}    
-  - { name: wl_node_11, dist: delta, value: 11.0, transform: identity, init: 11.0}
-  - { name: wl_node_12, dist: delta, value: 11.5, transform: identity, init: 11.5}
+  # --- n(λ) and k(λ) at each wavelength node ---
+  - { name: n_0,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_1,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_2,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_3,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_4,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_5,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_6,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_7,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_8,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_9,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_10, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_11, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_12, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
 
-
-  - { name: n_0, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_1, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_2, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_3, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_4, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_5, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_6, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_7, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_8, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_9, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}    
-  - { name: n_10, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_11, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_12, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-
-  - { name: log_10_k_0, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_1, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_2, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_3, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_4, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_5, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_6, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_7, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_8, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_9, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_10, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}    
-  - { name: log_10_k_11, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
-  - { name: log_10_k_12, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
+  - { name: log_10_k_0,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_1,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_2,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_3,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_4,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_5,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_6,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_7,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_8,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_9,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_10, dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_11, dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
+  - { name: log_10_k_12, dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
 
 
 sampling:
 
+  # Active engine: dynesty | jaxns | nuts | blackjax_ns
+  # Only the section matching 'engine' below is used at runtime.
   engine: dynesty
 
   nuts:
@@ -174,7 +193,7 @@ sampling:
     num_delete: 100
     dlogz_stop: -2
     seed: 42
-    posterior_samples: 10000      
+    posterior_samples: 10000
 
   # Dynesty settings
   dynesty:

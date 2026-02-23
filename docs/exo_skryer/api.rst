@@ -40,6 +40,9 @@ Reference/API
 .. automodapi:: exo_skryer.instru_convolve
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.kernel_registry
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.kk_schemes
     :no-inheritance-diagram:
 

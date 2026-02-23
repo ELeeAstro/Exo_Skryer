@@ -1,0 +1,204 @@
+data:
+
+  obs: ../../obs_data/HD189733b_JWST_trans.txt
+  stellar: None
+
+physics:
+
+  nlay: 99       # number of atmospheric layers
+
+  # T-P profile. Options: isothermal | guillot | modified_guillot | milne | modified_milne |
+  #                        barstow | line | picket_fence | mands
+  vert_Tp: Modified_Guillot
+
+  # Altitude kernel. Options: hypsometric (constant g) | variable_g | p_ref (variable g + p_ref param)
+  vert_alt: p_ref
+
+  # Chemistry. Options: constant_vmr | constant_vmr_clr (CLR-parameterised) |
+  #                     ce (FastChem equil.) | rate_ce (rate-based equil.) | quench_approx
+  vert_chem: constant_vmr_clr
+
+  # Mean molecular weight. Options: dynamic (computed from VMR) | constant (uses 'mu' param) | auto
+  vert_mu: dynamic
+
+  # Cloud vertical profile. Options: none | exponential | slab | constant
+  vert_cloud: exponential_decay_profile
+
+  # Line opacity mode. Options: lbl (line-by-line) | ck (correlated-k) | None (off)
+  # Note: 'ck' here must match opac.ck: True below.
+  opac_line: ck
+  opac_ray: None    # lbl | ck | None
+  opac_cia: ck      # lbl | ck | None
+  # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk
+  opac_cloud: F18
+  opac_special: None  # on (H- bound-free/free-free) | None
+
+  cloud_dist: mono  # mono (monodisperse) | log_normal (lognormal size distribution)
+
+  rt_scheme: transit_1d   # transit_1d | emission_1d
+  contri_func: False       # True to return contribution functions alongside spectra
+
+  # --- Emission-only settings (ignored when rt_scheme: transit_1d) ---
+  # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
+  # emission_mode: planet   # planet | brown_dwarf
+
+
+opac:
+
+  wl_master: ../../opac_data/ck/wl_ck_R1000.txt
+  full_grid: False   # True = use entire master grid; False = cut to observation coverage
+  ck: True           # Must be True when physics.opac_line: ck
+  # CK mixing scheme. Options: RORR (random overlap) | PRAS (pre-sorted) | TRANS (per-species)
+  ck_mix: TRANS
+
+  line:
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R1000.npz}
+    - {species: CO2, path: ../../opac_data/ck/CO2_ck_R1000.npz}
+    - {species: CO,  path: ../../opac_data/ck/CO_ck_R1000.npz}
+    - {species: CH4, path: ../../opac_data/ck/CH4_ck_R1000.npz}
+    - {species: H2S, path: ../../opac_data/ck/H2S_ck_R1000.npz}
+    - {species: SO2, path: ../../opac_data/ck/SO2_ck_R1000.npz}
+  ray: None
+    #- {species: H2}
+    #- {species: He}
+  cia:
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+  cloud: None
+
+params:
+
+  # --- Fixed (delta) system parameters ---
+  - { name: R_s,          dist: delta, value: 0.765,   transform: identity, init: 0.765  }  # stellar radius [R_sun]
+  - { name: p_bot,        dist: delta, value: 1000.0,  transform: identity, init: 1000.0 }  # bottom pressure [bar]
+  - { name: p_top,        dist: delta, value: 1e-8,    transform: identity, init: 1e-8   }  # top pressure [bar]
+  - { name: log_10_p_ref, dist: delta, value: 1.0,     transform: identity, init: 1.0    }  # reference pressure [log10 bar]
+
+  # --- Free planetary parameters ---
+  - { name: log_10_g, dist: uniform, low: 2.7,  high: 3.3,  transform: logit, init: 3.0 }  # surface gravity [log10 cm/s^2]
+  - { name: R_p,      dist: uniform, low: 0.5,  high: 1.5,  transform: logit, init: 1.4 }  # planet radius [R_jup]
+  - { name: f_hem,    dist: delta,   value: 0.25, transform: identity, init: 0.25        }  # hemisphere fraction
+
+  # --- T-P profile parameters (Modified Guillot) ---
+  - {name: T_eq,          dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}   # equilibrium temperature [K]
+  - {name: T_int,         dist: uniform, low: 100.0, high:  600.0, transform: logit, init: 600.0}   # internal temperature [K]
+  - {name: log_10_k_ir,   dist: uniform, low: -6,    high:    2,   transform: logit, init: -6}      # IR opacity [log10 cm^2/g]
+  - {name: log_10_gam_v,  dist: uniform, low: -3,    high:    2,   transform: logit, init: -1.0}    # visible-to-IR opacity ratio [log10]
+  - {name: q_irr_0,       dist: uniform, low: 0.01,  high:  0.66,  transform: logit, init: 0.3}     # irradiation fraction
+  - {name: log_10_p_t,    dist: uniform, low: -7,    high:    2,   transform: logit, init: -2}      # transition pressure [log10 bar]
+  - {name: beta,          dist: uniform, low: 0.01,  high:  1.0,   transform: logit, init: 0.5}     # profile shape parameter
+
+  # --- Chemistry (CLR abundances, log10 VMR) ---
+  - { name: log_10_f_H2O, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_CO2, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_CO,  dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_CH4, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_H2S, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+  - { name: log_10_f_SO2, dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
+
+  # --- Cloud (exponential profile + F18 opacity) ---
+  - {name: log_10_q_c,       dist: uniform, low: -12, high:  0, transform: logit, init: 0}   # cloud mass mixing ratio [log10]
+  - {name: log_10_p_base,    dist: uniform, low:  -8, high:  3, transform: logit, init: 0}   # cloud base pressure [log10 bar]
+  - {name: log_10_cld_r,     dist: uniform, low:  -3, high:  2, transform: logit, init: 0}   # particle radius [log10 micron]
+  - {name: log_10_alpha_cld, dist: uniform, low:  -2, high:  2, transform: logit, init: 0}   # cloud scale height factor [log10]
+
+  - {name: cld_rho,   dist: delta,   value: 1.0,  transform: identity, init: 1.0  }   # particle density [g/cm^3]
+  - {name: cld_Q0,    dist: uniform, low: 1.0, high: 65.0, transform: logit, init: 20.0}
+  - {name: cld_Q1,    dist: delta,   value: 1.0,  transform: identity, init: 1.0  }
+  - {name: cld_a,     dist: uniform, low: 3.0, high:  5.0, transform: logit, init: 4.0}
+  - {name: cld_sigma, dist: delta,   value: 1.0,  transform: identity, init: 1.0  }
+  - {name: f_cloud,   dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}  # cloud fraction
+
+  # --- Instrument offsets [ppm] ---
+  - {name: offset_F322W2, dist: delta, value: 0, transform: identity, init: 0}
+  - {name: offset_F444W,  dist: delta, value: 0, transform: identity, init: 0}
+
+
+sampling:
+
+  # Active engine: dynesty | jaxns | nuts | blackjax_ns
+  # Only the section matching 'engine' below is used at runtime.
+  engine: dynesty
+
+  nuts:
+    backend: numpyro
+    warmup: 100
+    draws: 100
+    seed: 42
+    chains: 1
+
+  jaxns:
+    # ---- core NS config ----
+    max_samples: 100000          # hard cap on nested-sampling iterations
+    num_live_points: 1000         # live points (posterior resolution)
+
+    # Slice sampler hyperparameters
+    s: 4                         # slices per dimension (default ~4)
+    k: 0                         # phantom samples (0 = off, >0 for hard posteriors)
+    c: null                       # parallel chains (null -> jaxns default, ~20*D)
+    shell_fraction: 0.5          # fraction of shell explored per step (0<sf<=1)
+
+    # Global behaviour flags
+    difficult_model: false       # robust defaults for gnarly posteriors
+    parameter_estimation: true   # tune for good posterior, not just evidence
+    gradient_guided: false       # use gradients for proposals (only if stable)
+    init_efficiency_threshold: 0.1  # >0: initial uniform sampling until eff>thr
+    verbose: true               # print textual progress to CLI
+
+    # ---- termination controls ----
+    termination:
+      ess: 10000                        # target effective sample size
+      evidence_uncert: null            # stop when σ_logZ < 0.3
+      dlogZ: 0.1                     # stop when remaining evidence small
+      max_samples: 100000             # safety cap for samples
+      max_num_likelihood_evaluations: null
+      rtol: null
+      atol: null
+
+    # ---- posterior handling ----
+    posterior_samples: 10000           # equal-weight posterior draws
+    seed: 42                          # RNG seed for JAX
+
+  blackjax_ns:
+    num_live_points: 250
+    num_inner_steps: 45
+    num_delete: 100
+    dlogz_stop: -2
+    seed: 42
+    posterior_samples: 10000
+
+  # Dynesty settings
+  dynesty:
+    nlive: 1000
+    bound: multi
+    sample: auto
+    dlogz: 0.1
+    maxiter: null
+    maxcall: null
+    bootstrap: 0
+    enlarge: null
+    update_interval: null
+    dynamic: false
+    print_progress: true
+    seed: 42
+
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 1000              # Number of live points
+    evidence_tolerance: 0.1          # dlogZ stopping criterion
+    sampling_efficiency: 0.3         # 0.8 (unimodal), 0.3 (multimodal)
+    n_iter_before_update: 100        # Update interval for proposals
+    null_log_evidence: -1.0e99       # Null evidence (usually leave default)
+    max_modes: 100                   # Maximum number of modes to find
+    mode_tolerance: -1.0e99          # Mode separation tolerance
+    seed: -1                         # Random seed (-1 = random, >=0 for reproducibility)
+    verbose: true                    # Print progress
+    resume: false                     # Resume from previous run if interrupted
+    importance_nested_sampling: false # Use importance nested sampling
+    multimodal: true                 # Enable multimodal mode detection
+    const_efficiency_mode: false     # Constant efficiency mode
+
+runtime:
+  platform: gpu           # cpu | gpu | cuda | metal
+  cuda_visible_devices: 0  # or "0,1"
+  threads: 1

@@ -334,9 +334,9 @@ def Modified_Guillot(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tupl
     q_int = 2.0 / 3.0
 
     # Flexible irradiated Hopf term: q_irr -> 2/3 at depth.
-    q_inf = 2.0/3.0
+    q_irr_inf = 2.0/3.0
     sig = jnp.exp(-((p_lev / p_t) ** beta))
-    q_irr = q_inf + (q_irr_0 - q_inf) * sig
+    q_irr = q_irr_inf + (q_irr_0 - q_irr_inf) * sig
 
     internal = 0.75 * T_int**4 * (q_int + tau_ir)
     irradiated = 0.75 * T_eq**4 * 4.0 * f * (
