@@ -38,6 +38,7 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
         Names of offset parameters in order (matching offset_group_names).
     offset_group_idx : jnp.ndarray
         Integer array mapping each data point to its offset parameter index.
+        Uses -1 for points with no offset applied.
     has_offsets : bool
         Whether any offset parameters are defined.
     """
@@ -67,9 +68,9 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
         # Build offset_param_names in same order as group_names
         offset_param_names = [param_map[g] for g in group_names if g in param_map]
 
-        # Reindex: map group_idx to offset_param_names order
+        # Reindex: map group_idx to offset_param_names order (-1 => no offset)
         name_to_idx = {param_map[g]: i for i, g in enumerate(group_names) if g in param_map}
-        reindexed = np.zeros_like(group_idx)
+        reindexed = np.full_like(group_idx, fill_value=-1)
         for i, g in enumerate(group_names):
             if g in param_map:
                 reindexed[group_idx == i] = name_to_idx[param_map[g]]
@@ -239,7 +240,9 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
             # Apply instrument offsets if defined (offset params are in ppm)
             if has_offsets:
                 offset_values = jnp.array([params[n] for n in offset_param_names])
-                offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
+                idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
+                mask = (offset_group_idx >= 0).astype(y_obs.dtype)
+                offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
                 y_shifted = y_obs + offset_vec  # positive offset shifts data UP
             else:
                 y_shifted = y_obs

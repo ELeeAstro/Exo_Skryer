@@ -365,7 +365,8 @@ def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarr
         - `a1`, `a2` : float
             Shape/slope parameters controlling the inversion strength.
         - `log_10_P1`, `log_10_P2`, `log_10_P3` : float
-            Transition pressures in bar (converted internally to linear pressure).
+            Transition pressures in log₁₀(bar). Profile is computed in log₁₀
+            space throughout, matching the Madhusudhan & Seager (2009) convention.
         - `T_ref` : float
             Reference temperature at the top of the atmosphere in Kelvin.
 
@@ -378,33 +379,32 @@ def MandS(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarr
     """
     p_lev = jnp.asarray(p_lev)
 
-    # Parameter values are already JAX arrays, no need to wrap
-    a1 = params["a1"]
-    a2 = params["a2"]
-    P1 = 10.0 ** params["log_10_P1"] * bar
-    P2 = 10.0 ** params["log_10_P2"] * bar
-    P3 = 10.0 ** params["log_10_P3"] * bar
-    T0 = params["T_ref"]
+    a1     = params["a1"]
+    a2     = params["a2"]
+    log_P1 = params["log_10_P1"]   # log10(bar), no unit conversion needed
+    log_P2 = params["log_10_P2"]
+    log_P3 = params["log_10_P3"]
+    T0     = params["T_ref"]
 
-    # TOA pressure (p_lev is bottom->top)
-    P0 = jnp.min(p_lev)
+    # Work entirely in log10(bar) space
+    log_P  = jnp.log10(p_lev / bar)
+    log_P0 = jnp.min(log_P)        # TOA
 
-    def inv_sq(P, Pref, a):
-        # avoid division-by-zero / NaNs if a is proposed extremely small
-        a_safe = jnp.where(jnp.abs(a) > 1e-12, a, jnp.sign(a) * 1e-12 + (a == 0.0) * 1e-12)
-        return (jnp.log(P / Pref) / a_safe) ** 2
+    def inv_sq(lp, lp_ref, a):
+        a_safe = jnp.where(jnp.abs(a) > 1e-12, a, 1e-12)
+        return ((lp - lp_ref) / a_safe) ** 2
 
     # Continuity
-    T1 = T0 + inv_sq(P1, P0, a1)
-    T2 = T1 - inv_sq(P1, P2, a2)
-    T3 = T2 + inv_sq(P3, P2, a2)
+    T1 = T0 + inv_sq(log_P1, log_P0, a1)
+    T2 = T1 - inv_sq(log_P1, log_P2, a2)
+    T3 = T2 + inv_sq(log_P3, log_P2, a2)
 
     # Piecewise inversion T(P)
-    T_reg1 = T0 + inv_sq(p_lev, P0, a1)   # P0 < P <= P1
-    T_reg2 = T2 + inv_sq(p_lev, P2, a2)   # P1 < P <= P3
+    T_reg1 = T0 + inv_sq(log_P, log_P0, a1)   # P0 < P <= P1
+    T_reg2 = T2 + inv_sq(log_P, log_P2,  a2)  # P1 < P <= P3
 
-    in_reg1 = p_lev <= P1
-    in_reg2 = (p_lev > P1) & (p_lev <= P3)
+    in_reg1 = log_P <= log_P1
+    in_reg2 = (log_P > log_P1) & (log_P <= log_P3)
 
     T_lev = jnp.where(in_reg1, T_reg1, jnp.where(in_reg2, T_reg2, T3))
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])

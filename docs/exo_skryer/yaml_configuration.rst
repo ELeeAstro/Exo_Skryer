@@ -465,8 +465,8 @@ sampling
   * ``jaxns``
   * ``blackjax_ns``
   * ``ultranest``
+  * ``nautilus``
   * ``pymultinest``
-  * ``polychord``
   * ``nuts`` (MCMC; requires ``sampling.nuts.backend``)
 
 ``sampling.nuts.backend``
@@ -503,10 +503,10 @@ Fields not listed here may be ignored.
   null_log_evidence, max_modes, mode_tolerance, seed, verbose, resume, importance_nested_sampling,
   multimodal, const_efficiency_mode``.
 
-``sampling.polychord``
-  Common fields: ``nlive, num_repeats, num_repeats_mult, nprior, do_clustering, feedback,
-  precision_criterion, max_ndead, boost_posterior, read_resume, write_resume, write_live,
-  write_dead, write_stats, equals, compression_factor, seed``.
+``sampling.nautilus``
+  Common fields: ``n_live, n_update, split_threshold, n_networks, n_batch, n_like_new_bound, seed,
+  filepath, resume, f_live, n_shell, n_eff, n_like_max, discard_exploration, timeout,
+  equal_weight, verbose``.
 
 ``sampling.nuts``
   Common fields: ``backend, warmup, draws, seed, chains``.

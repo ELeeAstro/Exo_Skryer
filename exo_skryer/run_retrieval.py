@@ -184,13 +184,13 @@ def main() -> None:
         from .sampler_pymultinest_NS import run_nested_pymultinest
         samples_dict, evidence_info = run_nested_pymultinest(cfg, obs, fm_fnc, exp_dir)
 
-    elif engine == "polychord":
-        # PolyChord nested-sampling driver (self-contained)
-        from .sampler_polychord_NS import run_nested_polychord
-        samples_dict, evidence_info = run_nested_polychord(cfg, obs, fm_fnc, exp_dir)
+    elif engine == "nautilus":
+        # Nautilus nested-sampling driver (self-contained)
+        from .sampler_nautilus_NS import run_nested_nautilus
+        samples_dict, evidence_info = run_nested_nautilus(cfg, obs, fm_fnc, exp_dir)
 
     else:
-        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty, pymultinest, polychord")
+        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty, pymultinest, nautilus")
 
     print(f"[info] Finished Sampling")
 

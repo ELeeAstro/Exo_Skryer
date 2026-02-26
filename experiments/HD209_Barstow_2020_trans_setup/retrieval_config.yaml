@@ -117,9 +117,9 @@ params:
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | polychord | pymultinest
+  # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest
   # Only the section matching 'engine' below is used at runtime.
-  engine: dynesty
+  engine: nautilus
 
   # NUTS / HMC settings
   nuts:
@@ -187,6 +187,27 @@ sampling:
     verbose: true
     show_status: true
 
+  # Nautilus settings
+  nautilus:
+    n_live: 100
+    n_update: null
+    split_threshold: 100
+    n_networks: 4
+    n_batch: null
+    n_like_new_bound: null
+    seed: 42
+    filepath: nautilus_checkpoint.hdf5
+    resume: true
+
+    f_live: 0.01
+    n_shell: 1
+    n_eff: null
+    n_like_max: null
+    discard_exploration: false
+    timeout: null
+    equal_weight: true
+    verbose: true
+
   # PyMultiNest settings
   pymultinest:
     n_live_points: 1000              # Number of live points
@@ -202,27 +223,6 @@ sampling:
     importance_nested_sampling: false # Use importance nested sampling
     multimodal: true                 # Enable multimodal mode detection
     const_efficiency_mode: false     # Constant efficiency mode
-
-  # PolyChord settings
-  polychord:
-    nlive: 100                      # Number of live points
-    num_repeats: 5                   # Slice sampling repeats per live point (nDims * num_repeats gives chain length)
-    nprior: -1                       # Number of prior samples (-1 = nlive * 10)
-    do_clustering: true              # Enable multimodal clustering
-    feedback: 1                      # Verbosity level (0=silent, 1=normal, 2=detailed, 3=debug)
-    precision_criterion: 1.0         # Evidence stopping criterion (dlogZ)
-    max_ndead: -1                    # Maximum number of dead points (-1 = unlimited)
-    boost_posterior: 0.0             # Posterior boost factor (0.0 = standard nested sampling)
-    read_resume: false               # Resume from previous run
-    write_resume: true               # Write resume files for future resumption
-    write_live: true                 # Write live points to file
-    write_dead: true                 # Write dead points to file
-    write_stats: true                # Write statistics file
-    equals: true                     # Use equal-weighted samples
-    compression_factor: 0.36787944117144233  # exp(-1), target compression for posterior
-    seed: 42                         # Random seed (-1 = random, >=0 for reproducibility)
-    # Note: For MPI parallelization, run with: mpirun -np N python -m exo_skryer.run_retrieval --config ...
-    # Recommended: Set runtime.threads=1 when using MPI to avoid thread oversubscription
 
 # ----------------------------------------------------------------------------------
 # Runtime Section

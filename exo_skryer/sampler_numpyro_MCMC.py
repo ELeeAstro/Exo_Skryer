@@ -222,6 +222,7 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
         Names of offset parameters in order (matching offset_group_names).
     offset_group_idx : jnp.ndarray
         Integer array mapping each data point to its offset parameter index.
+        Uses -1 for points with no offset applied.
     has_offsets : bool
         Whether any offset parameters are defined.
     """
@@ -251,9 +252,9 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
         # Build offset_param_names in same order as group_names
         offset_param_names = [param_map[g] for g in group_names if g in param_map]
 
-        # Reindex: map group_idx to offset_param_names order
+        # Reindex: map group_idx to offset_param_names order (-1 => no offset)
         name_to_idx = {param_map[g]: i for i, g in enumerate(group_names) if g in param_map}
-        reindexed = np.zeros_like(group_idx)
+        reindexed = np.full_like(group_idx, fill_value=-1)
         for i, g in enumerate(group_names):
             if g in param_map:
                 reindexed[group_idx == i] = name_to_idx[param_map[g]]
@@ -305,7 +306,7 @@ def _build_logprior_u(sampled_params, bijectors, priors_tuple):
     return logprior_u
 
 
-def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm,
+def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_active, obs, fm,
                     offset_param_names, offset_group_idx, has_offsets):
     """Build log-likelihood in u-space with offset support."""
     y_obs = jnp.asarray(obs["y"])
@@ -316,6 +317,10 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm,
         theta_map = {sampled_names[i]: bijectors[i].forward(u_vec[i]) for i in range(len(sampled_names))}
         # Inject delta parameters
         theta_map.update(delta_dict)
+        # Inject optional defaults only if not configured in YAML
+        for k, v in optional_defaults_active.items():
+            if k not in theta_map:
+                theta_map[k] = jnp.asarray(v)
 
         # Compute forward model
         mu = fm(theta_map)
@@ -323,13 +328,18 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm,
         # Apply instrument offsets if defined (offset params are in ppm)
         if has_offsets:
             offset_values = jnp.array([theta_map[n] for n in offset_param_names])
-            offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
+            idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
+            mask = (offset_group_idx >= 0).astype(y_obs.dtype)
+            offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
             y_shifted = y_obs + offset_vec  # positive offset shifts data UP
         else:
             y_shifted = y_obs
 
         res = y_shifted - mu
-        sig = jnp.clip(dy_obs, 1e-300, jnp.inf)
+        c = theta_map["c"]  # log10(sigma_jit)
+        sig_jit2 = 10.0 ** (2.0 * c)
+        sig = jnp.sqrt(dy_obs**2 + sig_jit2)
+        sig = jnp.clip(sig, 1e-300, jnp.inf)
         is_finite = jnp.all(jnp.isfinite(mu))
 
         def _ok(_):
@@ -385,6 +395,11 @@ def run_nuts_numpyro(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nda
     # Extract offset parameters
     offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
 
+    # Optional defaults only if parameter is not present in YAML
+    OPTIONAL_DEFAULTS: Dict[str, float] = {"c": -99.0}
+    cfg_names = {p.name for p in cfg.params}
+    optional_defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
+
     # Build bijectors
     bijectors = [_build_bijector(str(getattr(p, "dist", "")).lower(), p) for p in sampled_params]
 
@@ -399,7 +414,7 @@ def run_nuts_numpyro(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nda
 
     # Build log-functions
     logprior_u = _build_logprior_u(sampled_params, bijectors, priors_tuple)
-    loglik_u = _build_loglik_u(sampled_names, bijectors, delta_dict, obs, fm,
+    loglik_u = _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_active, obs, fm,
                                offset_param_names, offset_group_idx, has_offsets)
 
     def logprob(u):

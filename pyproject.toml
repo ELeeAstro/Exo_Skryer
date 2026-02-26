@@ -20,6 +20,8 @@ dependencies = [
   "distrax",
   "tensorflow-probability",
   "dynesty",
+  "ultranest",
+  "nautilus-sampler",
   "matplotlib",
   "h5py",
   "tqdm",
@@ -41,20 +43,12 @@ blackjax = [
 anesthetic = [
     "anesthetic",
 ]
-ultranest = [
-    "ultranest",
-]
 pymultinest = [
     "pymultinest",
 ]
-polychord = [
-    "pypolychord",
-]
 all-samplers = [
     "blackjax",
-    "ultranest",
     "pymultinest",
-    "pypolychord",
 ]
 test = [
     "pytest-doctestplus",
@@ -73,7 +67,6 @@ docs = [
     "tox",
     "blackjax",
     "anesthetic",
-    "ultranest",
     "pymultinest",
 ]
 

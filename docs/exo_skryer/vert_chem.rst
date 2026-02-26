@@ -9,14 +9,97 @@ Exo Skryer provides several vertical chemistry calculation functions in the `~ex
 
 .. math::
 
-  x_{i} = \frac{n_{i}}{n_{\rm tot}}
+  X_{i} = \frac{n_{i}}{n_{\rm tot}}
 
 Several schemes are included in Exo Skryer, from simple constant profiles to chemical equilibrium to quenching timescale approximation.
-Throughout, we assume an H\ :sub:`2`-He dominaated atmosphere, forcing the total VMR to satisfy
+Throughout, we assume an H\ :sub:`2`-He dominated atmosphere, forcing the total VMR to satisfy
 
 .. math::
 
-  \sum_{i}x_{i} = 1
+  \sum_{i}X_{i} = 1
+
+Background Gas: H\ :sub:`2` and He Filling
+-------------------------------------------
+
+After all trace-species VMRs :math:`X_i` are determined, the remaining fraction of the atmosphere
+is filled with H\ :sub:`2` and He following the scheme of `Welbanks et al. (2021) <https://ui.adsabs.harvard.edu/abs/2021ApJ...913L..20W>`_,
+ensuring :math:`\sum_i X_i = 1`:
+
+.. math::
+
+   X_{\rm H_2}
+   = \frac{1 - \displaystyle\sum_{i,\,i \neq {\rm He,\,H_2}}^{n} X_i}
+          {1 + \dfrac{X_{\rm He}}{X_{\rm H_2}}},
+   \qquad
+   X_{\rm He} = X_{\rm H_2}\,\frac{X_{\rm He}}{X_{\rm H_2}},
+
+where the He to H\ :sub:`2` ratio is fixed at the solar value from
+`Asplund et al. (2021) <https://ui.adsabs.harvard.edu/abs/2021A%26A...653A.141A>`_:
+
+.. math::
+
+   \frac{X_{\rm He}}{X_{\rm H_2}} = 0.164.
+
+Atomic H and Free-Electron Fraction
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For ultra-hot Jupiter atmospheres where H\ :sub:`2` dissociation is significant, the filling
+scheme can be extended to include atomic H. A H/H\ :sub:`2` VMR ratio is defined as a
+retrievable quantity
+
+.. math::
+
+   f = \frac{X_{\rm H}}{X_{\rm H_2}},
+
+with the background filler fraction
+
+.. math::
+
+   X_{\rm bg} = 1 - \sum_{i,\,i \neq {\rm He,\,H_2,\,H}}^{n} X_i,
+
+and the solar He/H ratio from `Asplund et al. (2021) <https://ui.adsabs.harvard.edu/abs/2021A%26A...653A.141A>`_:
+
+.. math::
+
+   \epsilon_{\rm He} = \frac{{\rm He}}{{\rm H}} = 0.082.
+
+Defining :math:`N_{\rm H}` as the dimensionless abundance of hydrogen nuclei in the filler,
+
+.. math::
+
+   N_{\rm H} = \frac{X_{\rm bg}}{\dfrac{1+f}{2+f} + \epsilon_{\rm He}},
+
+the H\ :sub:`2`, H, and He VMRs are then
+
+.. math::
+
+   X_{\rm H_2} = \frac{N_{\rm H}}{f + 2},
+   \qquad
+   X_{\rm H}   = f\,X_{\rm H_2},
+   \qquad
+   X_{\rm He}  = \epsilon_{\rm He}\,N_{\rm H}.
+
+Note that in certain circumstances :math:`X_{\rm H} > X_{\rm H_2}`, which should be taken
+into account when setting prior bounds for the H/H\ :sub:`2` ratio.
+
+This scheme is combined with a free-electron number density fraction :math:`f_{\rm e^-}` as a
+separate retrieved parameter,
+
+.. math::
+
+   f_{\rm e^-} = \frac{n_{\rm e^-}}{n_{\rm tot}},
+
+where :math:`n_{\rm e^-}` [cm\ :sup:`-3`] is the electron number density and
+:math:`n_{\rm tot}` [cm\ :sup:`-3`] the total background gas number density.
+Together, the H/H\ :sub:`2` and :math:`f_{\rm e^-}` parameters enable a consistent
+recovery of H\ :sup:`-` free--free opacity, an important continuum source in
+ultra-hot Jupiter atmospheres.
+
+.. code-block:: yaml
+
+   params:
+     - { name: log_10_H_over_H2, dist: uniform, low: -6, high: 0, transform: logit, init: -3 }
+     - { name: log_10_ne_over_ntot, dist: uniform, low: -6, high: 0, transform: logit, init: -4 }
 
 Constant VMR
 ------------
@@ -25,7 +108,7 @@ The constant VMR profile assumes a constant value for each species as given by t
 
 .. math::
 
-  x_{i} = x_{\rm const} 
+  X_{i} = X_{\rm const} 
 
 .. plot::
    :include-source:
@@ -116,8 +199,8 @@ This was converted into JAX compabitile python from the origional python code fo
    load_nasa9_cache(str(root / "NASA9"))
 
    nlev = 100
-   p_bot = np.log10(100.0)
-   p_top = np.log10(1e-4)
+   p_bot = np.log10(1000.0)
+   p_top = np.log10(1e-8)
    p_lev = np.logspace(p_bot, p_top, nlev) * bar
 
    params_tp = {
@@ -194,8 +277,8 @@ Quenching Timescale Approximation
    load_nasa9_cache(str(root / "NASA9"))
 
    nlev = 100
-   p_bot = np.log10(100.0)
-   p_top = np.log10(1e-4)
+   p_bot = np.log10(1000.0)
+   p_top = np.log10(1e-8)
    p_lev = np.logspace(p_bot, p_top, nlev) * bar
 
    params_tp = {

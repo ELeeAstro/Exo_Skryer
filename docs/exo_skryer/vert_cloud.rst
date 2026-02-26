@@ -124,18 +124,18 @@ A constant (uniform) cloud mass mixing ratio across the entire pressure domain c
 Slab Profile
 ------------
 
-A slab profile is defined with a constant :math:`q_{\rm c}` between a top pressure and a given :math:`\Delta` pressure.
-This follows a similar profile to ` <>`_.
-
-**Example YAML Configuration:**
+A slab profile is defined with a constant :math:`q_{\rm c}` between a cloud-top pressure :math:`p_{\rm top}` and a
+bottom pressure :math:`p_{\rm top} + \Delta p`, where :math:`\Delta p = 10^{\log_{10} \Delta p}`.
 
 .. math::
 
    q_{\rm c}(p) = \begin{cases}
-      q_{\rm c, slab}
-       &  p \le p_{\rm c, top} + \Delta p \\
-      0 & p > p_{\rm c, top} + \Delta p\\
+      0,               & p < p_{\rm c, top}, \\
+      q_{\rm c, slab}, & p_{\rm c, top} \le p \le p_{\rm c, top} + \Delta p, \\
+      0,               & p > p_{\rm c, top} + \Delta p. \\
    \end{cases}
+
+**Example YAML Configuration:**
 
 .. code-block:: yaml
 
@@ -169,8 +169,8 @@ This follows a similar profile to ` <>`_.
 
    params = {
        "log_10_q_c": -6.0,
-       "log_10_p_top_slab": -4.0,  # bar
-       "log_10_dp_slab": 3.0,      # slab extends down by 10^3 in pressure
+       "log_10_p_top_slab": -2.0,  # P_top = 0.01 bar
+       "log_10_dp_slab": 1.0,      # Delta_p = 10 bar -> P_bot ~ 10 bar
    }
    q_c_lay = slab_profile(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params=params)
    q_c_lay = np.asarray(q_c_lay)

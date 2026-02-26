@@ -45,6 +45,7 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
         Names of offset parameters in order (matching offset_group_names).
     offset_group_idx : jnp.ndarray
         Integer array mapping each data point to its offset parameter index.
+        Uses -1 for points with no offset applied.
     has_offsets : bool
         Whether any offset parameters are defined.
     """
@@ -74,9 +75,9 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
         # Build offset_param_names in same order as group_names
         offset_param_names = [param_map[g] for g in group_names if g in param_map]
 
-        # Reindex: map group_idx to offset_param_names order
+        # Reindex: map group_idx to offset_param_names order (-1 => no offset)
         name_to_idx = {param_map[g]: i for i, g in enumerate(group_names) if g in param_map}
-        reindexed = np.zeros_like(group_idx)
+        reindexed = np.full_like(group_idx, fill_value=-1)
         for i, g in enumerate(group_names):
             if g in param_map:
                 reindexed[group_idx == i] = name_to_idx[param_map[g]]
@@ -249,7 +250,9 @@ def build_loglikelihood_ultranest(cfg, obs: dict, fm: Callable, param_names: Lis
             # Apply instrument offsets if defined (offset params are in ppm)
             if has_offsets:
                 offset_values = jnp.array([theta_map[n] for n in offset_param_names])
-                offset_vec = offset_values[offset_group_idx] / 1e6  # ppm -> fractional
+                idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
+                mask = (offset_group_idx >= 0).astype(y_obs.dtype)
+                offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
                 y_shifted = y_obs + offset_vec  # positive offset shifts data UP
             else:
                 y_shifted = y_obs
@@ -304,8 +307,12 @@ def run_nested_ultranest(
     dlogz = float(getattr(un_cfg, "dlogz", 0.5))
     max_iters = int(getattr(un_cfg, "max_iters", 0))
     min_num_live_points = int(getattr(un_cfg, "min_num_live_points", n_live))
+    frac_remain = getattr(un_cfg, "frac_remain", None)
     show_status = bool(getattr(un_cfg, "show_status", True))
     verbose = bool(getattr(un_cfg, "verbose", True))
+    use_stepsampler = bool(getattr(un_cfg, "use_stepsampler", False))
+    stepsampler_nsteps = int(getattr(un_cfg, "stepsampler_nsteps", 30))
+    stepsampler_direction = str(getattr(un_cfg, "stepsampler_direction", "mixture")).lower()
 
     exp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -326,6 +333,8 @@ def run_nested_ultranest(
     print(f"[UltraNest] num_live_points: {n_live}")
     print(f"[UltraNest] min_num_live_points: {min_num_live_points}")
     print(f"[UltraNest] dlogz: {dlogz}")
+    print(f"[UltraNest] frac_remain: {frac_remain}")
+    print(f"[UltraNest] use_stepsampler: {use_stepsampler}")
 
     run_kwargs = dict(
         min_num_live_points=min_num_live_points,
@@ -333,8 +342,41 @@ def run_nested_ultranest(
         show_status=show_status,
         viz_callback=None,
     )
+    if frac_remain is not None:
+        run_kwargs["frac_remain"] = float(frac_remain)
     if max_iters > 0:
         run_kwargs["max_iters"] = max_iters
+
+    if use_stepsampler:
+        try:
+            from ultranest.stepsampler import (
+                SliceSampler,
+                generate_mixture_random_direction,
+                generate_random_direction,
+            )
+        except ImportError as e:
+            raise ImportError(
+                "UltraNest stepsampler support is not available in this installation."
+            ) from e
+
+        if stepsampler_direction == "random":
+            direction_fn = generate_random_direction
+        elif stepsampler_direction == "mixture":
+            direction_fn = generate_mixture_random_direction
+        else:
+            raise ValueError(
+                f"Unknown stepsampler_direction={stepsampler_direction!r}. "
+                f"Use 'mixture' or 'random'."
+            )
+
+        try:
+            sampler.stepsampler = SliceSampler(
+                nsteps=stepsampler_nsteps,
+                generate_direction=direction_fn,
+            )
+        except TypeError:
+            # Compatibility fallback for older UltraNest APIs.
+            sampler.stepsampler = SliceSampler(stepsampler_nsteps, direction_fn)
 
     results = sampler.run(**run_kwargs)
     sampler.print_results()

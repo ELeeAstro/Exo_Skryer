@@ -36,7 +36,7 @@ The current version of Exo Skryer offers the following nested sampling options:
 * JAXNS 
 * ultranest (experimental) 
 * blackjax-ns (experimental)
-* polychord (experimental)
+* nautilus (experimental)
 
 As well as two NUTS MCMC samplers:
 

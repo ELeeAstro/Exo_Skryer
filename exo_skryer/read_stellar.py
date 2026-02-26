@@ -66,18 +66,51 @@ def _band_average(
     for i in range(out.size):
         left = edges[i]
         right = edges[i + 1]
-        mask = (wl_native >= left) & (wl_native <= right)
-        if np.any(mask):
-            wl_seg = wl_native[mask]
-            fl_seg = flux_native[mask]
-        else:
-            wl_seg = np.array([left, right], dtype=float)
-            # Interpolate in log10-space, then convert back
-            log10_fl_seg = np.interp(wl_seg, wl_native, log10_flux_native, left=log10_flux_native[0], right=log10_flux_native[-1])
-            fl_seg = 10.0 ** log10_fl_seg
+        # Include bin edges explicitly so the integral spans the full bin width.
+        interior_mask = (wl_native > left) & (wl_native < right)
+        wl_interior = wl_native[interior_mask]
+        wl_seg = np.concatenate(([left], wl_interior, [right]))
+        # Interpolate in log10-space, then convert back
+        log10_fl_seg = np.interp(
+            wl_seg,
+            wl_native,
+            log10_flux_native,
+            left=log10_flux_native[0],
+            right=log10_flux_native[-1],
+        )
+        fl_seg = 10.0 ** log10_fl_seg
         out[i] = simpson(fl_seg, x=wl_seg) / (right - left)
-        #out[i] = np.trapezoid(fl_seg, wl_seg) / (right - left)
     return out
+
+
+def _native_is_higher_resolution(
+    wl_native: np.ndarray,
+    lam_master: np.ndarray,
+) -> bool:
+    if wl_native.size < 2 or lam_master.size < 2:
+        return False
+
+    wl_lo = max(wl_native[0], lam_master[0])
+    wl_hi = min(wl_native[-1], lam_master[-1])
+    if wl_hi <= wl_lo:
+        return False
+
+    native_mask = (wl_native >= wl_lo) & (wl_native <= wl_hi)
+    master_mask = (lam_master >= wl_lo) & (lam_master <= wl_hi)
+    wl_native_overlap = wl_native[native_mask]
+    wl_master_overlap = lam_master[master_mask]
+    if wl_native_overlap.size < 2 or wl_master_overlap.size < 2:
+        return False
+
+    native_dlam = np.diff(wl_native_overlap)
+    master_dlam = np.diff(wl_master_overlap)
+    native_dlam = native_dlam[native_dlam > 0.0]
+    master_dlam = master_dlam[master_dlam > 0.0]
+    if native_dlam.size == 0 or master_dlam.size == 0:
+        return False
+
+    # Treat native as higher-resolution when its typical spacing is finer.
+    return np.median(native_dlam) < np.median(master_dlam)
 
 
 def read_stellar_spectrum(
@@ -99,21 +132,28 @@ def read_stellar_spectrum(
     if ck_mode:
         edges = _compute_bin_edges(lam_master)
         flux_master = _band_average(wl_native, flux_native, edges)
+        mode_str = "ck_bin_avg"
     else:
-        # Interpolate in log10-space for better accuracy across orders of magnitude
-        log10_flux_native = np.log10(flux_native)
-        log10_flux_master = np.interp(
-            lam_master,
-            wl_native,
-            log10_flux_native,
-            left=log10_flux_native[0],
-            right=log10_flux_native[-1],
-        )
-        flux_master = 10.0 ** log10_flux_master
+        if _native_is_higher_resolution(wl_native, lam_master):
+            edges = _compute_bin_edges(lam_master)
+            flux_master = _band_average(wl_native, flux_native, edges)
+            mode_str = "lbl_bin_avg"
+        else:
+            # Interpolate in log10-space for better accuracy across orders of magnitude
+            log10_flux_native = np.log10(flux_native)
+            log10_flux_master = np.interp(
+                lam_master,
+                wl_native,
+                log10_flux_native,
+                left=log10_flux_native[0],
+                right=log10_flux_native[-1],
+            )
+            flux_master = 10.0 ** log10_flux_master
+            mode_str = "lbl_interp"
 
     print(
         "[read_stellar] Loaded stellar spectrum: "
-        f"path={path}, mode={'ck_bin_avg' if ck_mode else 'lbl_interp'}, "
+        f"path={path}, mode={mode_str}, "
         f"native_N={wl_native.size}, master_N={lam_master.size}, "
         f"wl_native=[{wl_native.min():.5g}, {wl_native.max():.5g}] um, "
         f"wl_master=[{lam_master.min():.5g}, {lam_master.max():.5g}] um, "

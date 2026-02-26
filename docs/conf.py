@@ -192,7 +192,6 @@ autodoc_mock_imports = [
     "jaxlib",
     "numpyro",
     "pymultinest",
-    "pypolychord",
     "ultranest",
 ]
 autosummary_mock_imports = [
@@ -202,7 +201,6 @@ autosummary_mock_imports = [
     "jaxlib",
     "numpyro",
     "pymultinest",
-    "pypolychord",
     "ultranest",
 ]
 
