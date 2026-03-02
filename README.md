@@ -1,13 +1,21 @@
 # Exo-Scryer - A JAX accelerated retrieval code
 
-## (In development!! Contact Elise if you want to try things out)
+## (Under active development!!)
 
-## TODO: Clean up all the junk
+Documentation (and first steps)
+[Read The Docs](https://exo-skryer.readthedocs.io/en/latest/)
 
-# Nice to haves (inspiration):
+Corr-k, opacity sampled and CIA data download:
+[Opacity Data](https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link)
 
 YAML file config webapp (in pogress):
 [Config Webapp](https://exoskryer.streamlit.app/)
 
-Corr-k, opacity sampled and CIA data:
-[Opacity Data](https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link)
+
+TODO (in priority): 
+
+- Add [Atmodeller](https://github.com/ExPlanetology/atmodeller) chemical equilibrium scheme
+- Add NEMESIS emission RT scheme (doubling-adding)
+- Add more pre-made opacity files (npz format)
+- Add zarr support for opacity files
+- Utilise [Equinox](https://github.com/patrick-kidger/equinox) package for easier functionality and future better ML support 
