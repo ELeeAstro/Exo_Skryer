@@ -88,8 +88,8 @@ def _scale_flux_ratio(
     F_star = jnp.where(use_stellar, stellar_flux, f_star_param)
     R0 = jnp.asarray(state["R0"], dtype=dtype)
     R_s = jnp.asarray(state["R_s"], dtype=dtype)
-    FpFs = (flux * R0**2) / (jnp.maximum(F_star, 1.0e-30) * (R_s**2))
-    return FpFs
+    scale = (R0**2) / (F_star * (R_s**2))
+    return flux * scale
 
 
 def compute_emission_spectrum_1d_lbl(

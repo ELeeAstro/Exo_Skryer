@@ -132,7 +132,9 @@ def infer_trace_species(
         # For H- free-free: electrons and atomic-H are handled via separate
         # retrieved proxies (ne/n_tot and H/H2), not via the VMR machinery.
 
-    trace_species = tuple(s for s in required if s not in ("H2", "He"))
+    # H2/He are always filler species, and atomic H is derived from the filler
+    # when needed via the dedicated log_10_H_over_H2 parameter.
+    trace_species = tuple(s for s in required if s not in ("H2", "He", "H"))
     return trace_species
 
 
