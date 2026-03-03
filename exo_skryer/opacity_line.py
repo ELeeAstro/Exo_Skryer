@@ -17,11 +17,11 @@ __all__ = [
 ]
 
 def zero_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-    """Return a zero line-by-line opacity array.
+    """Return a zero opacity-sampling opacity array.
 
-    This function is used as a fallback when line-by-line opacities are disabled
+    This function is used as a fallback when opacity-sampling opacities are disabled
     in the configuration. It maintains API compatibility with `compute_line_opacity()`
-    so the forward model can seamlessly switch between LBL enabled/disabled.
+    so the forward model can seamlessly switch between OS enabled/disabled.
 
     Parameters
     ----------
@@ -47,7 +47,7 @@ def zero_line_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarr
 
 
 def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-    """Compute line-by-line mass opacity for all molecular/atomic absorbers.
+    """Compute opacity-sampling mass opacity for all molecular/atomic absorbers.
 
     This function calculates the total line absorption opacity by:
     1. Interpolating pre-loaded cross-sections to atmospheric (P, T) conditions

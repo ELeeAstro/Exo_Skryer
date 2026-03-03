@@ -1,6 +1,6 @@
 """
-RT_em_1D_lbl.py
-===============
+RT_em_1D_os.py
+==============
 """
 
 from __future__ import annotations
@@ -12,10 +12,10 @@ import jax.numpy as jnp
 from .data_constants import kb, h, c_light, pc
 from .RT_em_schemes import solve_alpha_eaa
 
-__all__ = ["compute_emission_spectrum_1d_lbl"]
+__all__ = ["compute_emission_spectrum_1d_os"]
 
 
-def _sum_opacity_components_lbl(
+def _sum_opacity_components_os(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
 ) -> jnp.ndarray:
@@ -42,7 +42,7 @@ def _planck_lambda(wavelength_cm: jnp.ndarray, temperature: jnp.ndarray) -> jnp.
     return prefactor / jnp.maximum(expm1, 1e-300)
 
 
-def _layer_optical_depth_lbl(k_tot: jnp.ndarray, rho: jnp.ndarray, dz: jnp.ndarray) -> jnp.ndarray:
+def _layer_optical_depth_os(k_tot: jnp.ndarray, rho: jnp.ndarray, dz: jnp.ndarray) -> jnp.ndarray:
     return k_tot * rho[:, None] * dz[:, None]
 
 
@@ -92,7 +92,7 @@ def _scale_flux_ratio(
     return flux * scale
 
 
-def compute_emission_spectrum_1d_lbl(
+def compute_emission_spectrum_1d_os(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
@@ -112,19 +112,19 @@ def compute_emission_spectrum_1d_lbl(
         be_internal = jnp.zeros_like(be_levels[-1])
 
     def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        ssa_lbl, g_lbl = _compute_scattering_properties(
+        ssa_os, g_os = _compute_scattering_properties(
             components,
             state,
             k_tot_local,
         )
-        dtau_lbl = _layer_optical_depth_lbl(k_tot_local, rho_lay, dz)
+        dtau_os = _layer_optical_depth_os(k_tot_local, rho_lay, dz)
         lw_up_out, _, layer_contrib_out = emission_solver(
-            be_levels, dtau_lbl, ssa_lbl, g_lbl, be_internal,
+            be_levels, dtau_os, ssa_os, g_os, be_internal,
             return_layer_contrib=contri_func
         )
         return lw_up_out, layer_contrib_out
 
-    k_tot_cloud = _sum_opacity_components_lbl(state, opacity_components)
+    k_tot_cloud = _sum_opacity_components_os(state, opacity_components)
     lw_up_cloud, layer_contrib_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
 
     if "f_cloud" in params and "cloud" in opacity_components:

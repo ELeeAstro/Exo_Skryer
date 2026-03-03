@@ -24,11 +24,11 @@ physics:
   # Cloud vertical profile. Options: none | exponential | slab | constant
   vert_cloud: exponential_decay_profile
 
-  # Line opacity mode. Options: lbl (line-by-line) | ck (correlated-k) | None (off)
+  # Line opacity mode. Options: os (opacity sampling) | ck (correlated-k) | None (off)
   # Note: 'ck' here must match opac.ck: True below.
   opac_line: ck
-  opac_ray: None    # lbl | ck | None
-  opac_cia: ck      # lbl | ck | None
+  opac_ray: None    # os | ck | None
+  opac_cia: ck      # os | ck | None
   # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk
   opac_cloud: F18
   opac_special: None  # on (H- bound-free/free-free) | None

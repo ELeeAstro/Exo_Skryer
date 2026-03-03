@@ -57,7 +57,7 @@ def infer_trace_species(
         for n in names:
             _append_unique(required, n)
 
-    if line_opac_scheme_str.lower() == "lbl":
+    if line_opac_scheme_str.lower() == "os":
         add_many(_extract_species_list(getattr(cfg.opac, "line", None)))
     elif line_opac_scheme_str.lower() == "ck":
         ck_mode = getattr(cfg.opac, "ck", None)
@@ -67,10 +67,10 @@ def infer_trace_species(
             ck_block = ck_mode
         add_many(_extract_species_list(ck_block))
 
-    if ray_opac_scheme_str.lower() in ("lbl", "ck"):
+    if ray_opac_scheme_str.lower() in ("os", "ck"):
         add_many(_extract_species_list(getattr(cfg.opac, "ray", None)))
 
-    if cia_opac_scheme_str.lower() in ("lbl", "ck"):
+    if cia_opac_scheme_str.lower() in ("os", "ck"):
         for cia_name in _extract_species_list(getattr(cfg.opac, "cia", None)):
             if cia_name == "H-":
                 # H- is treated as special opacity (bound-free/free-free), not a CIA pair.

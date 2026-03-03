@@ -25,9 +25,9 @@ from .build_chem import prepare_chemistry_kernel
 
 from .RT_trans_1D_ck import compute_transit_depth_1d_ck
 from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
-from .RT_trans_1D_lbl import compute_transit_depth_1d_lbl
+from .RT_trans_1D_os import compute_transit_depth_1d_os
 from .RT_em_1D_ck import compute_emission_spectrum_1d_ck
-from .RT_em_1D_lbl import compute_emission_spectrum_1d_lbl
+from .RT_em_1D_os import compute_emission_spectrum_1d_os
 from .RT_em_schemes import get_emission_solver
 
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
@@ -69,8 +69,8 @@ def _extract_fixed_params(cfg) -> Dict[str, jnp.ndarray]:
     return fixed_params
 
 
-def _resolve_lbl_ck_opac(phys, key: str, fn: Callable):
-    """Resolve a simple none/lbl/ck opacity setting.
+def _resolve_os_ck_opac(phys, key: str, fn: Callable):
+    """Resolve a simple none/os/ck opacity setting.
 
     Returns ``(scheme_str, kernel_or_None)``.  The scheme string is lowercased.
     """
@@ -83,10 +83,10 @@ def _resolve_lbl_ck_opac(phys, key: str, fn: Callable):
     if s == "none":
         print(f"[info] {key} is None:", raw)
         return s, None
-    if s in ("lbl", "ck"):
+    if s in ("os", "ck"):
         return s, fn
     raise NotImplementedError(
-        f"Unknown physics.{key}='{raw}'. Options: none | lbl | ck"
+        f"Unknown physics.{key}='{raw}'. Options: none | os | ck"
     )
 
 
@@ -108,7 +108,7 @@ def _build_rt_kernel(phys, rt_scheme: str, ck: bool, ck_mix_str: str) -> Callabl
     if rt_scheme == "transit_1d":
         if ck:
             return compute_transit_depth_1d_ck_trans if ck_mix_str == "TRANS" else compute_transit_depth_1d_ck
-        return compute_transit_depth_1d_lbl
+        return compute_transit_depth_1d_os
     if rt_scheme == "emission_1d":
         em_scheme = getattr(phys, "em_scheme", "eaa")
         emission_solver = get_emission_solver(em_scheme)
@@ -116,7 +116,7 @@ def _build_rt_kernel(phys, rt_scheme: str, ck: bool, ck_mix_str: str) -> Callabl
             return lambda state, params, components, opac: compute_emission_spectrum_1d_ck(
                 state, params, components, opac, emission_solver=emission_solver
             )
-        return lambda state, params, components: compute_emission_spectrum_1d_lbl(
+        return lambda state, params, components: compute_emission_spectrum_1d_os(
             state, params, components, emission_solver=emission_solver
         )
     raise NotImplementedError(
@@ -174,18 +174,18 @@ def _select_kernels(cfg) -> SimpleNamespace:
     if line_opac_str == "none":
         print(f"[info] Line opacity is None:", line_opac_raw)
         line_opac_kernel = None
-    elif line_opac_str == "lbl":
+    elif line_opac_str == "os":
         line_opac_kernel = compute_line_opacity
     elif line_opac_str == "ck":
         line_opac_kernel = compute_ck_opacity
     else:
         raise NotImplementedError(
-            f"Unknown physics.opac_line='{line_opac_raw}'. Options: none | lbl | ck"
+            f"Unknown physics.opac_line='{line_opac_raw}'. Options: none | os | ck"
         )
 
     # --- continuum opacities ---
-    ray_opac_str, ray_opac_kernel = _resolve_lbl_ck_opac(phys, "opac_ray", compute_ray_opacity)
-    cia_opac_str, cia_opac_kernel = _resolve_lbl_ck_opac(phys, "opac_cia", compute_cia_opacity)
+    ray_opac_str, ray_opac_kernel = _resolve_os_ck_opac(phys, "opac_ray", compute_ray_opacity)
+    cia_opac_str, cia_opac_kernel = _resolve_os_ck_opac(phys, "opac_cia", compute_cia_opacity)
 
     # --- cloud opacity ---
     cld_opac_raw = getattr(phys, "opac_cloud", None)
@@ -312,7 +312,7 @@ def _validate_config(
     problems surface at build time rather than silently producing wrong results.
     """
     # Line opacity data present in registries
-    if k.line_opac_str == "lbl" and not XS.has_line_data():
+    if k.line_opac_str == "os" and not XS.has_line_data():
         raise RuntimeError(
             "Line opacity requested but registry is empty. "
             "Check cfg.opac.line and ensure build_opacities() loaded line tables."
@@ -360,11 +360,11 @@ def _validate_config(
              "ck_g_points", "ck_g_weights"),
             "correlated-k",
         )
-    if (not k.ck) and k.line_opac_str == "lbl":
+    if (not k.ck) and k.line_opac_str == "os":
         _require_cache_keys(
             opac_cache,
             ("line_sigma_cube", "line_log10_pressure_grid", "line_log10_temperature_grids"),
-            "line-by-line",
+            "opacity sampling",
         )
     if k.cia_opac_kernel is not None:
         _require_cache_keys(
@@ -653,7 +653,7 @@ def build_forward_model(
         # RT kernels always return (spectrum, contrib_func)
         # contrib_func is zeros if state["contri_func"] is False
         if rt_scheme == "transit_1d":
-            # All transit RT kernels accept the opac cache (LBL may use it for refraction).
+            # All transit RT kernels accept the opac cache (OS may use it for refraction).
             D_hires, contrib_func = rt_kernel(state, full_params, opacity_components, opac)
         else:
             if ck:

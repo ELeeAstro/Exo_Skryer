@@ -13,9 +13,9 @@ physics:
   vert_mu: dynamic
   vert_cloud: exponential_decay_profile
 
-  opac_line: lbl
-  opac_ray: lbl
-  opac_cia: lbl
+  opac_line: os
+  opac_ray: os
+  opac_cia: os
   opac_cloud: F18
   opac_special: None
   cloud_dist: mono
@@ -27,19 +27,19 @@ physics:
 
 opac:
 
-  wl_master: ../../opac_data/lbl/wl_R20000.txt
+  wl_master: ../../opac_data/os/wl_R20000.txt
   full_grid: False
   ck: False
   ck_mix: RORR
 
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_R20000.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_R20000.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}
-    - {species: NH3, path: ../../opac_data/lbl/NH3_R20000.npz} 
-    - {species: H2S, path: ../../opac_data/lbl/H2S_R20000.npz}
-    - {species: SO2, path: ../../opac_data/lbl/SO2_R20000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.npz}
+    - {species: CO2, path: ../../opac_data/os/CO2_R20000.npz}
+    - {species: CO, path: ../../opac_data/os/CO_R20000.npz}
+    - {species: CH4, path: ../../opac_data/os/CH4_R20000.npz}
+    - {species: NH3, path: ../../opac_data/os/NH3_R20000.npz} 
+    - {species: H2S, path: ../../opac_data/os/H2S_R20000.npz}
+    - {species: SO2, path: ../../opac_data/os/SO2_R20000.npz}
   ray:
     - {species: H2}
     - {species: He}

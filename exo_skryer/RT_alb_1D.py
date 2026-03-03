@@ -53,11 +53,11 @@ def _sum_opacity_components_ck(
     return line_opacity + summed_2d[:, :, None]
 
 
-def _sum_opacity_components_lbl(
+def _sum_opacity_components_os(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    """Return the summed opacity grid for all provided components (LBL mode)."""
+    """Return the summed opacity grid for all provided components (OS mode)."""
     nlay = state["nlay"]
     nwl = state["nwl"]
 

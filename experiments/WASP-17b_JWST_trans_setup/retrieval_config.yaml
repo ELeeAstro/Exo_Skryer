@@ -24,14 +24,14 @@ physics:
   # Cloud vertical profile. Options: none | exponential | slab | constant
   vert_cloud: slab_profile
 
-  # Line opacity mode. Options: lbl (line-by-line) | ck (correlated-k) | None (off)
-  # Note: must match opac.ck: False below when using lbl.
-  opac_line: lbl
-  opac_ray: lbl    # lbl | ck | None
-  opac_cia: lbl    # lbl | ck | None
+  # Line opacity mode. Options: os (opacity sampling) | ck (correlated-k) | None (off)
+  # Note: must match opac.ck: False below when using os.
+  opac_line: os
+  opac_ray: os    # os | ck | None
+  opac_cia: os    # os | ck | None
   # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk
   opac_cloud: direct_nk
-  opac_special: lbl   # on (H- bound-free/free-free) | None
+  opac_special: os   # on (H- bound-free/free-free) | None
 
   cloud_dist: mono  # mono (monodisperse) | log_normal (lognormal size distribution)
 
@@ -45,18 +45,18 @@ physics:
 
 opac:
 
-  wl_master: ../../opac_data/lbl/wl_R20000.txt
+  wl_master: ../../opac_data/os/wl_R20000.txt
   full_grid: False   # True = use entire master grid; False = cut to observation coverage
-  ck: False          # Must be False when physics.opac_line: lbl
+  ck: False          # Must be False when physics.opac_line: os
   ck_mix: RORR       # CK mixing scheme (only used when ck: True). Options: RORR | PRAS | TRANS
 
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_R20000.npz}
-    - {species: CO,  path: ../../opac_data/lbl/CO_R20000.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_R20000.npz}
-    - {species: Na,  path: ../../opac_data/lbl/Na_R20000.npz}
-    - {species: K,   path: ../../opac_data/lbl/K_R20000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.npz}
+    - {species: CO2, path: ../../opac_data/os/CO2_R20000.npz}
+    - {species: CO,  path: ../../opac_data/os/CO_R20000.npz}
+    - {species: CH4, path: ../../opac_data/os/CH4_R20000.npz}
+    - {species: Na,  path: ../../opac_data/os/Na_R20000.npz}
+    - {species: K,   path: ../../opac_data/os/K_R20000.npz}
   ray:
     - {species: H2}
     - {species: He}

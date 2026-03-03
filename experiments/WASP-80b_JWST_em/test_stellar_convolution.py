@@ -174,7 +174,7 @@ def main() -> None:
     parser.add_argument(
         "--master",
         type=Path,
-        default=repo_root / "opac_data" / "lbl" / "wl_R20000.txt",
+        default=repo_root / "opac_data" / "os" / "wl_R20000.txt",
         help="Path to master wavelength grid file.",
     )
     parser.add_argument(

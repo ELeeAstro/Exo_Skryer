@@ -498,10 +498,10 @@ def build_atmospheric_state(cfg, params, wl):
     vert_cloud_kernel = cloud_kernels.get(vert_cloud_name, no_cloud)
 
     # Prepare chemistry kernel
-    line_opac_scheme = str(getattr(phys, "opac_line", "lbl")).lower()
-    ray_opac_scheme = str(getattr(phys, "opac_ray", "lbl")).lower()
-    cia_opac_scheme = str(getattr(phys, "opac_cia", "lbl")).lower()
-    special_opac_scheme = str(getattr(phys, "opac_special", "lbl")).lower()
+    line_opac_scheme = str(getattr(phys, "opac_line", "os")).lower()
+    ray_opac_scheme = str(getattr(phys, "opac_ray", "os")).lower()
+    cia_opac_scheme = str(getattr(phys, "opac_cia", "os")).lower()
+    special_opac_scheme = str(getattr(phys, "opac_special", "os")).lower()
 
     vert_chem_name = str(getattr(phys, "vert_chem", "constant_vmr")).lower()
     if vert_chem_name in ("constant", "constant_vmr"):
@@ -626,7 +626,7 @@ def compute_component_spectra(
 
     from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
     from exo_skryer.registry_bandpass import load_bandpass_registry
-    from exo_skryer.RT_trans_1D_lbl import _build_transit_geometry, _transit_depth_from_opacity
+    from exo_skryer.RT_trans_1D_os import _build_transit_geometry, _transit_depth_from_opacity
     from exo_skryer.opacity_cloud import compute_cloud_opacity
     from exo_skryer.opacity_special import compute_special_opacity
     from exo_skryer import build_opacities as XS

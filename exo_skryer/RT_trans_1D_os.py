@@ -1,6 +1,6 @@
 """
-RT_trans_1D_lbl.py
-==================
+RT_trans_1D_os.py
+=================
 """
 
 from __future__ import annotations
@@ -11,10 +11,10 @@ import jax.numpy as jnp
 
 from .refraction import refraction_cutoff_mask
 
-__all__ = ["compute_transit_depth_1d_lbl"]
+__all__ = ["compute_transit_depth_1d_os"]
 
 
-def _sum_opacity_components_lbl(
+def _sum_opacity_components_os(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
 ) -> jnp.ndarray:
@@ -128,7 +128,7 @@ def _transit_depth_from_opacity(
     return (R0**2 + dR2) / (R_s**2)
 
 
-def compute_transit_depth_1d_lbl(
+def compute_transit_depth_1d_os(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
@@ -141,11 +141,11 @@ def compute_transit_depth_1d_lbl(
     refraction_mask = None
     if int(state.get("refraction_mode", 0)) == 1:
         if opac is None:
-            raise RuntimeError("Refraction requested but no opac cache was provided to the LBL transit RT kernel.")
+            raise RuntimeError("Refraction requested but no opac cache was provided to the OS transit RT kernel.")
         refraction_mask = refraction_cutoff_mask(state, params, opac)
 
     geometry = _build_transit_geometry(state)
-    k_tot = _sum_opacity_components_lbl(state, opacity_components)  # (nlay, nwl)
+    k_tot = _sum_opacity_components_os(state, opacity_components)  # (nlay, nwl)
 
     if "f_cloud" in params and "cloud" in opacity_components:
         f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)

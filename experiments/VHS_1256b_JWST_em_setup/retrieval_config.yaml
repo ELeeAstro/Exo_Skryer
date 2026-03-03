@@ -23,9 +23,9 @@ physics:
   vert_mu: dynamic
 
   # Opacity sources
-  opac_line: lbl
+  opac_line: os
   opac_ray: None
-  opac_cia: lbl
+  opac_cia: os
   opac_cloud: None
   opac_special: None
 
@@ -46,10 +46,10 @@ opac:
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_dnu_1.npz}
-    - {species: CO, path: ../../opac_data/lbl/CO_dnu_1.npz}
-    - {species: CO2, path: ../../opac_data/lbl/CO2_dnu_1.npz}
-    - {species: CH4, path: ../../opac_data/lbl/CH4_dnu_1.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_dnu_1.npz}
+    - {species: CO, path: ../../opac_data/os/CO_dnu_1.npz}
+    - {species: CO2, path: ../../opac_data/os/CO2_dnu_1.npz}
+    - {species: CH4, path: ../../opac_data/os/CH4_dnu_1.npz}
 
   # Rayleigh scattering species
   ray: None

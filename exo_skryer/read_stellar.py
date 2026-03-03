@@ -137,7 +137,7 @@ def read_stellar_spectrum(
         if _native_is_higher_resolution(wl_native, lam_master):
             edges = _compute_bin_edges(lam_master)
             flux_master = _band_average(wl_native, flux_native, edges)
-            mode_str = "lbl_bin_avg"
+            mode_str = "os_bin_avg"
         else:
             # Interpolate in log10-space for better accuracy across orders of magnitude
             log10_flux_native = np.log10(flux_native)
@@ -149,7 +149,7 @@ def read_stellar_spectrum(
                 right=log10_flux_native[-1],
             )
             flux_master = 10.0 ** log10_flux_master
-            mode_str = "lbl_interp"
+            mode_str = "os_interp"
 
     print(
         "[read_stellar] Loaded stellar spectrum: "

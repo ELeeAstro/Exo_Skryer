@@ -24,7 +24,7 @@ physics:
   vert_cloud: None
 
   # Opacity sources
-  opac_line: lbl
+  opac_line: os
   opac_ray: None
   opac_cia: None
   opac_cloud: deck_and_powerlaw
@@ -42,14 +42,14 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: ../../opac_data/lbl/wl_R10000.txt
+  wl_master: ../../opac_data/os/wl_R10000.txt
   full_grid: false
   ck: false
   ck_mix: TRANS
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R10000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R10000.npz}
 
   # Rayleigh scattering species
   ray: None

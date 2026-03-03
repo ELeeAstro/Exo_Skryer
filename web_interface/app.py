@@ -125,19 +125,19 @@ VERT_CLOUD_OPTIONS = ["None", "exponential_decay_profile", "slab_profile", "cons
 # Line opacity calculation methods
 # See: build_model.py _select_kernels() (opac_line block)
 # - ck: Correlated-k (fast, binned opacities)
-# - lbl: Line-by-line (slow but accurate)
+# - os: Opacity sampling (high-resolution cross-sections)
 # - None: No line opacity
-OPAC_LINE_OPTIONS = ["ck", "lbl", "None"]
+OPAC_LINE_OPTIONS = ["ck", "os", "None"]
 
 # Rayleigh scattering opacity
-# See: build_model.py _resolve_lbl_ck_opac()
-# Both 'lbl' and 'ck' use the same compute_ray_opacity kernel
-OPAC_RAY_OPTIONS = ["ck", "lbl", "None"]
+# See: build_model.py _resolve_os_ck_opac()
+# Both 'os' and 'ck' use the same compute_ray_opacity kernel
+OPAC_RAY_OPTIONS = ["ck", "os", "None"]
 
 # Collision-Induced Absorption (CIA) opacity
-# See: build_model.py _resolve_lbl_ck_opac()
-# Both 'lbl' and 'ck' use the same compute_cia_opacity kernel
-OPAC_CIA_OPTIONS = ["ck", "lbl", "None"]
+# See: build_model.py _resolve_os_ck_opac()
+# Both 'os' and 'ck' use the same compute_cia_opacity kernel
+OPAC_CIA_OPTIONS = ["ck", "os", "None"]
 
 # Cloud opacity models
 # See: kernel_registry.OPAC_CLOUD
@@ -152,7 +152,7 @@ OPAC_CLOUD_OPTIONS = ["None", "grey", "deck_and_powerlaw", "F18", "direct_nk", "
 
 # Special opacity sources (like H- bound-free, free-free)
 # See: build_model.py _select_kernels() (opac_special block)
-OPAC_SPECIAL_OPTIONS = ["ck", "lbl", "None"]
+OPAC_SPECIAL_OPTIONS = ["ck", "os", "None"]
 
 # Cloud particle size distributions
 # See: build_model.py _extract_fixed_params() (cloud_dist block)
@@ -335,8 +335,8 @@ def build_config() -> dict:
         'vert_cloud': st.session_state.get('vert_cloud', 'None') if st.session_state.get('vert_cloud') != 'None' else None,
         'opac_line': st.session_state.get('opac_line', 'ck'),
         # These opacity sources can be disabled (None)
-        'opac_ray': st.session_state.get('opac_ray', 'lbl') if st.session_state.get('opac_ray') != 'None' else None,
-        'opac_cia': st.session_state.get('opac_cia', 'lbl') if st.session_state.get('opac_cia') != 'None' else None,
+        'opac_ray': st.session_state.get('opac_ray', 'os') if st.session_state.get('opac_ray') != 'None' else None,
+        'opac_cia': st.session_state.get('opac_cia', 'os') if st.session_state.get('opac_cia') != 'None' else None,
         'opac_cloud': st.session_state.get('opac_cloud', 'None') if st.session_state.get('opac_cloud') != 'None' else None,
         'opac_special': st.session_state.get('opac_special', 'None') if st.session_state.get('opac_special') != 'None' else None,
         'cloud_dist': st.session_state.get('cloud_dist', 'mono'),
