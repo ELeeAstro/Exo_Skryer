@@ -37,6 +37,7 @@ physics:
 
   rt_scheme: transit_1d   # transit_1d | emission_1d
   contri_func: False       # True to return contribution functions alongside spectra
+  refraction: None
 
   # --- Emission-only settings (ignored when rt_scheme: transit_1d) ---
   # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...

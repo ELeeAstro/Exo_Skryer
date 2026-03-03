@@ -24,6 +24,7 @@ physics:
   em_scheme: None
   emission_mode: planet
   contri_func: False
+  refraction: None
 
 opac:
 
@@ -46,6 +47,7 @@ opac:
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+  special: None
   cloud: None
 
 params:

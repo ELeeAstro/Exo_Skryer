@@ -59,16 +59,16 @@ physics:
 # ----------------------------------------------------------------------------------
 opac:
   wl_master: ../../opac_data/ck/wl_ck_R250.txt
-  full_grid: false   # True = use entire master grid; False = cut to observation coverage
+  full_grid: False   # True = use entire master grid; False = cut to observation coverage
   ck: True           # Must be True when physics.opac_line: ck
   # CK mixing scheme. Options: RORR (random overlap) | TRANS (per-species)
   ck_mix: TRANS
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
-    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.zarr}
-    - {species: K,   path: ../../opac_data/ck/K_ck_R250.zarr}
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
+    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.npz}
+    - {species: K,   path: ../../opac_data/ck/K_ck_R250.npz}
 
   # Rayleigh scattering species
   ray:
@@ -77,8 +77,11 @@ opac:
 
   # CIA opacity files
   cia:
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
-    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+
+  # Special opacity (e.g. H- bound-free/free-free)
+  special: None
 
   # Cloud opacity
   cloud: None

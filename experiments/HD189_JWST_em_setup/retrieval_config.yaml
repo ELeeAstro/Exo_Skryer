@@ -36,7 +36,7 @@ physics:
   em_scheme: eaa
   emission_mode: planet
   contri_func: false
-  refractin: false
+  refraction: None
 
 # ----------------------------------------------------------------------------------
 # Opacity Section
@@ -61,6 +61,9 @@ opac:
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+
+  # Special opacity (e.g. H- bound-free/free-free)
+  special: None
 
   # Cloud opacity
   cloud: None

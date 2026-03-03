@@ -49,6 +49,9 @@ Opacity data
 Some input correlated-k tables, opacity sampled tables and CIA tables can be found at the following:
 `Exo Skryer opacity collection <https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link>`__
 
+Where I have prepared .npz and .zarr.zip files for each opacity source. 
+npz is a numpy native compression format, which is not flexible but easy to use. zarr is a modern compression format which is very fast and can do parallel reads.
+
 Exo Skryer can also use the TauREX (opacity sampling mode) and petitRADTRANS (correlated-k mode) tables available from the `ExoMol website <https://www.exomol.com/>`__
 
 Your first forward model (transmission)
@@ -143,9 +146,10 @@ From the repository root, run the example HD 209458b retrieval model::
     python -u -m exo_skryer.run_retrieval --config retrieval_config.yaml
 
 Where the model will read the YAML file after the --config flag, which contains the full information to run the retrieval model.
+The default will use the nautilus sampler with 250 live points which ensures decent posterior plots with a fast completion time.
 
 .. note::
-    Make sure that the retrieval_config.yaml file points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example.
+    Make sure that the retrieval_config.yaml file points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example (with the npz opacity files).
 
 .. code-block:: yaml
 
@@ -161,7 +165,7 @@ Where the model will read the YAML file after the --config flag, which contains 
      - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
 
 
-After completion (a few minutes), the code will output both the dynesty.pkl file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results. 
+After completion (around 10 minutes), the code will output both the nautilus_checkpoint.hdf5 file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results. 
 
 
 The traditional corner plot can be plotted through the script::
@@ -176,6 +180,9 @@ Or presenting kernel density estimates instead of histograms::
 
   python posterior_corner.py --config retrieval_config.yaml --label-map corner_config.yaml --kde-diag
 
+You can also try plotting all the unweighted nautilus samples with::
+
+  python posterior_nautilus.py --config retrieval_config.ya
 
 Best-fit median models for transmission spectra models can be produced using::
 
@@ -189,4 +196,4 @@ To plot full resolution spectra, set ``full_grid: true`` in the YAML file.
 
 The temperature-pressure (T-p) profile can be plotted using::
 
-  python plot_Tp.py --config retrieval_config.yaml
+  python T_p_plot.py --config retrieval_config.yaml

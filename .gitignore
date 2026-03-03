@@ -101,6 +101,7 @@ experiments/**/*.npz
 experiments/**/*.csv
 experiments/**/*.json
 experiments/**/*.pkl
+experiments/**/*.hdf5
 experiments/**/posterior*.nc
 experiments/**/posterior*.h5
 experiments/**/posterior*.hdf5

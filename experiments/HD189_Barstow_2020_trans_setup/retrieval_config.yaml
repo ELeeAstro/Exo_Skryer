@@ -57,6 +57,9 @@ opac:
   # CIA opacity files
   cia: None
 
+  # Special opacity (e.g. H- bound-free/free-free)
+  special: None
+
   # Cloud opacity
   cloud: None
 

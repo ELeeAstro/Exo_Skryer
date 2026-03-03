@@ -11,7 +11,7 @@ physics:
   vert_alt: hypsometric_variable_g_pref
   vert_chem: constant_vmr
   vert_mu: dynamic
-  vert_cloud: none
+  vert_cloud: None
 
   opac_line: ck
   opac_ray: ck
@@ -24,6 +24,7 @@ physics:
   emission_mode: brown_dwarf
   em_scheme: eaa
   contri_func: False
+  refraction: None
 
 opac:
 
@@ -45,6 +46,7 @@ opac:
   cia:
     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+  special: None
   cloud: None
 
 params:
@@ -78,4 +80,5 @@ params:
 
 runtime:
   platform: cpu
+  cuda_visible_devices: 0
   threads: 1
