@@ -197,3 +197,19 @@ To plot full resolution spectra, set ``full_grid: true`` in the YAML file.
 The temperature-pressure (T-p) profile can be plotted using::
 
   python T_p_plot.py --config retrieval_config.yaml
+
+
+Try a simple chemical equilibrium (CE) run using semi-analytic CE calculations
+------------------------------------------------------------------------------
+
+We can now try assuming chemical equilibrium using the analytic chemistry scheme of 
+
+For this, we change the vert_chem scheme to rate_jax and now sample a C/O and M/H ratio, rather than individual gas species
+
+.. code-block:: yaml
+
+  vert_chem: rate_jax
+
+  params:
+    - {name: M_to_H, dist: uniform, low: -2.0, high: 3.0, transform: logit, init: 0.0}    # metallicity [dex]
+    - {name: C_to_O, dist: uniform, low: 0.01, high: 2.0,  transform: logit, init: 0.55}  # carbon-to-oxygen ratio

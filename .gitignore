@@ -5,6 +5,7 @@ obs_data/WASP-76*
 FastChem/
 stash/
 pymultinest_*
+atmodeller
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -251,6 +251,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     from exo_skryer.build_model import build_forward_model
     from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
     from exo_skryer.registry_bandpass import load_bandpass_registry
+    from exo_skryer.build_chem import load_nasa9_if_needed
     from exo_skryer.read_stellar import read_stellar_spectrum
 
     lam_obs, dlam_obs, y_obs, dy_obs, resp_obs, offset_group = _load_observed(exp_dir, cfg)
@@ -266,6 +267,7 @@ def plot_emission_band(config_path, outname="model_emission", max_samples=2000, 
     }
 
     build_opacities(cfg, obs, exp_dir)
+    load_nasa9_if_needed(cfg, exp_dir)
     lam_cut = np.asarray(master_wavelength_cut(), dtype=float)
     load_bandpass_registry(obs, lam_cut, lam_cut)
     opac_cfg = getattr(cfg, "opac", SimpleNamespace())

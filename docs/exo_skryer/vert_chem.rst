@@ -214,7 +214,7 @@ This was converted into JAX compabitile python from the origional python code fo
    T_lev, T_lay = Modified_Milne(p_lev, params_tp)
    p_lay = (p_lev[1:] - p_lev[:-1]) / np.log(p_lev[1:] / p_lev[:-1])
 
-   params = {"M/H": 0.0, "C/O": 0.55}
+   params = {"M_to_H": 0.0, "C_to_O": 0.55}
    vmr_lay = CE_rate_jax(p_lay, T_lay, params, nlev - 1)
 
    fig, ax = plt.subplots(figsize=(10, 5))
@@ -237,8 +237,8 @@ This was converted into JAX compabitile python from the origional python code fo
      vert_chem: CE_rate_jax
 
    params:
-     - { name: M/H, dist: uniform, low: -1.0, high: 2.0, transform: logit, init: 0.0 }
-     - { name: C/O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
+     - { name: M_to_H, dist: uniform, low: -1.0, high: 2.0, transform: logit, init: 0.0 }
+     - { name: C_to_O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
 
 
 Chemical Equilibrium with FastChem interpolation
@@ -292,7 +292,7 @@ Quenching Timescale Approximation
    T_lev, T_lay = Modified_Milne(p_lev, params_tp)
    p_lay = (p_lev[1:] - p_lev[:-1]) / np.log(p_lev[1:] / p_lev[:-1])
 
-   params = {"M/H": 0.0, "C/O": 0.55, "Kzz": 1e8, "log_10_g": 4.5}
+   params = {"M_to_H": 0.0, "C_to_O": 0.55, "Kzz": 1e8, "log_10_g": 4.5}
    vmr_lay = quench_approx(p_lay, T_lay, params, nlev - 1)
 
    fig, ax = plt.subplots(figsize=(10, 5))
@@ -315,8 +315,8 @@ Quenching Timescale Approximation
      vert_chem: quench_approx
 
    params:
-     - { name: M/H, dist: uniform, low: -1.0, high: 2.0, transform: logit, init: 0.0 }
-     - { name: C/O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
+     - { name: M_to_H, dist: uniform, low: -1.0, high: 2.0, transform: logit, init: 0.0 }
+     - { name: C_to_O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
      - { name: Kzz, dist: uniform, low: 1e6, high: 1e10, transform: logit, init: 1e8 }
      - { name: log_10_g, dist: uniform, low: 2.0, high: 4.0, transform: logit, init: 3.0 }
   

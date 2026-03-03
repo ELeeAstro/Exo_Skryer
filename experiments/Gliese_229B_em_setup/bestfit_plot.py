@@ -486,6 +486,7 @@ def plot_model_band(
         from exo_skryer.build_model import build_forward_model
         from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
         from exo_skryer.registry_bandpass import load_bandpass_registry
+        from exo_skryer.build_chem import load_nasa9_if_needed
     except ImportError as e:
         raise ImportError(
             f"Could not import modeling helpers from exo_skryer package at {repo_root}."
@@ -510,6 +511,7 @@ def plot_model_band(
 
     # Ensure global opacity tables are populated (forward model relies on them)
     build_opacities(cfg, obs, exp_dir)
+    load_nasa9_if_needed(cfg, exp_dir)
 
     # Build bandpass / response metadata on the same hi-res grid used by the forward model
     hi_wl = np.asarray(master_wavelength_cut(), dtype=float)

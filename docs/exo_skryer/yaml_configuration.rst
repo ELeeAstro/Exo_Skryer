@@ -44,6 +44,7 @@ Minimal skeleton
      opac_cia: ck
      opac_cloud: None
      opac_special: None
+     cloud_dist: mono
 
      rt_scheme: transit_1d
      emission_mode: planet
@@ -179,9 +180,9 @@ determines which retrieval parameters (in ``params``) you must provide.
     H⁻ free-free is enabled, atomic hydrogen is required and you must include
     ``log_10_H_over_H2`` in ``params`` (constant-VMR modes derive ``H`` from the
     H2+He filler).
-  * ``CE_rate_jax`` requires ``data.nasa9`` and parameters ``M/H`` and ``C/O``.
+  * ``CE_rate_jax`` requires ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
   * ``quench_approx`` uses RateJAX equilibrium plus quenching; requires at least
-    ``M/H, C/O, Kzz, log_10_g``.
+    ``M_to_H, C_to_O, Kzz, log_10_g``.
 
 ``physics.vert_mu`` (mean molecular weight)
   *Supported values*:
@@ -207,17 +208,17 @@ determines which retrieval parameters (in ``params``) you must provide.
 ``physics.opac_line``
   Enables/disables line opacity and selects method.
 
-  *Supported values*: ``lbl``, ``ck``, ``None``.
+  *Supported values*: ``os``, ``ck``, ``None``.
 
 ``physics.opac_ray``
   Rayleigh scattering toggle/mode.
 
-  *Supported values*: ``lbl``, ``ck``, ``None``.
+  *Supported values*: ``os``, ``ck``, ``None``.
 
 ``physics.opac_cia``
   CIA toggle/mode.
 
-  *Supported values*: ``lbl``, ``ck``, ``None``.
+  *Supported values*: ``os``, ``ck``, ``None``.
 
 ``physics.opac_cloud``
   Cloud opacity model selector.
@@ -239,7 +240,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   special opacity *kernel* runs; the special opacity tables themselves are
   enabled/disabled under ``opac.special``.
 
-  *Supported values*: ``lbl``, ``ck``, ``on`` (all enable), or ``None``/``off``/``false``/``0``.
+  *Supported values*: ``os``, ``ck``, ``on`` (all enable), or ``None``/``off``/``false``/``0``.
 
 ``physics.rt_scheme``
   Radiative transfer mode.
@@ -323,7 +324,7 @@ loaded into registries.
 ``opac.line``
   List of line opacity entries. Each entry is a mapping (flow-style shown)::
 
-    - {species: H2O, path: ../../opac_data/lbl/H2O_R20000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.npz}
 
   Fields:
 
@@ -517,7 +518,7 @@ runtime
 =======
 
 ``runtime.platform``
-  *Supported values*: ``cpu`` or ``gpu``.
+  *Supported values*: ``cpu``, ``gpu``, ``cuda``, or ``metal``.
 
 ``runtime.cuda_visible_devices``
   Only used when ``runtime.platform: gpu``. String like ``\"0\"`` or ``\"0,1\"``.

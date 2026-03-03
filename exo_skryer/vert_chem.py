@@ -16,10 +16,16 @@ from .vert_mu import compute_mu
 
 # Solar reference abundances (relative to H) - Asplund et al. (2021)
 solar_H = 1.0
-solar_He = 10.0**(10.914-12.0)
-solar_O = 10.0**(8.69-12.0)
-solar_C = 10.0**(8.46-12.0)
-solar_N = 10.0**(7.83-12.0)
+solar_He = 10.0 ** (10.914 - 12.0)
+solar_N  = 10.0 ** (7.83  - 12.0)
+solar_C  = 10.0 ** (8.46  - 12.0)
+solar_O  = 10.0 ** (8.69  - 12.0)
+solar_Na  = 10.0 ** (6.22  - 12.0)
+solar_Si  = 10.0 ** (7.51  - 12.0)
+solar_S  = 10.0 ** (7.12  - 12.0)
+solar_Cl  = 10.0 ** (7.12  - 12.0)
+solar_K  = 10.0 ** (5.07  - 12.0)
+solar_Fe  = 10.0 ** (7.46  - 12.0)
 
 solar_H2 = solar_H/2.0
 solar_He_H2 = solar_He/solar_H2 
@@ -241,7 +247,7 @@ def CE_fastchem_jax(
     T_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Layer temperatures in Kelvin.
     params : dict[str, `~jax.numpy.ndarray`]
-        Chemical abundance parameters (e.g., metallicity, C/O).
+        Chemical abundance parameters (e.g., metallicity, C_to_O).
     nlay : int
         Number of atmospheric layers.
 
@@ -276,9 +282,9 @@ def CE_rate_jax(
     params : dict[str, `~jax.numpy.ndarray`]
         Chemical abundance parameters containing:
 
-        - `M/H` : float
+        - `M_to_H` : float
             Metallicity relative to solar in dex.
-        - `C/O` : float
+        - `C_to_O` : float
             Carbon-to-oxygen ratio (dimensionless).
     nlay : int
         Number of atmospheric layers (unused; kept for API compatibility).
@@ -293,11 +299,11 @@ def CE_rate_jax(
     # Get cached Gibbs tables (will raise RuntimeError if not loaded)
     thermo = get_nasa9_cache()
 
-    # Extract metallicity and C/O ratio from params (keep as JAX arrays for JIT compatibility)
-    metallicity = params['M/H']  # [dex]
-    CO_ratio = params['C/O']  # dimensionless
+    # Extract metallicity and C_to_O ratio from params (keep as JAX arrays for JIT compatibility)
+    metallicity = params['M_to_H']  # [dex]
+    CO_ratio = params['C_to_O']  # dimensionless
 
-    # Convert M/H and C/O to elemental abundances
+    # Convert M_to_H and C_to_O to elemental abundances
     # Scale oxygen and nitrogen by metallicity
     O = solar_O * (10.0 ** metallicity)
     N = solar_N * (10.0 ** metallicity)
@@ -310,6 +316,15 @@ def CE_rate_jax(
 
     # Solve chemical equilibrium profile
     vmr_lay = rate.solve_profile(T_lay, p_lay / bar)
+
+    # Scale Na and K by metallicity, add as constant profiles, then renormalise
+    vmr_Na = solar_Na * (10.0 ** metallicity)
+    vmr_K  = solar_K  * (10.0 ** metallicity)
+    n_lay = T_lay.shape[0]
+    vmr_lay['Na'] = jnp.full((n_lay,), vmr_Na)
+    vmr_lay['K']  = jnp.full((n_lay,), vmr_K)
+    total = jnp.sum(jnp.stack(list(vmr_lay.values())), axis=0)  # (nlay,)
+    vmr_lay = {sp: v / total for sp, v in vmr_lay.items()}
 
     return vmr_lay
 
@@ -446,9 +461,9 @@ def quench_approx(
     params : dict[str, `~jax.numpy.ndarray`]
         Chemical abundance parameters containing:
 
-        - `M/H` : float
+        - `M_to_H` : float
             Metallicity relative to solar in dex.
-        - `C/O` : float
+        - `C_to_O` : float
             Carbon-to-oxygen ratio (dimensionless).
         - `Kzz` : float
             Eddy diffusion coefficient in cm² s⁻¹.
@@ -467,14 +482,14 @@ def quench_approx(
     # Get cached Gibbs tables (will raise RuntimeError if not loaded)
     thermo = get_nasa9_cache()
 
-    # Extract metallicity and C/O ratio from params
-    metallicity = params['M/H']  # [dex]
-    CO_ratio = params['C/O']  # dimensionless
+    # Extract metallicity and C_to_O ratio from params
+    metallicity = params['M_to_H']  # [dex]
+    CO_ratio = params['C_to_O']  # dimensionless
 
     Kzz = params['Kzz']  # Eddy diffusion coefficient [cm²/s]
     g = 10.0**params['log_10_g']  # Surface gravity [cm/s²]
 
-    # Convert M/H and C/O to elemental abundances
+    # Convert M_to_H and C_to_O to elemental abundances
     O = solar_O * (10.0 ** metallicity)
     N = solar_N * (10.0 ** metallicity)
     C = CO_ratio * O
