@@ -13,6 +13,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 import h5py
+import zarr
 
 
 __all__ = [
@@ -154,6 +155,69 @@ def _load_line_h5(index: int, path: str, target_wavelengths: np.ndarray) -> Line
 
     # Return a dataclass with NumPy arrays (will be converted to JAX later).
     # Keep NumPy-side arrays float64 for preprocessing consistency.
+    return LineRegistryEntry(
+        name=name,
+        idx=index,
+        pressures=pressures.astype(np.float64),
+        temperatures=temperatures.astype(np.float64),
+        wavelengths=target_wavelengths.astype(np.float64),
+        cross_sections=xs_interp.astype(np.float64),
+    )
+
+
+def _load_line_zarr(index: int, path: str, target_wavelengths: np.ndarray) -> LineRegistryEntry:
+    """
+    Load opacity tables stored in the custom Zarr format.
+
+    Expected Zarr contents:
+        - attrs["molecule"]: species name (string)
+        - temperature: temperature grid in K (nT,)
+        - pressure: pressure grid in bar (nP,)
+        - wavelength: wavelength grid in microns (nwl,)
+        - cross_section: log10 cross-sections (nT, nP, nwl)
+    """
+
+    if path.endswith(".zip"):
+        from zarr.storage import ZipStore
+        _store = ZipStore(path, mode="r")
+        root = zarr.open_group(store=_store, mode="r")
+    else:
+        root = zarr.open_group(path, mode="r")
+
+    name = str(root.attrs.get("molecule", f"line_{index}"))
+
+    temperatures = np.asarray(root["temperature"][:], dtype=float)
+    pressures = np.asarray(root["pressure"][:], dtype=float)
+    native_wavelengths = np.asarray(root["wavelength"][:], dtype=float)
+    xs = np.asarray(root["cross_section"][:], dtype=float)
+
+    if xs.ndim != 3:
+        raise ValueError(f"Invalid cross_section shape {xs.shape} in {path}; expected 3D array.")
+
+    n_temperatures, n_pressures, native_wl_count = xs.shape
+    if native_wavelengths.size != native_wl_count:
+        raise ValueError(
+            f"Wavelength grid length {native_wavelengths.size} does not match cross-section axis {native_wl_count} in {path}."
+        )
+
+    target_wavelengths = np.asarray(target_wavelengths, dtype=float)
+    if target_wavelengths.ndim != 1:
+        raise ValueError("Target wavelength grid must be 1D.")
+
+    if native_wavelengths.shape == target_wavelengths.shape and np.allclose(native_wavelengths, target_wavelengths):
+        xs_interp = xs
+    else:
+        xs_interp = np.empty((n_temperatures, n_pressures, target_wavelengths.size), dtype=np.float64)
+        for iT in range(n_temperatures):
+            for iP in range(n_pressures):
+                xs_interp[iT, iP, :] = np.interp(
+                    target_wavelengths,
+                    native_wavelengths,
+                    xs[iT, iP, :],
+                    left=-99.0,
+                    right=-99.0,
+                )
+
     return LineRegistryEntry(
         name=name,
         idx=index,
@@ -317,8 +381,15 @@ def load_line_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_d
             entry = _load_line_npz(index, path_str, wavelengths)
         elif path_str.endswith('.h5') or path_str.endswith('.hdf5'):
             entry = _load_line_h5(index, path_str, wavelengths)
+        elif path_str.endswith('.zarr') or path_str.endswith('.zarr.zip'):
+            if path_str.endswith('.zarr') and not path.exists():
+                zip_fallback = Path(path_str + '.zip')
+                if zip_fallback.exists():
+                    path_str = str(zip_fallback)
+                    print(f"[Line] .zarr directory not found; using {zip_fallback.name}")
+            entry = _load_line_zarr(index, path_str, wavelengths)
         else:
-            raise ValueError(f"Unsupported file format for {path_str}. Expected .npz, .h5 or .hdf5")
+            raise ValueError(f"Unsupported file format for {path_str}. Expected .npz, .h5, .hdf5, .zarr or .zarr.zip")
         entries.append(entry)
 
     # Now need to pad in the temperature dimension to make all grids to the same size (for JAX)

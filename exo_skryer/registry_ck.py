@@ -13,6 +13,7 @@ from pathlib import Path
 import jax.numpy as jnp
 import numpy as np
 import h5py
+import zarr
 
 __all__ = [
     "CKRegistryEntry",
@@ -227,6 +228,96 @@ def _load_ck_h5(index: int, spec, path: str, obs: dict, use_full_grid: bool = Fa
         g_points=g_points.astype(np.float64),
         g_weights=weights.astype(np.float64),
         cross_sections=kcoeff_log,
+    )
+
+
+def _load_ck_zarr(index: int, spec, path: str, obs: dict, use_full_grid: bool = False) -> CKRegistryEntry:
+    """
+    Load correlated-k opacity tables stored in the custom Zarr format.
+
+    Expected Zarr contents:
+        - attrs["molecule"]: species name (string; optional)
+        - pressure: pressure grid in bar (nP,)
+        - temperature: temperature grid in K (nT,)
+        - wavelength: wavelength grid in microns (nwl,)
+        - g_points: g-point locations (ng,)
+        - g_weights: quadrature weights (ng,)
+        - cross_section: log10 cross-sections (nT, nP, nwl, ng)
+    """
+
+    if path.endswith(".zip"):
+        from zarr.storage import ZipStore
+        _store = ZipStore(path, mode="r")
+        root = zarr.open_group(store=_store, mode="r")
+    else:
+        root = zarr.open_group(path, mode="r")
+
+    name_raw = root.attrs.get("molecule", getattr(spec, "species", f"ck_{index}"))
+    name = str(name_raw)
+
+    pressures = np.asarray(root["pressure"][:], dtype=float)
+    temperatures = np.asarray(root["temperature"][:], dtype=float)
+    wavelengths = np.asarray(root["wavelength"][:], dtype=float)
+    cross_section = np.asarray(root["cross_section"][:], dtype=float)
+    nG = cross_section.shape[-1]
+    g_points = np.asarray(root.get("g_points", np.linspace(0.0, 1.0, nG)), dtype=float)
+    default_weights = np.ones_like(g_points) / g_points.size if g_points.size > 0 else g_points
+    g_weights = np.asarray(root.get("g_weights", default_weights), dtype=float)
+
+    if cross_section.ndim != 4:
+        raise ValueError(f"Invalid cross_section shape {cross_section.shape} in {path}; expected 4D array.")
+
+    nT, nP, nW, nG = cross_section.shape
+    if wavelengths.size != nW:
+        raise ValueError(f"Wavelength grid length {wavelengths.size} does not match cross-section axis {nW} in {path}.")
+    if g_points.size != nG:
+        raise ValueError(f"g_point array length {g_points.size} does not match cross-section axis {nG} in {path}.")
+    if g_weights.size != nG:
+        raise ValueError(f"g_weight array length {g_weights.size} does not match cross-section axis {nG} in {path}.")
+
+    g_sort = np.argsort(g_points)
+    g_points = g_points[g_sort]
+    g_weights = g_weights[g_sort]
+    cross_section = cross_section[..., g_sort]
+
+    if np.any(~np.isfinite(g_points)) or np.any(~np.isfinite(g_weights)):
+        raise ValueError(f"Invalid c-k table {path}: non-finite g-points or weights.")
+    if np.any(np.diff(g_points) <= 0.0):
+        raise ValueError(f"Invalid c-k table {path}: g-points are not strictly increasing.")
+    if g_points.min() < 0.0 or g_points.max() > 1.0:
+        raise ValueError(f"Invalid c-k table {path}: g-points must lie within [0, 1].")
+
+    g_weights = np.clip(g_weights, 0.0, None)
+    wsum = float(np.sum(g_weights))
+    if not np.isfinite(wsum) or wsum <= 0.0:
+        raise ValueError(f"Invalid c-k table {path}: non-positive weight sum {wsum}.")
+    g_weights = g_weights / wsum
+
+    if not use_full_grid:
+        wl_obs = np.asarray(obs["wl"], dtype=float)
+        dwl_obs = np.asarray(obs["dwl"], dtype=float)
+        left_edges = wl_obs - dwl_obs
+        right_edges = wl_obs + dwl_obs
+        mask = np.any(
+            (wavelengths[None, :] >= left_edges[:, None]) & (wavelengths[None, :] <= right_edges[:, None]),
+            axis=0,
+        )
+        if not np.any(mask):
+            raise ValueError(f"No CK wavelengths for {name} lie within observation bins.")
+        wavelengths = wavelengths[mask]
+        cross_section = cross_section[:, :, mask, :]
+    else:
+        print(f"[c-k] Using full wavelength grid for {name}: {wavelengths.size} bins")
+
+    return CKRegistryEntry(
+        name=name,
+        idx=index,
+        pressures=pressures.astype(np.float64),
+        temperatures=temperatures.astype(np.float64),
+        wavelengths=wavelengths.astype(np.float64),
+        g_points=g_points.astype(np.float64),
+        g_weights=g_weights.astype(np.float64),
+        cross_sections=cross_section.astype(np.float32),
     )
 
 
@@ -447,8 +538,15 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir
             entry = _load_ck_npz(index, spec, path_str, obs, use_full_grid=use_full_grid)
         elif path_str.endswith('.h5') or path_str.endswith('.hdf5'):
             entry = _load_ck_h5(index, spec, path_str, obs, use_full_grid=use_full_grid)
+        elif path_str.endswith('.zarr') or path_str.endswith('.zarr.zip'):
+            if path_str.endswith('.zarr') and not path.exists():
+                zip_fallback = Path(path_str + '.zip')
+                if zip_fallback.exists():
+                    path_str = str(zip_fallback)
+                    print(f"[c-k] .zarr directory not found; using {zip_fallback.name}")
+            entry = _load_ck_zarr(index, spec, path_str, obs, use_full_grid=use_full_grid)
         else:
-            raise ValueError(f"Unsupported file format for {path_str}. Expected .npz, .h5 or .hdf5")
+            raise ValueError(f"Unsupported file format for {path_str}. Expected .npz, .h5, .hdf5, .zarr or .zarr.zip")
         entries.append(entry)
 
     # Now need to pad in the temperature and g dimensions to make all grids to the same size (for JAX)

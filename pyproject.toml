@@ -24,6 +24,7 @@ dependencies = [
   "nautilus-sampler",
   "matplotlib",
   "h5py",
+  "zarr>=3.0",
   "tqdm",
   "seaborn",
   "corner",

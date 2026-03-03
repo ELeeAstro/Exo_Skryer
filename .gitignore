@@ -142,6 +142,11 @@ opac_data/**/*.dat
 opac_data/**/*.fits
 opac_data/**/*.txt
 opac_data/**/*.cia
+opac_data/**/*.zarr
+opac_data/**/*.zarr.zip
+
+# Test directory for opacities
+opacity_tests
 
 # Large observational data files
 obs_data/**/*.fits

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import numpy as np
+import zarr
 
 __all__ = [
     "CiaRegistryEntry",
@@ -126,6 +127,67 @@ def _load_cia_npz(index: int, path: str, target_wavelengths: np.ndarray) -> CiaR
         cross_sections=xs_interp,
     )
 
+def _load_cia_zarr(index: int, path: str, target_wavelengths: np.ndarray) -> CiaRegistryEntry:
+    """
+    Load CIA opacity tables stored in the custom Zarr format.
+
+    Expected Zarr contents:
+        - attrs["mol"]: species name (string)
+        - T: temperature grid in K (nT,)
+        - wn: wavenumber grid in cm^-1 (nwn,)
+        - sig: log10 cross-sections (nT, nwn)
+    """
+
+    if path.endswith(".zip"):
+        from zarr.storage import ZipStore
+        _store = ZipStore(path, mode="r")
+        root = zarr.open_group(store=_store, mode="r")
+    else:
+        root = zarr.open_group(path, mode="r")
+
+    name = str(root.attrs.get("mol", f"cia_{index}"))
+
+    temperatures = np.asarray(root["T"][:], dtype=float)
+    wn = np.asarray(root["wn"][:], dtype=float)
+    xs = np.asarray(root["sig"][:], dtype=float)
+
+    if not np.all(np.isfinite(xs)):
+        bad = np.where(~np.isfinite(xs))
+        print(f"[warn] Non-finite CIA xs in {path}: count={bad[0].size}")
+
+    # Convert to wavelength and reverse array order
+    native_wavelengths = 1.0e4 / wn[::-1]
+    native_xs = xs[:, ::-1]
+
+    target_wavelengths = np.asarray(target_wavelengths, dtype=float)
+    if target_wavelengths.ndim != 1:
+        raise ValueError(f"lam_target must be 1D, got shape {target_wavelengths.shape} for {path}")
+    lam_min, lam_max = float(target_wavelengths[0]), float(target_wavelengths[-1])
+    wl_min, wl_max = float(native_wavelengths.min()), float(native_wavelengths.max())
+    if lam_min < wl_min or lam_max > wl_max:
+        print(
+            "[warn] Target wavelength grid "
+            f"[{lam_min:.6g}, {lam_max:.6g}] extends beyond native CIA grid "
+            f"[{wl_min:.6g}, {wl_max:.6g}] in {path}; "
+            "filling out-of-range σ with 1e-199."
+        )
+
+    n_temperatures, _ = native_xs.shape
+    wavelength_count = target_wavelengths.size
+    xs_interp = np.empty((n_temperatures, wavelength_count), dtype=np.float64)
+    for idx_temp in range(n_temperatures):
+        xs_interp[idx_temp, :] = np.interp(target_wavelengths, native_wavelengths, native_xs[idx_temp, :], left=-199.0, right=-199.0)
+    xs_interp = np.maximum(xs_interp, -199.0)
+
+    return CiaRegistryEntry(
+        name=name,
+        idx=index,
+        temperatures=temperatures.astype(np.float64),
+        wavelengths=target_wavelengths.astype(np.float64),
+        cross_sections=xs_interp,
+    )
+
+
 # Pad the tables to a rectangle (in dimension) - usually only in T as wavelength grids are the same lengths
 # Uses NumPy for preprocessing (CPU-based padding before sending to device)
 def _rectangularize_entries(entries: List[CiaRegistryEntry]) -> Tuple[CiaRegistryEntry, ...]:
@@ -191,7 +253,17 @@ def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_di
                 cia_path = cia_path.resolve()
         path_str = str(cia_path)
         print("[CIA] Reading cia xs for", name, "@", path_str)
-        entry = _load_cia_npz(index, path_str, wavelengths)
+        if path_str.endswith(".zarr") or path_str.endswith(".zarr.zip"):
+            if path_str.endswith(".zarr") and not cia_path.exists():
+                zip_fallback = Path(path_str + ".zip")
+                if zip_fallback.exists():
+                    path_str = str(zip_fallback)
+                    print(f"[CIA] .zarr directory not found; using {zip_fallback.name}")
+            entry = _load_cia_zarr(index, path_str, wavelengths)
+        elif path_str.endswith(".npz"):
+            entry = _load_cia_npz(index, path_str, wavelengths)
+        else:
+            raise ValueError(f"Unsupported file format for {path_str}. Expected .npz, .zarr or .zarr.zip")
         entries.append(entry)
 
     # For JAX, need to pad to make the tables rectangular with the same nummber of T grids

@@ -66,9 +66,9 @@ opac:
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
-    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.npz}
-    - {species: K,   path: ../../opac_data/ck/K_ck_R250.npz}
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
+    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.zarr}
+    - {species: K,   path: ../../opac_data/ck/K_ck_R250.zarr}
 
   # Rayleigh scattering species
   ray:
@@ -77,8 +77,8 @@ opac:
 
   # CIA opacity files
   cia:
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
-    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
 
   # Cloud opacity
   cloud: None
@@ -189,7 +189,7 @@ sampling:
 
   # Nautilus settings
   nautilus:
-    n_live: 100
+    n_live: 250
     n_update: null
     split_threshold: 100
     n_networks: 4
@@ -197,7 +197,7 @@ sampling:
     n_like_new_bound: null
     seed: 42
     filepath: nautilus_checkpoint.hdf5
-    resume: true
+    resume: false
 
     f_live: 0.01
     n_shell: 1
