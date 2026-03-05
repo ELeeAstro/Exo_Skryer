@@ -25,8 +25,11 @@ physics:
   vert_alt: variable_g
 
   # Chemistry. Options: constant_vmr | constant_vmr_clr (CLR-parameterised) |
-  #                     ce (FastChem equil.) | rate_ce (rate-based equil.) | quench_approx
-  vert_chem: constant_vmr
+  #                     ce (FastChem equil.) | fastchem_grid_jax (FastChem 5D interpolation grid) |
+  #                     rate_ce (rate-based equil.) | quench_approx |
+  #                     atmodeller (atmodeller equil.; requires atmodeller.species_network below) |
+  #                     element_potentials_jax (requires element_potentials_jax block below)
+  vert_chem: fastchem_grid_jax #constant_vmr
 
   # Mean molecular weight. Options: dynamic (computed from VMR) | constant (uses 'mu' param) | auto
   vert_mu: dynamic
@@ -66,9 +69,9 @@ opac:
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
-    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.npz}
-    - {species: K,   path: ../../opac_data/ck/K_ck_R250.npz}
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
+    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.zarr}
+    - {species: K,   path: ../../opac_data/ck/K_ck_R250.zarr}
 
   # Rayleigh scattering species
   ray:
@@ -77,8 +80,8 @@ opac:
 
   # CIA opacity files
   cia:
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
-    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
 
   # Special opacity (e.g. H- bound-free/free-free)
   special: None
@@ -103,9 +106,13 @@ params:
   - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}  # stratospheric temperature [K]
 
   # --- Chemistry (log10 VMR) ---
-  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
-  - {name: log_10_f_Na,  dist: uniform, low: -12, high: -2, transform: logit, init: -6}
-  - {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  #- {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
+  #- {name: log_10_f_Na,  dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  #- {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+
+  # --- Chemistry (atmodeller: replace log_10_f_* above with these when vert_chem: atmodeller or element_potentials_jax) ---
+  - {name: M_to_H, dist: uniform, low: -1.5, high: 3.0, transform: logit, init: 0.0}
+  - {name: C_to_O, dist: uniform, low: 0.05, high: 2.0, transform: logit, init: 0.55}
 
   # --- Cloud (constant profile + F18 opacity) ---
   - {name: log_10_q_c,  dist: uniform, low: -12, high: 0,  transform: logit, init: 0   }  # cloud mass mixing ratio [log10]
@@ -117,12 +124,117 @@ params:
   - {name: f_cloud, dist: uniform, low: 0.01, high: 0.99, transform: logit, init: 0.5  }  # cloud fraction
 
 # ----------------------------------------------------------------------------------
+# Atmodeller
+# ----------------------------------------------------------------------------------
+# Species network passed to atmodeller.SpeciesNetwork.create().
+# Only gas-phase species (suffix _g) are mapped to retrieval VMR outputs.
+# To use this scheme set:  physics.vert_chem: atmodeller
+# and replace the log_10_f_* params below with M_to_H and C_to_O.
+atmodeller:
+  species_network:
+    # C-H-N-O-He core (matching RateJAX species set)
+    - H2O_g
+    - CH4_g
+    - CO_g
+    - CO2_g
+    - NH3_g
+    - C2H2_g
+    - C2H4_g
+    - HCN_g
+    - N2_g
+    - H2_g
+    - H_g
+    - He_g
+    # Alkali metals
+    - Na_g
+    - K_g
+
+  # Solver tuning — all fields optional, atmodeller defaults shown.
+  # Reducing multistart and loosening tolerances gives the largest GPU speedup.
+  # CPU default:  multistart: 10, atol: 1.0e-6, rtol: 1.0e-6, max_steps: 256
+  # GPU suggested: multistart: 3,  atol: 1.0e-4, rtol: 1.0e-4, max_steps: 128
+  solver:
+    multistart: 10           # restart attempts per layer (reduce for GPU)
+    atol: 1.0e-6             # absolute Newton tolerance (loosen for GPU)
+    rtol: 1.0e-6             # relative Newton tolerance (loosen for GPU)
+    max_steps: 256           # max Newton iterations per attempt
+    jac: fwd                 # Jacobian mode: fwd (forward-mode AD) or bwd (reverse)
+
+# ----------------------------------------------------------------------------------
+# Element-Potentials JAX Chemistry
+# ----------------------------------------------------------------------------------
+element_potentials_jax:
+  species:
+    - C
+    - C2H2
+    - C2H4
+    - C2H6
+    - C2
+    - CH4
+    - COS
+    - CS
+    - CO
+    - CO2
+    - H
+    - H2
+    - H2S
+    - HS
+    - H2O
+    - HCN
+    - He
+    - N
+    - N2
+    - N2O
+    - NH3
+    - "NO"
+    - Na
+    - OH
+    - O
+    - O2
+    - K
+    - S
+    - SH
+    - Si
+    - SiH
+    - SiH4
+    - SiO
+    - SiS
+    - S2
+    - SO
+    - SO2
+    - SO3
+  elements: [H, He, C, N, O, S, Na, K, Si]
+  e_ref: H
+  p0_bar: 1.0
+  solver:
+    mode: scan
+    max_steps: 64
+    tol: 1.0e-11
+    throw: false
+    prefer_chord: true
+
+# ----------------------------------------------------------------------------------
+# FastChem 5D Grid Interpolation Chemistry
+# ----------------------------------------------------------------------------------
+fastchem_grid_jax:
+  # Required path to NPZ produced by FastChem/Generate_FastChem_grid.py
+  # Relative paths are resolved against the experiment directory first.
+  grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
+  solver:
+    mode: vmap   # vmap | scan
+  bounds:
+    mode: clip   # fixed for now
+  species_map:
+    # Optional overrides from opacity species names -> FastChem grid species symbols
+    # CO: C1O1
+
+# ----------------------------------------------------------------------------------
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
   # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest
   # Only the section matching 'engine' below is used at runtime.
-  engine: nautilus
+  engine: dynesty
 
   # NUTS / HMC settings
   nuts:

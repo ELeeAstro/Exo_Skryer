@@ -124,8 +124,16 @@ def main() -> None:
     load_bandpass_registry(obs, full_grid, cut_grid)
 
     # Load Gibbs free energy tables for chemical equilibrium (if using rate_jax)
-    from .build_chem import load_nasa9_if_needed
+    from .build_chem import (
+        load_nasa9_if_needed,
+        init_fastchem_grid_if_needed,
+        init_element_potentials_if_needed,
+        init_atmodeller_if_needed,
+    )
     load_nasa9_if_needed(cfg, exp_dir)
+    init_fastchem_grid_if_needed(cfg, exp_dir)
+    init_element_potentials_if_needed(cfg, exp_dir)
+    init_atmodeller_if_needed(cfg, exp_dir)
 
     # Build the forward model from the YAML options - return a function that samplers can use
     from .build_model import build_forward_model

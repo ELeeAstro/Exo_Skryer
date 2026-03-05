@@ -241,15 +241,73 @@ This was converted into JAX compabitile python from the origional python code fo
      - { name: C_to_O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
 
 
-Chemical Equilibrium with FastChem interpolation
-------------------------------------------------
+Chemical Equilibrium with FastChem 5D Grid Interpolation
+---------------------------------------------------------
+
+This backend interpolates a precomputed FastChem grid over
+``(temperature, pressure, M_to_H, C_to_O)`` using JAX
+``RegularGridInterpolator``.
+
+The chemistry key is ``fastchem_grid_jax`` (aliases: ``ce_fastchem_grid``,
+``fastchem_ce_grid``). Legacy ``ce`` / ``fastchem_jax`` aliases are also
+supported and route to this backend.
 
 **Example YAML Configuration:**
 
 .. code-block:: yaml
 
    physics:
-     vert_chem: CE_fastchem_jax
+     vert_chem: fastchem_grid_jax
+
+   fastchem_grid_jax:
+     grid_path: ../../FastChem/fastchem_grid_5d.npz
+     solver:
+       mode: vmap
+     bounds:
+       mode: clip
+     species_map:
+       # Optional per-species mapping override
+       # CO: C1O1
+
+
+Chemical Equilibrium with Element Potentials JAX
+------------------------------------------------
+
+This backend solves thermochemical equilibrium from NASA-9 Gibbs free energies
+using the element-potentials formulation (Lagrange multipliers on element budgets).
+
+The chemistry kernel key is ``element_potentials_jax`` (aliases: ``ep_jax``,
+``ce_element_potentials``). Species are configured explicitly in a dedicated
+YAML block, and all listed species must exist as ``<species>.txt`` files in
+``data.nasa9``.
+
+Solver mode can be configured:
+
+* ``scan``: warm-starts layer-to-layer (typically more robust)
+* ``vmap``: cold-start parallel solves (often faster on GPU)
+
+**Example YAML Configuration:**
+
+.. code-block:: yaml
+
+   physics:
+     vert_chem: element_potentials_jax
+
+   element_potentials_jax:
+     species: [H2O, CO, CO2, CH4, NH3, HCN, H2, He]
+     elements: [H, He, C, N, O]
+     e_ref: H
+     p0_bar: 1.0
+     solver:
+       mode: scan
+       max_steps: 64
+       tol: 1.0e-11
+       throw: false
+       prefer_chord: true
+
+   params:
+     - { name: M_to_H, dist: uniform, low: -1.0, high: 2.0, transform: logit, init: 0.0 }
+     - { name: C_to_O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
 
 
 Quenching Timescale Approximation 

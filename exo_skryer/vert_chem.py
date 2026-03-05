@@ -5,14 +5,31 @@ vert_chem.py
 
 from __future__ import annotations
 
-from typing import Dict
+from dataclasses import replace
+from typing import Any, Dict
 
+import numpy as np
 import jax
 import jax.numpy as jnp
+from jax.scipy.special import logsumexp
+import equinox as eqx
 
-from .data_constants import amu, kb, bar
+from .data_constants import amu, kb, bar, R
 from .rate_jax import RateJAX, get_nasa9_cache
+from .chem_equilibrium_jax import (
+    ElementPotentialsModel,
+    solve_profile_scan,
+    solve_profile_vmap,
+)
+from .chem_fastchem_grid_jax import (
+    FastChemGridModel,
+    load_fastchem_grid,
+    resolve_species_indices,
+    interpolate_profile_scan as interpolate_fc_profile_scan,
+    interpolate_profile_vmap as interpolate_fc_profile_vmap,
+)
 from .vert_mu import compute_mu
+
 
 # Solar reference abundances (relative to H) - Asplund et al. (2021)
 solar_H = 1.0
@@ -35,9 +52,292 @@ __all__ = [
     "constant_vmr_clr",
     "build_constant_vmr_kernel",
     "CE_fastchem_jax",
+    "CE_fastchem_grid_jax",
     "CE_rate_jax",
-    "quench_approx"
+    "CE_element_potentials_jax",
+    "quench_approx",
+    "CE_atmodeller",
+    "load_element_potentials_cache",
+    "is_element_potentials_cache_loaded",
+    "load_atmodeller_cache",
+    "is_atmodeller_cache_loaded",
+    "load_fastchem_grid_cache",
+    "is_fastchem_grid_cache_loaded",
+    "get_fastchem_grid_cache_info",
 ]
+
+# ---------------------------------------------------------------------------
+# Global atmodeller cache (mirrors _NASA9_CACHE pattern in rate_jax.py)
+# ---------------------------------------------------------------------------
+_ATMODELLER_MODEL = None          # EquilibriumModel instance (built once at init)
+_ATMODELLER_GAS_KEYS: tuple = ()  # atmodeller output keys, e.g. ('H2O_g', 'CH4_g', ...)
+_ATMODELLER_SPECIES: tuple = ()   # bare retrieval names, e.g. ('H2O', 'CH4', ...)
+_ATMODELLER_ELEM_KEYS: tuple = ()        # sorted element symbols, e.g. ('C', 'H', 'He', ...)
+_ATMODELLER_ELEM_MASSES: np.ndarray = None  # atomic masses [g/mol] in same order as ELEM_KEYS
+
+# ---------------------------------------------------------------------------
+# Global element-potentials cache
+# ---------------------------------------------------------------------------
+_EP_MODEL: ElementPotentialsModel | None = None
+_EP_SPECIES: tuple[str, ...] = ()
+_EP_ELEMENTS: tuple[str, ...] = ()
+_EP_SOLVER_CFG: dict[str, Any] = {}
+
+# ---------------------------------------------------------------------------
+# Global FastChem-grid cache
+# ---------------------------------------------------------------------------
+_FC_GRID_MODEL: FastChemGridModel | None = None
+_FC_GRID_SPECIES_OUT: tuple[str, ...] = ()
+_FC_GRID_SPECIES_IDX: jnp.ndarray | None = None
+_FC_GRID_SOLVER_MODE: str = "vmap"
+_FC_GRID_UNMAPPED: tuple[str, ...] = ()
+
+
+def load_fastchem_grid_cache(
+    grid_path: str,
+    species_out: list[str] | tuple[str, ...],
+    solver_cfg: dict | None,
+    species_map_override: dict[str, str] | None = None,
+) -> None:
+    """Load and cache a FastChem 5D interpolation grid."""
+    global _FC_GRID_MODEL, _FC_GRID_SPECIES_OUT, _FC_GRID_SPECIES_IDX, _FC_GRID_SOLVER_MODE, _FC_GRID_UNMAPPED
+
+    model = load_fastchem_grid(grid_path)
+    resolved, missing = resolve_species_indices(model, species_out, species_map_override=species_map_override)
+    if not resolved:
+        raise ValueError(
+            "No requested opacity species could be mapped to FastChem grid species. "
+            f"Requested={list(species_out)}"
+        )
+
+    mode = str((solver_cfg or {}).get("mode", "vmap")).lower()
+    if mode not in ("scan", "vmap"):
+        raise ValueError("fastchem_grid_jax.solver.mode must be one of: scan, vmap")
+
+    _FC_GRID_MODEL = model
+    _FC_GRID_SPECIES_OUT = tuple(resolved.keys())
+    _FC_GRID_SPECIES_IDX = jnp.asarray([resolved[s] for s in _FC_GRID_SPECIES_OUT], dtype=jnp.int32)
+    _FC_GRID_SOLVER_MODE = mode
+    _FC_GRID_UNMAPPED = tuple(missing)
+
+
+def is_fastchem_grid_cache_loaded() -> bool:
+    """Return True if FastChem grid interpolation cache is initialised."""
+    return _FC_GRID_MODEL is not None
+
+
+def get_fastchem_grid_cache_info() -> dict[str, Any]:
+    """Return lightweight diagnostics for the cached FastChem grid backend."""
+    if _FC_GRID_MODEL is None:
+        return {}
+    return {
+        "species_out": _FC_GRID_SPECIES_OUT,
+        "unmapped_species": _FC_GRID_UNMAPPED,
+        "solver_mode": _FC_GRID_SOLVER_MODE,
+        "use_log_axes": bool(_FC_GRID_MODEL.use_log_axes),
+        "shape": tuple(_FC_GRID_MODEL.mixing_ratios.shape),
+        "T_range": (float(_FC_GRID_MODEL.temperature[0]), float(_FC_GRID_MODEL.temperature[-1])),
+        "P_range": (float(_FC_GRID_MODEL.pressure[0]), float(_FC_GRID_MODEL.pressure[-1])),
+        "MH_range": (float(_FC_GRID_MODEL.M_H[0]), float(_FC_GRID_MODEL.M_H[-1])),
+        "CO_range": (float(_FC_GRID_MODEL.C_O[0]), float(_FC_GRID_MODEL.C_O[-1])),
+    }
+
+
+def load_element_potentials_cache(
+    species_list: list[str],
+    elements: list[str] | tuple[str, ...] | None,
+    nlay: int,
+    solver_kwargs: dict | None,
+    nasa9_dir: str,
+    *,
+    p0_bar: float = 1.0,
+    e_ref: str = "H",
+) -> None:
+    """Build and cache the element-potentials model for retrieval use."""
+    del nlay  # Reserved for API symmetry with atmodeller init.
+    global _EP_MODEL, _EP_SPECIES, _EP_ELEMENTS, _EP_SOLVER_CFG
+
+    if not species_list:
+        raise ValueError("element_potentials_jax.species must be a non-empty list.")
+
+    element_seq = tuple(elements) if elements else None
+    if element_seq is not None and len(element_seq) == 0:
+        element_seq = None
+
+    if element_seq is not None:
+        unsupported = [e for e in element_seq if e not in {"H", "He", "C", "N", "O", "S", "Na", "K", "Si"}]
+        if unsupported:
+            raise ValueError(
+                "Unsupported elements for element_potentials_jax budgets: "
+                f"{unsupported}. Supported: H, He, C, N, O, S, Na, K, Si."
+            )
+
+    if e_ref and element_seq is not None and e_ref not in element_seq:
+        raise ValueError(f"element_potentials_jax.e_ref='{e_ref}' is not in elements list {element_seq}.")
+
+    b_seed = {e: 1.0 for e in (element_seq if element_seq is not None else ("H", "He", "C", "N", "O"))}
+    _EP_MODEL = ElementPotentialsModel.from_nasa9_dir(
+        nasa9_dir,
+        species=tuple(species_list),
+        elements=element_seq,
+        element_budgets=b_seed,
+        P0_bar=float(p0_bar),
+        e_ref=e_ref,
+    )
+    _EP_SPECIES = tuple(_EP_MODEL.species)
+    _EP_ELEMENTS = tuple(_EP_MODEL.elements)
+
+    solver_defaults = {
+        "mode": "scan",
+        "max_steps": 64,
+        "tol": 1.0e-11,
+        "throw": False,
+        "prefer_chord": True,
+    }
+    _EP_SOLVER_CFG = {**solver_defaults, **(solver_kwargs or {})}
+    _EP_SOLVER_CFG["mode"] = str(_EP_SOLVER_CFG.get("mode", "scan")).lower()
+    if _EP_SOLVER_CFG["mode"] not in ("scan", "vmap"):
+        raise ValueError("element_potentials_jax.solver.mode must be one of: scan, vmap")
+
+
+def is_element_potentials_cache_loaded() -> bool:
+    """Return True if the global element-potentials cache is initialised."""
+    return _EP_MODEL is not None
+
+
+def _element_budgets_from_params(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """Build element budget vector matching `_EP_ELEMENTS` from M_to_H and C_to_O."""
+    metallicity = params["M_to_H"]
+    co_ratio = params["C_to_O"]
+
+    zscale = 10.0 ** metallicity
+    O = solar_O * zscale
+    C = co_ratio * O
+
+    vals = []
+    for e in _EP_ELEMENTS:
+        if e == "H":
+            vals.append(jnp.asarray(solar_H, dtype=jnp.float64))
+        elif e == "He":
+            vals.append(jnp.asarray(solar_He, dtype=jnp.float64))
+        elif e == "C":
+            vals.append(C)
+        elif e == "O":
+            vals.append(O)
+        elif e == "N":
+            vals.append(solar_N * zscale)
+        elif e == "S":
+            vals.append(solar_S * zscale)
+        elif e == "Na":
+            vals.append(solar_Na * zscale)
+        elif e == "K":
+            vals.append(solar_K * zscale)
+        elif e == "Si":
+            vals.append(solar_Si * zscale)
+        else:
+            raise ValueError(
+                f"Element {e!r} has no budget rule in CE_element_potentials_jax. "
+                "Supported: H, He, C, N, O, S, Na, K, Si."
+            )
+    return jnp.asarray(vals, dtype=jnp.float64)
+
+# Common-name → Hill-notation mapping for species whose database key differs from the
+# conventional name.  atmodeller stores species under Hill notation; the output dict
+# uses Hill-notation keys.  Entries here let the YAML use readable names (e.g. NH3_g)
+# while _solve looks up the correct Hill-notation key (H3N_g) in the output.
+_COMMON_TO_HILL: dict[str, str] = {
+    "NH3": "H3N",   # no carbon: H before N alphabetically
+    "HCN": "CHN",   # carbon first, then H, then N
+}
+
+def load_atmodeller_cache(
+    species_list: list[str],
+    nlay: int,
+    solver_kwargs: dict | None = None,
+) -> None:
+    """Build an :class:`atmodeller.EquilibriumModel` from *species_list* and cache it globally.
+
+    Parameters
+    ----------
+    species_list : list of str
+        Species strings in atmodeller notation, e.g. ``['H2O_g', 'CH4_g', 'H2_g', 'He_g']``.
+        All gas-phase entries (suffix ``_g``) are registered as retrievable VMR outputs.
+    nlay : int
+        Number of atmospheric layers. Sets the batch size of the cached
+        :class:`~atmodeller.containers.Parameters` pytree so that ``eqx.tree_at``
+        updates during retrieval match the correct shape.
+    solver_kwargs : dict, optional
+        Keyword arguments forwarded to :class:`~atmodeller.containers.SolverParameters`.
+        Supported keys: ``atol``, ``rtol``, ``max_steps``, ``multistart``,
+        ``multistart_perturbation``, ``jac``.  Defaults (atmodeller's own) are used
+        for any key not supplied.  Reduce ``multistart`` and loosen ``atol``/``rtol``
+        for faster GPU throughput.
+    """
+    global _ATMODELLER_MODEL, _ATMODELLER_STATE, _ATMODELLER_SOLVER, _ATMODELLER_SPECIES_NETWORK, _ATMODELLER_GAS_KEYS, _ATMODELLER_SPECIES, _ATMODELLER_ELEM_KEYS, _ATMODELLER_ELEM_MASSES
+    from atmodeller import SpeciesNetwork, ThermodynamicState
+    from atmodeller.containers import Parameters, SolverParameters
+    from atmodeller.solvers import make_independent_solver
+    from molmass import Formula
+
+    _ATMODELLER_SPECIES_NETWORK = SpeciesNetwork.create(tuple(species_list))
+
+    T_dum = np.full(nlay, 1000.0)
+    p_dum = np.ones(nlay)
+
+    _ATMODELLER_STATE = ThermodynamicState(temperature=T_dum, pressure=p_dum, melt_fraction=0)
+
+    mole_fractions = {
+        "H":  solar_H,
+        "He": solar_He,
+        "C": solar_C,
+        "N": solar_N,
+        "O": solar_O,
+        "Na": solar_Na,
+        "K":  solar_K,
+    }
+
+    _ATMODELLER_ELEM_KEYS = tuple(sorted(mole_fractions.keys()))
+    _ATMODELLER_ELEM_MASSES = np.array([Formula(k).mass for k in _ATMODELLER_ELEM_KEYS])
+
+    mass_constraints = {k: mole_fractions[k] * Formula(k).mass for k in _ATMODELLER_ELEM_KEYS}
+
+    solver_params = SolverParameters(**(solver_kwargs or {}))
+
+    _ATMODELLER_MODEL = Parameters.create(
+        _ATMODELLER_SPECIES_NETWORK,
+        _ATMODELLER_STATE,
+        mass_constraints=mass_constraints,
+        solver_parameters=solver_params,
+    )
+    # _ATMODELLER_SPECIES: common names used as VMR dict keys (e.g. 'NH3', 'HCN')
+    # _ATMODELLER_GAS_KEYS: Hill-notation keys used to look up atmodeller output (e.g. 'H3N_g', 'CHN_g')
+    _ATMODELLER_SPECIES = tuple(s.removesuffix("_g") for s in species_list if s.endswith("_g"))
+    _ATMODELLER_GAS_KEYS = tuple(
+        _COMMON_TO_HILL.get(bare, bare) + "_g"
+        for bare in _ATMODELLER_SPECIES
+    )
+
+    _ATMODELLER_SOLVER = make_independent_solver(_ATMODELLER_MODEL)
+
+    # print(_ATMODELLER_MODEL)
+    # print(_ATMODELLER_GAS_KEYS)
+    # print(_ATMODELLER_SPECIES)
+    # print(_ATMODELLER_SOLVER)
+    # quit()
+
+
+def is_atmodeller_cache_loaded() -> bool:
+    """Return True if the global atmodeller cache has been initialised."""
+    return _ATMODELLER_MODEL is not None
+
+
+def get_atmodeller_cache():
+    """Return ``(model, gas_keys, species_names)``; raises :exc:`RuntimeError` if not loaded."""
+    if _ATMODELLER_MODEL is None:
+        raise RuntimeError(
+            "Atmodeller cache not loaded. Call load_atmodeller_cache() before using CE_atmodeller."
+        )
+    return _ATMODELLER_MODEL, _ATMODELLER_GAS_KEYS, _ATMODELLER_SPECIES
 
 
 def constant_vmr(species_order: tuple[str, ...]):
@@ -231,37 +531,54 @@ def build_constant_vmr_kernel(species_order: tuple[str, ...]):
     return constant_vmr(species_order)
 
 
+def CE_fastchem_grid_jax(
+    p_lay: jnp.ndarray,
+    T_lay: jnp.ndarray,
+    params: Dict[str, jnp.ndarray],
+    nlay: int,
+) -> Dict[str, jnp.ndarray]:
+    """Interpolate FastChem 5D grid over (T, P, M/H, C/O)."""
+    del nlay  # Kept for API compatibility.
+    if _FC_GRID_MODEL is None or _FC_GRID_SPECIES_IDX is None:
+        raise RuntimeError(
+            "FastChem-grid cache not loaded. "
+            "Call load_fastchem_grid_cache() before using CE_fastchem_grid_jax."
+        )
+
+    metallicity = params["M_to_H"]
+    co_ratio = params["C_to_O"]
+    p_lay_bar = p_lay / bar
+
+    if _FC_GRID_SOLVER_MODE == "scan":
+        vmr_matrix, mmw_lay = interpolate_fc_profile_scan(
+            _FC_GRID_MODEL, T_lay, p_lay_bar, metallicity, co_ratio, _FC_GRID_SPECIES_IDX
+        )
+    else:
+        vmr_matrix, mmw_lay = interpolate_fc_profile_vmap(
+            _FC_GRID_MODEL, T_lay, p_lay_bar, metallicity, co_ratio, _FC_GRID_SPECIES_IDX
+        )
+
+    vmr_matrix = jnp.clip(vmr_matrix, 0.0, jnp.inf)
+    vmr_sum = jnp.sum(vmr_matrix, axis=1, keepdims=True)
+    vmr_matrix = vmr_matrix / jnp.maximum(vmr_sum, 1e-300)
+
+    out = {sp: vmr_matrix[:, i] for i, sp in enumerate(_FC_GRID_SPECIES_OUT)}
+    out["__mu_lay__"] = jnp.clip(mmw_lay, 1e-30, jnp.inf)
+    return out
+
+
 def CE_fastchem_jax(
     p_lay: jnp.ndarray,
     T_lay: jnp.ndarray,
     params: Dict[str, jnp.ndarray],
     nlay: int,
 ) -> Dict[str, jnp.ndarray]:
-    """Placeholder for a FastChem-based chemical equilibrium backend (not implemented).
-
-    Parameters
-    ----------
-    p_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Layer pressures. Units are arbitrary as long as consistent with the
-        solver backend (in this codebase `p_lay` is typically in dyne cm⁻²).
-    T_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Layer temperatures in Kelvin.
-    params : dict[str, `~jax.numpy.ndarray`]
-        Chemical abundance parameters (e.g., metallicity, C_to_O).
-    nlay : int
-        Number of atmospheric layers.
-
-    Returns
-    -------
-    vmr_lay : dict[str, `~jax.numpy.ndarray`]
-        Dictionary mapping species names to VMR profiles with shape (nlay,).
-    """
-    del p_lay, T_lay, params, nlay
-    raise NotImplementedError("CE_fastchem_jax is not implemented yet.")
+    """Compatibility alias for FastChem-grid interpolation backend."""
+    return CE_fastchem_grid_jax(p_lay, T_lay, params, nlay)
 
 
 # Backwards-compat alias (do not export)
-chemical_equilibrium = CE_fastchem_jax
+chemical_equilibrium = CE_fastchem_grid_jax
 
 
 def CE_rate_jax(
@@ -327,6 +644,45 @@ def CE_rate_jax(
     vmr_lay = {sp: v / total for sp, v in vmr_lay.items()}
 
     return vmr_lay
+
+
+def CE_element_potentials_jax(
+    p_lay: jnp.ndarray,
+    T_lay: jnp.ndarray,
+    params: Dict[str, jnp.ndarray],
+    nlay: int,
+) -> Dict[str, jnp.ndarray]:
+    """Compute equilibrium profiles using the element-potentials JAX backend."""
+    del nlay  # Kept for API compatibility.
+    if _EP_MODEL is None:
+        raise RuntimeError(
+            "Element-potentials cache not loaded. "
+            "Call load_element_potentials_cache() before using CE_element_potentials_jax."
+        )
+
+    b = _element_budgets_from_params(params)
+    inp = replace(_EP_MODEL.inputs, b=b)
+
+    p_bar = p_lay / bar
+    mode = str(_EP_SOLVER_CFG.get("mode", "scan")).lower()
+    max_steps = int(_EP_SOLVER_CFG.get("max_steps", 64))
+    tol = float(_EP_SOLVER_CFG.get("tol", 1.0e-11))
+    throw = bool(_EP_SOLVER_CFG.get("throw", False))
+    prefer_chord = bool(_EP_SOLVER_CFG.get("prefer_chord", True))
+
+    if mode == "vmap":
+        _Lambda_prof, y_prof, _n_prof, _result_prof = solve_profile_vmap(
+            T_lay, p_bar, inp, max_steps=max_steps, tol=tol, throw=throw
+        )
+    else:
+        _Lambda_prof, y_prof, _n_prof, _result_prof = solve_profile_scan(
+            T_lay, p_bar, inp, Lambda_init=None, max_steps=max_steps, tol=tol, throw=throw, prefer_chord=prefer_chord
+        )
+
+    y_prof = jnp.clip(y_prof, 0.0, jnp.inf)
+    y_sum = jnp.sum(y_prof, axis=1, keepdims=True)
+    vmr_arr = y_prof / jnp.maximum(y_sum, 1e-300)
+    return {sp: vmr_arr[:, i] for i, sp in enumerate(_EP_SPECIES)}
 
 
 def _chemical_timescale(species: str, T_K: jnp.ndarray, p_bar: jnp.ndarray) -> jnp.ndarray:
@@ -521,3 +877,102 @@ def quench_approx(
             vmr_quenched[species] = vmr_eq[species]
 
     return vmr_quenched
+
+
+def CE_atmodeller(
+    p_lay: jnp.ndarray,
+    T_lay: jnp.ndarray,
+    params: Dict[str, jnp.ndarray],
+    nlay: int,
+) -> Dict[str, jnp.ndarray]:
+    """Compute chemical equilibrium profiles using the :mod:`atmodeller` backend.
+
+    Parameters
+    ----------
+    p_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Layer pressures. In the forward model this is typically in dyne cm⁻² and
+        is converted internally to bar for the solver.
+    T_lay : `~jax.numpy.ndarray`, shape (nlay,)
+        Layer temperatures in Kelvin.
+    params : dict[str, `~jax.numpy.ndarray`]
+        Chemical abundance parameters containing:
+
+        - ``M_to_H`` : float
+            Metallicity relative to solar in dex.
+        - ``C_to_O`` : float
+            Carbon-to-oxygen ratio (dimensionless).
+    nlay : int
+        Number of atmospheric layers. Used to broadcast mass constraints and
+        initial guess to shape ``(nlay, ...)``.
+
+    Returns
+    -------
+    vmr_lay : dict[str, `~jax.numpy.ndarray`]
+        Dictionary mapping bare species names (e.g. ``'H2O'``, ``'CH4'``) to
+        VMR profiles with shape ``(nlay,)``.
+
+    Notes
+    -----
+    H and He abundances are **fixed at solar values** and are not scaled by
+    metallicity. All other elements present in the species network (C, N, O,
+    Na, K) are scaled by ``10 ** M_to_H``; carbon is further set by
+    ``C_to_O * O``.
+    """
+
+    _, _, species_names = get_atmodeller_cache()
+
+    nsp = len(species_names)
+
+    metallicity = params['M_to_H']  # [dex]
+    CO_ratio = params['C_to_O']  # dimensionless
+
+    O = solar_O * (10.0 ** metallicity)
+    N = solar_N * (10.0 ** metallicity)
+    Na = solar_Na * (10.0 ** metallicity)
+    K = solar_K * (10.0 ** metallicity)
+    C = CO_ratio * O                          # C/O sets carbon
+
+    mole_fractions = {
+        "H":  solar_H,
+        "He": solar_He,
+        "C": C,
+        "N": N,
+        "O": O,
+        "Na": Na,
+        "K":  K,
+    }
+
+    # update temperature in pytree
+    parameter_update = eqx.tree_at(
+        lambda p: p.state.temperature,_ATMODELLER_MODEL,T_lay
+    )
+
+    # update pressure in pytree
+    p_lay_bar = p_lay/bar
+    parameter_update = eqx.tree_at(
+        lambda p: p.state.pressure,parameter_update,p_lay_bar
+    )
+
+    # update mass constraints in pytree — shape must be (1, n_elements)
+    # atmodeller transposes this to (n_elements, 1) internally; shape[0]=1 keeps
+    # vmap_axes_spec treating it as non-batched (same constraints for all layers)
+    mf_vals = jnp.stack([mole_fractions[k] for k in _ATMODELLER_ELEM_KEYS])
+    mass_constraints = (mf_vals * _ATMODELLER_ELEM_MASSES)[None, :]  # (1, n_elements)
+    parameter_update = eqx.tree_at(
+        lambda p: p.mass_constraints.abundance, parameter_update, mass_constraints
+    )
+
+    # init (initial guess values) - units ln moles (absolute value) 
+    init = jnp.ones(2 * nsp)
+    init = jnp.broadcast_to(init, (nlay,2*nsp))
+
+    result = _ATMODELLER_SOLVER(init*50.0,parameter_update)
+
+    solution = result.value
+    solution = jnp.split(solution,2,axis=-1)[0]
+
+    logtotal = logsumexp(solution,axis=-1, keepdims=True)
+
+    vmrs = jnp.exp(solution-logtotal)
+
+    return {species_names[i]: vmrs[:, i] for i in range(nsp)}

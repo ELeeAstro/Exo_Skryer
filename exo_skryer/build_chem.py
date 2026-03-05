@@ -16,7 +16,10 @@ __all__ = [
     'validate_clr_params',
     'clr_samples_to_vmr',
     'prepare_chemistry_kernel',
-    'load_nasa9_if_needed'
+    'load_nasa9_if_needed',
+    'init_fastchem_grid_if_needed',
+    'init_element_potentials_if_needed',
+    'init_atmodeller_if_needed',
 ]
 
 
@@ -136,6 +139,95 @@ def infer_trace_species(
     # when needed via the dedicated log_10_H_over_H2 parameter.
     trace_species = tuple(s for s in required if s not in ("H2", "He", "H"))
     return trace_species
+
+
+def infer_active_opacity_species(cfg) -> tuple[str, ...]:
+    """Infer active chemistry species directly required by configured opacities."""
+    required: list[str] = []
+
+    def add(name: str) -> None:
+        _append_unique(required, name)
+
+    def add_many(names: Iterable[str]) -> None:
+        for n in names:
+            add(n)
+
+    line_mode = str(getattr(getattr(cfg, "physics", None), "opac_line", "none")).lower()
+    if line_mode in ("os", "ck"):
+        if line_mode == "ck":
+            ck_cfg = getattr(getattr(cfg, "opac", None), "ck", None)
+            block = getattr(cfg.opac, "line", None) if isinstance(ck_cfg, bool) else ck_cfg
+            add_many(_extract_species_list(block))
+        else:
+            add_many(_extract_species_list(getattr(cfg.opac, "line", None)))
+
+    ray_mode = str(getattr(getattr(cfg, "physics", None), "opac_ray", "none")).lower()
+    if ray_mode in ("os", "ck"):
+        add_many(_extract_species_list(getattr(cfg.opac, "ray", None)))
+
+    cia_mode = str(getattr(getattr(cfg, "physics", None), "opac_cia", "none")).lower()
+    if cia_mode in ("os", "ck"):
+        for cia_name in _extract_species_list(getattr(cfg.opac, "cia", None)):
+            if cia_name == "H-":
+                continue
+            parts = cia_name.split("-")
+            if len(parts) == 2:
+                add(parts[0])
+                add(parts[1])
+
+    special_mode = str(getattr(getattr(cfg, "physics", None), "opac_special", "none")).lower()
+    if special_mode not in ("none", "off", "false", "0"):
+        special_cfg = getattr(getattr(cfg, "opac", None), "special", None)
+        hm_enabled = False
+        hm_bf = True
+        hm_ff = False
+        if special_cfg not in (None, "None", "none", False):
+            try:
+                iterator = iter(special_cfg) if not isinstance(special_cfg, bool) else iter(())
+            except TypeError:
+                iterator = iter((special_cfg,))
+            for item in iterator:
+                spec = str(getattr(item, "species", item))
+                if spec != "H-":
+                    continue
+                hm_enabled = True
+                hm_bf = bool(getattr(item, "bf", hm_bf))
+                hm_ff = bool(getattr(item, "ff", hm_ff))
+                break
+        if hm_enabled and hm_bf:
+            add("H-")
+        if hm_enabled and hm_ff:
+            add("H")
+            add("e-")
+
+    return tuple(required)
+
+
+def _special_hminus_requirements(cfg) -> tuple[bool, bool]:
+    """Return (need_bf, need_ff) from physics/opac special configuration."""
+    special_mode = str(getattr(getattr(cfg, "physics", None), "opac_special", "none")).lower()
+    if special_mode in ("none", "off", "false", "0"):
+        return False, False
+
+    need_bf = False
+    need_ff = False
+    special_cfg = getattr(getattr(cfg, "opac", None), "special", None)
+    if special_cfg not in (None, "None", "none", False):
+        try:
+            iterator = iter(special_cfg) if not isinstance(special_cfg, bool) else iter(())
+        except TypeError:
+            iterator = iter((special_cfg,))
+        for item in iterator:
+            spec = str(getattr(item, "species", item))
+            if spec != "H-":
+                continue
+            need_bf = bool(getattr(item, "bf", True))
+            need_ff = bool(getattr(item, "ff", False))
+            return need_bf, need_ff
+
+    # Backward-compatible behavior: if special is enabled but no explicit H- row,
+    # treat bf as enabled by default.
+    return True, False
 
 
 def infer_log10_vmr_keys(trace_species: tuple[str, ...]) -> tuple[str, ...]:
@@ -397,14 +489,251 @@ def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
         return
 
     vert_chem_name = str(vert_chem_raw).lower()
-    if vert_chem_name not in ("rate_ce", "rate_jax", "ce_rate_jax"):
+    ep_names = ("element_potentials_jax", "ep_jax", "ce_element_potentials")
+    fc_grid_names = (
+        "fastchem_grid_jax",
+        "ce_fastchem_grid",
+        "fastchem_ce_grid",
+        "ce",
+        "chemical_equilibrium",
+        "ce_fastchem_jax",
+        "fastchem_jax",
+    )
+    needs_nasa9 = (
+        "rate_ce",
+        "rate_jax",
+        "ce_rate_jax",
+        *ep_names,
+    )
+
+    if vert_chem_name in fc_grid_names:
+        init_fastchem_grid_if_needed(cfg, exp_dir)
+        return
+
+    if vert_chem_name not in needs_nasa9:
         return
 
     from .rate_jax import is_nasa9_cache_loaded, load_nasa9_cache
 
     if is_nasa9_cache_loaded():
         print("[info] NASA-9 cache already loaded")
+    else:
+        data_cfg = getattr(cfg, "data", None)
+        nasa9_rel_path = getattr(data_cfg, "nasa9", None) if data_cfg is not None else None
+        if nasa9_rel_path is None:
+            raise ValueError(
+                "NASA-9 data path not found in config. Please add 'nasa9: path/to/NASA9' "
+                "under 'data:' section in YAML config."
+            )
+
+        base_dir = Path.cwd() if exp_dir is None else Path(exp_dir)
+        nasa9_path = (
+            str(base_dir / nasa9_rel_path)
+            if not Path(nasa9_rel_path).is_absolute()
+            else nasa9_rel_path
+        )
+
+        print(f"[info] Loading NASA-9 thermo tables from {nasa9_path}")
+        thermo = load_nasa9_cache(nasa9_path)
+        print(f"[info] NASA-9 cache loaded: {len(thermo.data)} species")
+
+    # EP backend needs its own model cache as well; initialize it here so callers
+    # that only invoke `load_nasa9_if_needed` (e.g. bestfit scripts) still work.
+    if vert_chem_name in ep_names:
+        init_element_potentials_if_needed(cfg, exp_dir)
         return
+
+
+def init_fastchem_grid_if_needed(cfg: Any, exp_dir: Path) -> None:
+    """Initialise and cache the FastChem 5D grid chemistry backend if required."""
+    phys = getattr(cfg, "physics", None)
+    if phys is None:
+        return
+
+    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
+    aliases = (
+        "fastchem_grid_jax",
+        "ce_fastchem_grid",
+        "fastchem_ce_grid",
+        "ce",
+        "chemical_equilibrium",
+        "ce_fastchem_jax",
+        "fastchem_jax",
+    )
+    if vert_chem_name not in aliases:
+        return
+
+    from .vert_chem import (
+        is_fastchem_grid_cache_loaded,
+        load_fastchem_grid_cache,
+        get_fastchem_grid_cache_info,
+    )
+
+    if is_fastchem_grid_cache_loaded():
+        print("[info] FastChem-grid cache already loaded")
+        return
+
+    fc_cfg = getattr(cfg, "fastchem_grid_jax", None)
+    if fc_cfg is None:
+        raise ValueError(
+            "fastchem_grid_jax config block is required when physics.vert_chem "
+            "uses the FastChem-grid backend."
+        )
+
+    grid_path_raw = getattr(fc_cfg, "grid_path", None)
+    if not grid_path_raw:
+        raise ValueError("fastchem_grid_jax.grid_path is required and must point to a 5D NPZ grid.")
+
+    grid_path_obj = Path(str(grid_path_raw))
+    if grid_path_obj.is_absolute():
+        grid_path = grid_path_obj
+    else:
+        base_dir = Path.cwd() if exp_dir is None else Path(exp_dir)
+        candidate_exp = (base_dir / grid_path_obj).resolve()
+        candidate_repo = (Path.cwd() / grid_path_obj).resolve()
+        if candidate_exp.exists():
+            grid_path = candidate_exp
+        else:
+            grid_path = candidate_repo
+    if not grid_path.exists():
+        raise FileNotFoundError(f"FastChem grid file not found: {grid_path}")
+
+    bounds_cfg = getattr(fc_cfg, "bounds", None)
+    bounds_mode = str(getattr(bounds_cfg, "mode", "clip")).lower() if bounds_cfg is not None else "clip"
+    if bounds_mode != "clip":
+        raise ValueError("fastchem_grid_jax.bounds.mode currently supports only: clip")
+
+    param_names = {p.name for p in getattr(cfg, "params", [])}
+    for required in ("M_to_H", "C_to_O"):
+        if required not in param_names:
+            raise ValueError(
+                f"fastchem_grid_jax requires parameter '{required}' in cfg.params."
+            )
+
+    species_out = infer_active_opacity_species(cfg)
+    if not species_out:
+        raise ValueError(
+            "Could not infer any active opacity species for fastchem_grid_jax. "
+            "Check opac.line/opac.ray/opac.cia/opac.special configuration."
+        )
+
+    solver_cfg = getattr(fc_cfg, "solver", None)
+    solver_kwargs: dict[str, Any] = {}
+    if solver_cfg is not None:
+        mode = getattr(solver_cfg, "mode", None)
+        if mode is not None:
+            solver_kwargs["mode"] = str(mode)
+    if "mode" not in solver_kwargs:
+        solver_kwargs["mode"] = "vmap"
+
+    species_map_override: dict[str, str] = {}
+    map_cfg = getattr(fc_cfg, "species_map", None)
+    if map_cfg is not None:
+        if isinstance(map_cfg, dict):
+            items = map_cfg.items()
+        else:
+            items = vars(map_cfg).items()
+        for key, val in items:
+            species_map_override[str(key)] = str(val)
+
+    print("[info] Initializing CE scheme: fastchem_grid_jax")
+    print(f"[info]   Grid path: {grid_path}")
+    print(f"[info]   Output species source: active opacity species ({len(species_out)})")
+    print(f"[info]   Solver: mode={solver_kwargs['mode']}")
+    print(f"[info]   Bounds: mode=clip")
+
+    load_fastchem_grid_cache(
+        grid_path=str(grid_path),
+        species_out=list(species_out),
+        solver_cfg=solver_kwargs,
+        species_map_override=species_map_override if species_map_override else None,
+    )
+    info = get_fastchem_grid_cache_info()
+    if info:
+        shape = info.get("shape", ())
+        print(
+            "[info]   Grid axes: "
+            f"T={shape[0]}, P={shape[1]}, M/H={shape[2]}, C/O={shape[3]}, species={shape[4]}"
+        )
+        print(
+            "[info]   Ranges: "
+            f"T=[{info['T_range'][0]:.1f}, {info['T_range'][1]:.1f}] K, "
+            f"P=[{info['P_range'][0]:.3e}, {info['P_range'][1]:.3e}] bar, "
+            f"M/H=[{info['MH_range'][0]:.2f}, {info['MH_range'][1]:.2f}] dex, "
+            f"C/O=[{info['CO_range'][0]:.3f}, {info['CO_range'][1]:.3f}]"
+        )
+        print(f"[info]   Interp axes: {'log10(T,P,C/O)+dex(M/H)' if info.get('use_log_axes', False) else 'linear'}")
+        mapped_species = tuple(info.get("species_out", ()))
+        print(f"[info]   Mapped species: {len(mapped_species)}")
+        if mapped_species:
+            print(f"[info]   Species list: {list(mapped_species)}")
+        if info.get("unmapped_species"):
+            print(f"[warn]   Unmapped species skipped: {list(info['unmapped_species'])}")
+
+        need_bf, need_ff = _special_hminus_requirements(cfg)
+        required_special: list[str] = []
+        if need_bf:
+            required_special.append("H-")
+        if need_ff:
+            required_special.extend(("H", "e-"))
+        if required_special:
+            missing_special = [sp for sp in required_special if sp not in mapped_species]
+            if missing_special:
+                raise ValueError(
+                    "H- special opacity is enabled, but required species are not mapped "
+                    "from the FastChem CE grid. "
+                    f"Missing={missing_special}, mapped={list(mapped_species)}. "
+                    "Fix via fastchem_grid_jax.species_map and/or grid contents."
+                )
+    print("[info] FastChem-grid cache loaded")
+
+
+def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
+    """Initialise and cache the element-potentials chemistry backend if required."""
+    phys = getattr(cfg, "physics", None)
+    if phys is None:
+        return
+
+    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
+    if vert_chem_name not in ("element_potentials_jax", "ep_jax", "ce_element_potentials"):
+        return
+
+    from .vert_chem import is_element_potentials_cache_loaded, load_element_potentials_cache
+
+    if is_element_potentials_cache_loaded():
+        print("[info] Element-potentials cache already loaded")
+        return
+
+    ep_cfg = getattr(cfg, "element_potentials_jax", None)
+    if ep_cfg is None:
+        raise ValueError(
+            "element_potentials_jax config block is required when physics.vert_chem is "
+            "'element_potentials_jax'."
+        )
+
+    raw_species = list(getattr(ep_cfg, "species", None) or [])
+    species_list = []
+    for sp in raw_species:
+        if isinstance(sp, bool):
+            # YAML 1.1 parses unquoted `NO`/`Yes` as booleans; recover the common NO case.
+            species_list.append("NO" if sp is False else "YES")
+        else:
+            species_list.append(str(sp))
+    if not species_list:
+        raise ValueError(
+            "element_potentials_jax.species must be a non-empty list in the YAML config."
+        )
+
+    elements_val = getattr(ep_cfg, "elements", None)
+    elements = list(elements_val) if elements_val else None
+
+    solver_cfg = getattr(ep_cfg, "solver", None)
+    solver_kwargs = {}
+    if solver_cfg is not None:
+        for key in ("mode", "max_steps", "tol", "throw", "prefer_chord"):
+            val = getattr(solver_cfg, key, None)
+            if val is not None:
+                solver_kwargs[key] = val
 
     data_cfg = getattr(cfg, "data", None)
     nasa9_rel_path = getattr(data_cfg, "nasa9", None) if data_cfg is not None else None
@@ -413,13 +742,96 @@ def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
             "NASA-9 data path not found in config. Please add 'nasa9: path/to/NASA9' "
             "under 'data:' section in YAML config."
         )
-
+    base_dir = Path.cwd() if exp_dir is None else Path(exp_dir)
     nasa9_path = (
-        str(exp_dir / nasa9_rel_path)
+        str(base_dir / nasa9_rel_path)
         if not Path(nasa9_rel_path).is_absolute()
         else nasa9_rel_path
     )
 
-    print(f"[info] Loading NASA-9 thermo tables from {nasa9_path}")
-    thermo = load_nasa9_cache(nasa9_path)
-    print(f"[info] NASA-9 cache loaded: {len(thermo.data)} species")
+    p0_bar = float(getattr(ep_cfg, "p0_bar", 1.0))
+    e_ref = str(getattr(ep_cfg, "e_ref", "H"))
+    nlay = int(getattr(phys, "nlay", 99))
+
+    print("[info] Initializing CE scheme: element_potentials_jax")
+    print(f"[info]   NASA9 path: {nasa9_path}")
+    print(f"[info]   Species count: {len(species_list)}")
+    print(f"[info]   Elements: {elements if elements is not None else 'auto (inferred)'}")
+    print(f"[info]   e_ref: {e_ref}, P0_bar: {p0_bar}")
+    print(
+        "[info]   Solver: "
+        f"mode={solver_kwargs.get('mode', 'scan')}, "
+        f"max_steps={solver_kwargs.get('max_steps', 64)}, "
+        f"tol={solver_kwargs.get('tol', 1.0e-11)}, "
+        f"throw={solver_kwargs.get('throw', False)}, "
+        f"prefer_chord={solver_kwargs.get('prefer_chord', True)}"
+    )
+    load_element_potentials_cache(
+        species_list=species_list,
+        elements=elements,
+        nlay=nlay,
+        solver_kwargs=solver_kwargs,
+        nasa9_dir=nasa9_path,
+        p0_bar=p0_bar,
+        e_ref=e_ref,
+    )
+    print("[info] Element-potentials cache loaded")
+
+
+def init_atmodeller_if_needed(cfg: Any, exp_dir: Path) -> None:
+    """Initialise the global atmodeller :class:`EquilibriumModel` if required.
+
+    Reads ``atmodeller.species_network`` from the YAML config and builds the
+    cached :class:`EquilibriumModel` instance.  If the cache is already loaded,
+    or the active chemistry scheme is not ``'atmodeller'``, returns immediately.
+
+    Parameters
+    ----------
+    cfg : config object
+        Parsed YAML configuration object with ``cfg.physics.vert_chem`` and
+        ``cfg.atmodeller.species_network`` attributes.
+    exp_dir : `~pathlib.Path`
+        Experiment directory (unused; kept for API symmetry with
+        :func:`load_nasa9_if_needed`).
+    """
+    phys = getattr(cfg, "physics", None)
+    if phys is None:
+        return
+
+    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
+    if vert_chem_name != "atmodeller":
+        return
+
+    atm_cfg = getattr(cfg, "atmodeller", None)
+    if atm_cfg in (False, "False", "false", "off", "none", "None"):
+        print("[info] Atmodeller explicitly disabled in YAML; skipping atmodeller initialization.")
+        return
+
+    from .vert_chem import is_atmodeller_cache_loaded, load_atmodeller_cache
+
+    if is_atmodeller_cache_loaded():
+        print("[info] Atmodeller cache already loaded")
+        return
+
+    species_list = list(getattr(atm_cfg, "species_network", None) or [])
+    if not species_list:
+        raise ValueError(
+            "atmodeller.species_network must be a non-empty list in the YAML config. "
+            "Example:\n  atmodeller:\n    species_network:\n      - H2O_g\n      - CO_g"
+        )
+
+    # Parse optional solver tuning from atmodeller.solver (all fields optional)
+    solver_cfg = getattr(atm_cfg, "solver", None)
+    solver_kwargs = {}
+    if solver_cfg is not None:
+        for key in ("atol", "rtol", "max_steps", "multistart", "multistart_perturbation", "jac"):
+            val = getattr(solver_cfg, key, None)
+            if val is not None:
+                solver_kwargs[key] = val
+
+    nlay = int(cfg.physics.nlay)
+    print(f"[info] Building atmodeller EquilibriumModel with {len(species_list)} species, nlay={nlay}")
+    if solver_kwargs:
+        print(f"[info] Atmodeller solver settings: {solver_kwargs}")
+    load_atmodeller_cache(species_list, nlay, solver_kwargs=solver_kwargs)
+    print("[info] Atmodeller cache loaded")

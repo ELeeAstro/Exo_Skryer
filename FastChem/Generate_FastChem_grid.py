@@ -17,6 +17,17 @@ def round_in_log(x):
     return pre_exponent * 10 ** log_floor
 
 
+def safe_log10(arr, floor=1e-300):
+    """
+    Compute log10 safely for positive values while preserving NaNs.
+    """
+    x = np.asarray(arr, dtype=float)
+    out = np.full_like(x, np.nan, dtype=float)
+    finite = np.isfinite(x)
+    out[finite] = np.log10(np.maximum(x[finite], floor))
+    return out
+
+
 def modify_abundances(input_file, output_file, M_H, C_O_ratio):
     """
     Modify element abundances for given [M/H] and C/O ratio.
@@ -229,6 +240,22 @@ print(f"\nSaved full 5D grid to: {npz_filename}")
 print(f"  Shape: T({n_T}) x P({n_p}) x [M/H]({n_MH}) x C/O({n_CO}) x Species({n_species})")
 print(f"  File size: {os.path.getsize(npz_filename) / 1024**2:.1f} MB")
 
+# Save an additional log-space version (M/H is already dex/log10 by definition)
+npz_log_filename = output_dir + 'fastchem_grid_5d_log10.npz'
+np.savez_compressed(
+    npz_log_filename,
+    log10_temperature=safe_log10(T),
+    log10_pressure=safe_log10(p),
+    log10_M_H=np.array(M_H_grid, dtype=float),   # already in dex = log10(metallicity factor)
+    log10_C_O=safe_log10(C_O_grid),
+    log10_mixing_ratios=safe_log10(mixing_ratios_5d),
+    log10_mean_molecular_weight=safe_log10(mean_molecular_weight_5d),
+    success_flags=success_flags_5d,
+    species_names=species_names
+)
+print(f"Saved log10 5D grid to: {npz_log_filename}")
+print(f"  File size: {os.path.getsize(npz_log_filename) / 1024**2:.1f} MB")
+
 # Also save selected species for easier access
 plot_species_indices = []
 for species in plot_species:
@@ -252,6 +279,18 @@ if plot_species_indices:
         species_labels=np.array(plot_species_labels)
     )
     print(f"Saved selected species to: {output_dir}fastchem_grid_selected.npz")
+
+    np.savez_compressed(
+        output_dir + 'fastchem_grid_selected_log10.npz',
+        log10_temperature=safe_log10(T),
+        log10_pressure=safe_log10(p),
+        log10_M_H=np.array(M_H_grid, dtype=float),  # already dex
+        log10_C_O=safe_log10(C_O_grid),
+        log10_mixing_ratios=safe_log10(selected_mixing_ratios),
+        species_names=np.array(plot_species),
+        species_labels=np.array(plot_species_labels)
+    )
+    print(f"Saved selected species (log10) to: {output_dir}fastchem_grid_selected_log10.npz")
 
 # Create verification plot for solar metallicity and C/O ~ 0.55
 if n_success_total > 0 and plot_species_indices:

@@ -28,6 +28,7 @@ dependencies = [
   "tqdm",
   "seaborn",
   "corner",
+  "atmodeller",
 ]
 dynamic = ["version"]
 

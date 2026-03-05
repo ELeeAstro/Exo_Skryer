@@ -21,7 +21,12 @@ from .opacity_special import zero_special_opacity, compute_special_opacity
 from .opacity_cloud import zero_cloud_opacity
 
 from . import build_opacities as XS
-from .build_chem import prepare_chemistry_kernel
+from .build_chem import (
+    prepare_chemistry_kernel,
+    init_fastchem_grid_if_needed,
+    init_element_potentials_if_needed,
+    init_atmodeller_if_needed,
+)
 
 from .RT_trans_1D_ck import compute_transit_depth_1d_ck
 from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
@@ -485,6 +490,12 @@ def build_forward_model(
         stellar_flux_arr = jnp.zeros_like(wl_hi, dtype=jnp.float64)
 
     bandpass_cache = get_bandpass_cache()
+
+    # Ensure chemistry backends that require pre-built caches are initialized
+    # when build_forward_model is used directly by analysis scripts.
+    init_fastchem_grid_if_needed(cfg, None)
+    init_element_potentials_if_needed(cfg, None)
+    init_atmodeller_if_needed(cfg, None)
 
     chemistry_kernel, trace_species = prepare_chemistry_kernel(
         cfg,

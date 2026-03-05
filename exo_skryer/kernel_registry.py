@@ -47,8 +47,11 @@ from .vert_chem import (
     constant_vmr,
     constant_vmr_clr,
     CE_fastchem_jax,
+    CE_fastchem_grid_jax,
     CE_rate_jax,
+    CE_element_potentials_jax,
     quench_approx,
+    CE_atmodeller,
 )
 from .vert_mu import constant_mu, compute_mu
 from .vert_cloud import (
@@ -129,8 +132,11 @@ VERT_CHEM: dict[str, Callable] = {
     "constant_vmr":         constant_vmr,
     "constant_vmr_clr":     constant_vmr_clr,
     "ce":                   CE_fastchem_jax,
+    "fastchem_grid_jax":    CE_fastchem_grid_jax,
     "rate_ce":              CE_rate_jax,
+    "element_potentials_jax": CE_element_potentials_jax,
     "quench_approx":        quench_approx,
+    "atmodeller":           CE_atmodeller,
     # aliases
     "constant":             constant_vmr,       # alias
     "constant_clr":         constant_vmr_clr,   # alias
@@ -138,8 +144,12 @@ VERT_CHEM: dict[str, Callable] = {
     "chemical_equilibrium": CE_fastchem_jax,    # alias
     "ce_fastchem_jax":      CE_fastchem_jax,    # alias
     "fastchem_jax":         CE_fastchem_jax,    # alias
+    "ce_fastchem_grid":     CE_fastchem_grid_jax,   # alias
+    "fastchem_ce_grid":     CE_fastchem_grid_jax,   # alias
     "rate_jax":             CE_rate_jax,        # alias
     "ce_rate_jax":          CE_rate_jax,        # alias
+    "ep_jax":               CE_element_potentials_jax,  # alias
+    "ce_element_potentials": CE_element_potentials_jax,  # alias
     "quench":               quench_approx,      # alias
 }
 
@@ -155,6 +165,8 @@ def _mu_auto(params, vmr_lay, nlay):
     """Use constant_mu if 'mu' is a free parameter, otherwise compute from VMR."""
     if "mu" in params:
         return constant_mu(params, nlay)
+    if "__mu_lay__" in vmr_lay:
+        return vmr_lay["__mu_lay__"]
     return compute_mu(vmr_lay)
 
 
@@ -165,6 +177,8 @@ def _mu_constant(params, vmr_lay, nlay):
 
 def _mu_dynamic(params, vmr_lay, nlay):
     """Mean molecular weight computed self-consistently from VMR profiles."""
+    if "__mu_lay__" in vmr_lay:
+        return vmr_lay["__mu_lay__"]
     return compute_mu(vmr_lay)
 
 

@@ -18,6 +18,8 @@ The configuration has these top-level blocks:
 * ``physics``: model scheme selectors (T-P, chemistry, RT, opac toggles)
 * ``opac``: opacity registries and wavelength grid controls
 * ``params``: retrieval parameter list (priors + fixed values)
+* ``element_potentials_jax``: explicit species/elements/solver config for EP chemistry (optional)
+* ``fastchem_grid_jax``: FastChem 5D grid interpolation config (optional)
 * ``sampling``: sampler engine selection and hyperparameters
 * ``runtime``: platform selection (cpu/gpu) and basic runtime knobs
 
@@ -105,7 +107,8 @@ data
 
 ``data.nasa9``
   Path to the NASA-9 thermo-coefficient folder, required for RateJAX chemical
-  equilibrium (``physics.vert_chem: CE_rate_jax`` / ``ce_rate_jax`` aliases).
+  equilibrium (``physics.vert_chem: CE_rate_jax`` / ``ce_rate_jax`` aliases) and
+  for the element-potentials backend (``physics.vert_chem: element_potentials_jax``).
 
   *Type*: string path or ``null``.
 
@@ -166,8 +169,10 @@ determines which retrieval parameters (in ``params``) you must provide.
 
   * ``constant_vmr`` (aliases: ``constant``)
   * ``constant_vmr_clr`` (aliases: ``constant_clr``, ``clr``)
-  * ``CE_fastchem_jax`` (aliases: ``ce``, ``chemical_equilibrium``, ``fastchem_jax``) *(placeholder / not implemented)*
+  * ``fastchem_grid_jax`` (aliases: ``ce_fastchem_grid``, ``fastchem_ce_grid``)
+  * ``CE_fastchem_jax`` (aliases: ``ce``, ``chemical_equilibrium``, ``fastchem_jax``) *(legacy alias for ``fastchem_grid_jax``)*
   * ``CE_rate_jax`` (aliases: ``rate_ce``, ``rate_jax``, ``ce_rate_jax``)
+  * ``CE_element_potentials_jax`` (aliases: ``element_potentials_jax``, ``ep_jax``, ``ce_element_potentials``)
   * ``quench_approx`` (aliases: ``quench``)
 
   Notes:
@@ -181,6 +186,10 @@ determines which retrieval parameters (in ``params``) you must provide.
     ``log_10_H_over_H2`` in ``params`` (constant-VMR modes derive ``H`` from the
     H2+He filler).
   * ``CE_rate_jax`` requires ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
+  * ``fastchem_grid_jax`` requires parameters ``M_to_H`` and ``C_to_O`` and a top-level
+    ``fastchem_grid_jax`` block with required ``grid_path``.
+  * ``CE_element_potentials_jax`` requires ``data.nasa9``, parameters ``M_to_H`` and ``C_to_O``,
+    and a top-level ``element_potentials_jax`` config block with explicit species list.
   * ``quench_approx`` uses RateJAX equilibrium plus quenching; requires at least
     ``M_to_H, C_to_O, Kzz, log_10_g``.
 

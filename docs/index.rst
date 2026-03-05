@@ -4,6 +4,8 @@ Exo_Skryer
 
 A JAX accelerated retrieval code.
 
+The repository can be found here: https://github.com/ELeeAstro/Exo_Skryer
+
 
 .. toctree::
   :maxdepth: 1

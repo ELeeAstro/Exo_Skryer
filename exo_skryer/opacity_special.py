@@ -196,10 +196,6 @@ def compute_hminus_ff_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
             "For constant_vmr/constant_vmr_clr you can provide parameter "
             "'log_10_H_over_H2' to derive H from the filler."
         )
-    if "log_10_ne_over_ntot" not in params:
-        raise ValueError(
-            "H- free-free requires parameter 'log_10_ne_over_ntot' (log10 of ne/n_tot)."
-        )
 
     sigma_log = opac["hminus_ff_log10_sigma"]
     log_temperature_grid = opac["hminus_log10_temperature_grid"]
@@ -208,8 +204,17 @@ def compute_hminus_ff_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
         sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
     ).astype(jnp.float64)
 
-    vmr_e = jnp.broadcast_to(10.0 ** params["log_10_ne_over_ntot"], (layer_count,))
-    vmr_e = jnp.clip(vmr_e, 0.0, 1.0)
+    if "e-" in layer_vmr:
+        vmr_e = jnp.broadcast_to(layer_vmr["e-"], (layer_count,))
+        vmr_e = jnp.clip(vmr_e, 0.0, 1.0)
+    else:
+        if "log_10_ne_over_ntot" not in params:
+            raise ValueError(
+                "H- free-free requires either electron VMR key 'e-' in state['vmr_lay'] "
+                "or parameter 'log_10_ne_over_ntot' (log10 of ne/n_tot)."
+            )
+        vmr_e = jnp.broadcast_to(10.0 ** params["log_10_ne_over_ntot"], (layer_count,))
+        vmr_e = jnp.clip(vmr_e, 0.0, 1.0)
     vmr_h = jnp.broadcast_to(layer_vmr["H"], (layer_count,))
     normalization = (vmr_e * vmr_h) * ((number_density**2) / density)
     return normalization[:, None] * sigma_values
