@@ -106,7 +106,7 @@ Reference/API
 .. automodapi:: exo_skryer.RT_em_1D_ck
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_1D_lbl
+.. automodapi:: exo_skryer.RT_em_1D_os
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.RT_em_schemes
@@ -118,7 +118,7 @@ Reference/API
 .. automodapi:: exo_skryer.RT_trans_1D_ck_trans
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_trans_1D_lbl
+.. automodapi:: exo_skryer.RT_trans_1D_os
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.refraction
