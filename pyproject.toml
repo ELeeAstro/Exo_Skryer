@@ -28,7 +28,6 @@ dependencies = [
   "tqdm",
   "seaborn",
   "corner",
-  "atmodeller",
 ]
 dynamic = ["version"]
 
@@ -36,6 +35,9 @@ dynamic = ["version"]
 exo-skryer = "exo_skryer.run_retrieval:main"
 
 [project.optional-dependencies]
+atmodeller = [
+    "atmodeller",
+]
 gpu = [
     "jax[cuda12_pip]",
 ]

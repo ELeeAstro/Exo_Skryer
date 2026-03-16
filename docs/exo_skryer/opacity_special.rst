@@ -22,7 +22,7 @@ Two separate switches are involved:
 .. code-block:: yaml
 
    physics:
-     opac_special: ck   # or lbl, or on
+     opac_special: ck   # or os, or on
 
 2) **Enable which H⁻ tables are built/loaded** (registry contents):
 

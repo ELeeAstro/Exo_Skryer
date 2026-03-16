@@ -111,6 +111,10 @@ def _parse_species_arg(species_arg: str | None) -> List[str]:
     return [s.strip() for s in species_arg.split(",") if s.strip()]
 
 
+def _default_plot_species(vmr_lay: Dict[str, np.ndarray]) -> List[str]:
+    return [key for key in vmr_lay.keys() if not str(key).startswith("__")]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, help="Path to retrieval_config.yaml")
@@ -141,6 +145,7 @@ def main() -> None:
         init_atmodeller_if_needed,
         prepare_chemistry_kernel,
     )
+    from exo_skryer.vert_mu import compute_mu
 
     posterior_path = exp_dir / "posterior.nc"
     if not posterior_path.exists():
@@ -176,11 +181,11 @@ def main() -> None:
 
     requested_species = _parse_species_arg(args.species)
     if not requested_species:
-        ep_cfg = getattr(cfg, "element_potentials_jax", None)
+        ep_cfg = getattr(cfg, "easychem_jax", None)
         if ep_cfg is not None and getattr(ep_cfg, "species", None):
             requested_species = [str(s) for s in ep_cfg.species]
         else:
-            requested_species = list(vmr_lay.keys())
+            requested_species = _default_plot_species(vmr_lay)
 
     missing = [s for s in requested_species if s not in vmr_lay]
     plot_species = [s for s in requested_species if s in vmr_lay]
@@ -193,32 +198,50 @@ def main() -> None:
         print(f"[warn] Skipping unavailable species: {missing}")
 
     p_bar = np.asarray(p_lay / bar)
-    fig, ax = plt.subplots(figsize=(8.0, 6.0))
+    mu_lay = np.asarray(vmr_lay["__mu_lay__"]) if "__mu_lay__" in vmr_lay else np.asarray(compute_mu(vmr_lay))
+
+    fig_vmr, ax_vmr = plt.subplots(figsize=(8.0, 6.0))
     for sp in plot_species:
         x = np.clip(np.asarray(vmr_lay[sp]), 1e-300, 1.0)
-        ax.plot(x, p_bar, lw=1.8, label=sp)
+        ax_vmr.plot(x, p_bar, lw=1.8, label=sp)
 
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.invert_yaxis()
-    ax.set_xlabel("VMR")
-    ax.set_ylabel("Pressure [bar]")
-    ax.set_title("Best-fit Chemistry (Posterior Median)")
-    ax.set_xlim(1e-14, 1.0)
-    ax.grid(True, alpha=0.25)
-    ax.legend(fontsize=8, ncol=2)
-    fig.tight_layout()
+    ax_vmr.set_xscale("log")
+    ax_vmr.set_yscale("log")
+    ax_vmr.invert_yaxis()
+    ax_vmr.set_xlabel("VMR")
+    ax_vmr.set_ylabel("Pressure [bar]")
+    ax_vmr.set_title("Best-fit Chemistry (Posterior Median)")
+    ax_vmr.set_xlim(1e-14, 1.0)
+    ax_vmr.grid(True, alpha=0.25)
+    ax_vmr.legend(fontsize=8, ncol=2)
+    fig_vmr.tight_layout()
 
-    out_png = exp_dir / f"{args.outname}.png"
-    out_pdf = exp_dir / f"{args.outname}.pdf"
-    fig.savefig(out_png, dpi=180)
-    fig.savefig(out_pdf, dpi=180)
-    print(f"[bestfit_chem] Saved:\n  {out_png}\n  {out_pdf}")
+    fig_mu, ax_mu = plt.subplots(figsize=(7.0, 6.0))
+    ax_mu.plot(mu_lay, p_bar, lw=2.0, color="black")
+    ax_mu.set_xscale("log")
+    ax_mu.set_yscale("log")
+    ax_mu.invert_yaxis()
+    ax_mu.set_xlabel("Mean Molecular Weight")
+    ax_mu.set_ylabel("Pressure [bar]")
+    ax_mu.set_title("Best-fit Mean Molecular Weight")
+    ax_mu.grid(True, alpha=0.25)
+    fig_mu.tight_layout()
+
+    out_vmr_png = exp_dir / f"{args.outname}_vmr.png"
+    out_vmr_pdf = exp_dir / f"{args.outname}_vmr.pdf"
+    out_mu_png = exp_dir / f"{args.outname}_mu.png"
+    out_mu_pdf = exp_dir / f"{args.outname}_mu.pdf"
+    fig_vmr.savefig(out_vmr_png, dpi=180)
+    fig_vmr.savefig(out_vmr_pdf, dpi=180)
+    fig_mu.savefig(out_mu_png, dpi=180)
+    fig_mu.savefig(out_mu_pdf, dpi=180)
+    print(f"[bestfit_chem] Saved:\n  {out_vmr_png}\n  {out_vmr_pdf}\n  {out_mu_png}\n  {out_mu_pdf}")
 
     out_npz = exp_dir / f"{args.outname}.npz"
     np.savez_compressed(
         out_npz,
         pressure_bar=p_bar,
+        mu=mu_lay,
         species=np.array(plot_species, dtype=object),
         vmr=np.stack([np.asarray(vmr_lay[s]) for s in plot_species], axis=1),
     )
@@ -230,4 +253,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

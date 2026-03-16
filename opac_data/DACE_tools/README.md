@@ -37,7 +37,7 @@ Cross-sections are in units of cm² molecule⁻¹ (most species) or cm² g⁻¹
 ## Input files
 
 Both scripts share the same plain-text input file structure
-(`input_OS.txt` / `input_ck.txt`), with comments starting with `#`:
+(`input_os.txt` / `input_ck.txt`), with comments starting with `#`:
 
 ```
 # wl start (micron)
@@ -48,17 +48,27 @@ Both scripts share the same plain-text input file structure
 250
 # wavelength output file
 wl_ck_R250.txt
-# output base name (.zarr and .zarr.zip will be produced)
+# output base name template (.zarr and .zarr.zip will be produced)
 H2O_ck_R250.txt
 # input form (currently unused, set to 1)
 1
 # species  mol_weight  T_min  T_max  wn_start  wn_end  binary_dir
 H2O 18.01528 50 6100 0 42000 ../opacities/H2O_EXOMOL
+CO  28.0101  50 6100 0 23000 ../opacities/CO_EXOMOL
 ```
 
 The `wn_start` / `wn_end` values select which DACE binary files to open.
 Temperature bounds (`T_min`, `T_max`) are informational; the actual
 temperature list is discovered by globbing the binary directory.
+
+Species processing rules:
+
+- The scripts process every uncommented species line after the 14-line header.
+- They stop at the first blank line *after* the active species block.
+- This lets you keep multiple commented candidate species below the active block.
+- If more than one species is active, the scripts auto-name outputs per species
+  (for example `H2O_R20000.zarr.zip`, `CH4_R20000.zarr.zip`,
+  `H2O_ck_R250.zarr.zip`).
 
 ---
 
@@ -87,6 +97,9 @@ wavelength grid directly from the DACE high-resolution binaries.
 | `wavelength` | (nλ,) | float64 | Wavelength grid (µm), ascending |
 | `cross_section` | (nT, nP, nλ) | float32 | log₁₀ cross-section (cm² molecule⁻¹) |
 | attr `molecule` | — | str | Species name |
+
+Exo_Skryer reads the linear `temperature` and `pressure` arrays from the Zarr
+store and computes `log10(T)` and `log10(P)` internally for interpolation.
 
 ---
 
@@ -121,6 +134,9 @@ Gauss-Legendre quadrature.
 | `g_weights` | (ng,) | float64 | Quadrature weights (normalised, sum to 1) |
 | `cross_section` | (nT, nP, nλ, ng) | float32 | log₁₀ k-coefficient (cm² molecule⁻¹) |
 | attr `molecule` | — | str | Species name |
+
+Exo_Skryer again reads only the linear `temperature` and `pressure` axes and
+derives the log grids internally in the opacity registries.
 
 ---
 

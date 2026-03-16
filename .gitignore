@@ -142,7 +142,6 @@ opac_data/**/*.hdf5
 opac_data/**/*.h5
 opac_data/**/*.dat
 opac_data/**/*.fits
-opac_data/**/*.txt
 opac_data/**/*.cia
 opac_data/**/*.zarr
 opac_data/**/*.zarr.zip

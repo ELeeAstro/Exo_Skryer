@@ -46,6 +46,15 @@ _REQUIRED_KEYS_LOG10 = (
 )
 
 
+def _safe_log10_axis(name: str, arr: np.ndarray) -> np.ndarray:
+    """Return log10(arr) for a strictly positive 1D axis."""
+    if np.any(arr <= 0.0):
+        raise ValueError(
+            f"FastChem grid axis '{name}' must be strictly positive for log10 interpolation."
+        )
+    return np.log10(arr)
+
+
 def _decode_species_names(values: np.ndarray) -> tuple[str, ...]:
     out: list[str] = []
     for raw in values:
@@ -156,7 +165,6 @@ def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
         interp_CO_np = log10_CO_np
         log10_vmr = jnp.asarray(log10_vmr_np, dtype=jnp.float64)
         log10_mmw = jnp.asarray(log10_mmw_np, dtype=jnp.float64)
-        use_log_axes = True
     else:
         T_np = np.asarray(data["temperature"], dtype=np.float64)
         P_np = np.asarray(data["pressure"], dtype=np.float64)
@@ -169,11 +177,15 @@ def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
         mmw_np = np.maximum(mmw_np, 1e-300)
         log10_vmr = jnp.log10(jnp.asarray(vmr_np, dtype=jnp.float64))
         log10_mmw = jnp.log10(jnp.asarray(mmw_np, dtype=jnp.float64))
-        interp_T_np = T_np
-        interp_P_np = P_np
+        # Always interpolate in log-space:
+        # - T, P, C/O are converted to log10 axes.
+        # - M/H is already in dex (a log quantity), so values are used directly.
+        interp_T_np = _safe_log10_axis("temperature", T_np)
+        interp_P_np = _safe_log10_axis("pressure", P_np)
         interp_MH_np = MH_np
-        interp_CO_np = CO_np
-        use_log_axes = False
+        interp_CO_np = _safe_log10_axis("C_O", CO_np)
+
+    use_log_axes = True
 
     species_names = _decode_species_names(np.asarray(data["species_names"]))
 

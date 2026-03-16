@@ -16,8 +16,8 @@ import equinox as eqx
 
 from .data_constants import amu, kb, bar, R
 from .rate_jax import RateJAX, get_nasa9_cache
-from .chem_equilibrium_jax import (
-    ElementPotentialsModel,
+from .chem_easychem_short_jax import (
+    EasyChemShortModel,
     solve_profile_scan,
     solve_profile_vmap,
 )
@@ -54,7 +54,7 @@ __all__ = [
     "CE_fastchem_jax",
     "CE_fastchem_grid_jax",
     "CE_rate_jax",
-    "CE_element_potentials_jax",
+    "CE_easychem_jax",
     "quench_approx",
     "CE_atmodeller",
     "load_element_potentials_cache",
@@ -78,7 +78,7 @@ _ATMODELLER_ELEM_MASSES: np.ndarray = None  # atomic masses [g/mol] in same orde
 # ---------------------------------------------------------------------------
 # Global element-potentials cache
 # ---------------------------------------------------------------------------
-_EP_MODEL: ElementPotentialsModel | None = None
+_EP_MODEL: EasyChemShortModel | None = None
 _EP_SPECIES: tuple[str, ...] = ()
 _EP_ELEMENTS: tuple[str, ...] = ()
 _EP_SOLVER_CFG: dict[str, Any] = {}
@@ -153,12 +153,12 @@ def load_element_potentials_cache(
     p0_bar: float = 1.0,
     e_ref: str = "H",
 ) -> None:
-    """Build and cache the element-potentials model for retrieval use."""
+    """Build and cache the production CE model for retrieval use."""
     del nlay  # Reserved for API symmetry with atmodeller init.
     global _EP_MODEL, _EP_SPECIES, _EP_ELEMENTS, _EP_SOLVER_CFG
 
     if not species_list:
-        raise ValueError("element_potentials_jax.species must be a non-empty list.")
+        raise ValueError("easychem_jax.species must be a non-empty list.")
 
     element_seq = tuple(elements) if elements else None
     if element_seq is not None and len(element_seq) == 0:
@@ -168,21 +168,20 @@ def load_element_potentials_cache(
         unsupported = [e for e in element_seq if e not in {"H", "He", "C", "N", "O", "S", "Na", "K", "Si"}]
         if unsupported:
             raise ValueError(
-                "Unsupported elements for element_potentials_jax budgets: "
+                "Unsupported elements for easychem_jax budgets: "
                 f"{unsupported}. Supported: H, He, C, N, O, S, Na, K, Si."
             )
 
     if e_ref and element_seq is not None and e_ref not in element_seq:
-        raise ValueError(f"element_potentials_jax.e_ref='{e_ref}' is not in elements list {element_seq}.")
+        raise ValueError(f"easychem_jax.e_ref='{e_ref}' is not in elements list {element_seq}.")
 
     b_seed = {e: 1.0 for e in (element_seq if element_seq is not None else ("H", "He", "C", "N", "O"))}
-    _EP_MODEL = ElementPotentialsModel.from_nasa9_dir(
+    _EP_MODEL = EasyChemShortModel.from_nasa9_dir(
         nasa9_dir,
         species=tuple(species_list),
         elements=element_seq,
         element_budgets=b_seed,
         P0_bar=float(p0_bar),
-        e_ref=e_ref,
     )
     _EP_SPECIES = tuple(_EP_MODEL.species)
     _EP_ELEMENTS = tuple(_EP_MODEL.elements)
@@ -191,13 +190,13 @@ def load_element_potentials_cache(
         "mode": "scan",
         "max_steps": 64,
         "tol": 1.0e-11,
-        "throw": False,
-        "prefer_chord": True,
+        "throw": True,
+        "relax_limit": 0.75,
     }
     _EP_SOLVER_CFG = {**solver_defaults, **(solver_kwargs or {})}
     _EP_SOLVER_CFG["mode"] = str(_EP_SOLVER_CFG.get("mode", "scan")).lower()
     if _EP_SOLVER_CFG["mode"] not in ("scan", "vmap"):
-        raise ValueError("element_potentials_jax.solver.mode must be one of: scan, vmap")
+        raise ValueError("easychem_jax.solver.mode must be one of: scan, vmap")
 
 
 def is_element_potentials_cache_loaded() -> bool:
@@ -236,7 +235,7 @@ def _element_budgets_from_params(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
             vals.append(solar_Si * zscale)
         else:
             raise ValueError(
-                f"Element {e!r} has no budget rule in CE_element_potentials_jax. "
+                f"Element {e!r} has no budget rule in CE_easychem_jax. "
                 "Supported: H, He, C, N, O, S, Na, K, Si."
             )
     return jnp.asarray(vals, dtype=jnp.float64)
@@ -274,10 +273,16 @@ def load_atmodeller_cache(
         for faster GPU throughput.
     """
     global _ATMODELLER_MODEL, _ATMODELLER_STATE, _ATMODELLER_SOLVER, _ATMODELLER_SPECIES_NETWORK, _ATMODELLER_GAS_KEYS, _ATMODELLER_SPECIES, _ATMODELLER_ELEM_KEYS, _ATMODELLER_ELEM_MASSES
-    from atmodeller import SpeciesNetwork, ThermodynamicState
-    from atmodeller.containers import Parameters, SolverParameters
-    from atmodeller.solvers import make_independent_solver
-    from molmass import Formula
+    try:
+        from atmodeller import SpeciesNetwork, ThermodynamicState
+        from atmodeller.containers import Parameters, SolverParameters
+        from atmodeller.solvers import make_independent_solver
+        from molmass import Formula
+    except ImportError as exc:
+        raise ImportError(
+            "The 'atmodeller' chemistry backend is optional and is not installed. "
+            "Install the optional dependencies for the atmodeller backend, then retry."
+        ) from exc
 
     _ATMODELLER_SPECIES_NETWORK = SpeciesNetwork.create(tuple(species_list))
 
@@ -559,8 +564,6 @@ def CE_fastchem_grid_jax(
         )
 
     vmr_matrix = jnp.clip(vmr_matrix, 0.0, jnp.inf)
-    vmr_sum = jnp.sum(vmr_matrix, axis=1, keepdims=True)
-    vmr_matrix = vmr_matrix / jnp.maximum(vmr_sum, 1e-300)
 
     out = {sp: vmr_matrix[:, i] for i, sp in enumerate(_FC_GRID_SPECIES_OUT)}
     out["__mu_lay__"] = jnp.clip(mmw_lay, 1e-30, jnp.inf)
@@ -646,18 +649,18 @@ def CE_rate_jax(
     return vmr_lay
 
 
-def CE_element_potentials_jax(
+def CE_easychem_jax(
     p_lay: jnp.ndarray,
     T_lay: jnp.ndarray,
     params: Dict[str, jnp.ndarray],
     nlay: int,
 ) -> Dict[str, jnp.ndarray]:
-    """Compute equilibrium profiles using the element-potentials JAX backend."""
+    """Compute equilibrium profiles using the production CE JAX backend."""
     del nlay  # Kept for API compatibility.
     if _EP_MODEL is None:
         raise RuntimeError(
-            "Element-potentials cache not loaded. "
-            "Call load_element_potentials_cache() before using CE_element_potentials_jax."
+            "EasyChem cache not loaded. "
+            "Call load_element_potentials_cache() before using CE_easychem_jax."
         )
 
     b = _element_budgets_from_params(params)
@@ -668,21 +671,33 @@ def CE_element_potentials_jax(
     max_steps = int(_EP_SOLVER_CFG.get("max_steps", 64))
     tol = float(_EP_SOLVER_CFG.get("tol", 1.0e-11))
     throw = bool(_EP_SOLVER_CFG.get("throw", False))
-    prefer_chord = bool(_EP_SOLVER_CFG.get("prefer_chord", True))
+    relax_limit = float(_EP_SOLVER_CFG.get("relax_limit", 0.75))
 
     if mode == "vmap":
-        _Lambda_prof, y_prof, _n_prof, _result_prof = solve_profile_vmap(
-            T_lay, p_bar, inp, max_steps=max_steps, tol=tol, throw=throw
+        _packed_prof, y_prof, _n_prof, result_prof = solve_profile_vmap(
+            T_lay, p_bar, inp, max_steps=max_steps, tol=tol, relax_limit=relax_limit
         )
     else:
-        _Lambda_prof, y_prof, _n_prof, _result_prof = solve_profile_scan(
-            T_lay, p_bar, inp, Lambda_init=None, max_steps=max_steps, tol=tol, throw=throw, prefer_chord=prefer_chord
+        _packed_prof, y_prof, _n_prof, result_prof = solve_profile_scan(
+            T_lay, p_bar, inp, state_init=None, max_steps=max_steps, tol=tol, relax_limit=relax_limit
         )
+
+    failed = result_prof != 0
+    if bool(jnp.any(failed)):
+        n_failed = int(jnp.sum(failed))
+        if throw:
+            raise RuntimeError(
+                "EasyChem SHORT CE solve failed to converge for "
+                f"{n_failed}/{int(result_prof.shape[0])} layers."
+            )
 
     y_prof = jnp.clip(y_prof, 0.0, jnp.inf)
     y_sum = jnp.sum(y_prof, axis=1, keepdims=True)
     vmr_arr = y_prof / jnp.maximum(y_sum, 1e-300)
+    vmr_arr = jnp.where(failed[:, None], jnp.nan, vmr_arr)
     return {sp: vmr_arr[:, i] for i, sp in enumerate(_EP_SPECIES)}
+
+
 
 
 def _chemical_timescale(species: str, T_K: jnp.ndarray, p_bar: jnp.ndarray) -> jnp.ndarray:

@@ -9,6 +9,8 @@ import os
 import matplotlib.pyplot as plt
 from astropy import constants as const
 import shutil
+import zarr
+from zarr.storage import ZipStore
 
 
 def round_in_log(x):
@@ -26,6 +28,36 @@ def safe_log10(arr, floor=1e-300):
     finite = np.isfinite(x)
     out[finite] = np.log10(np.maximum(x[finite], floor))
     return out
+
+
+def load_tp_grid_from_opacity(path):
+    """
+    Load linear temperature [K] and pressure [bar] grids from an opacity table.
+
+    Supports:
+    - Zarr directory stores
+    - Zarr zip stores (.zarr.zip)
+    - legacy NPZ files with temperature/pressure arrays
+    """
+    path = os.path.expanduser(path)
+
+    if path.endswith(".npz"):
+        data = np.load(path)
+        T = np.asarray(data["temperature"], dtype=float)
+        p = np.asarray(data["pressure"], dtype=float)
+        return T, p
+
+    if path.endswith(".zarr.zip"):
+        with ZipStore(path, mode="r") as store:
+            root = zarr.open_group(store=store, mode="r")
+            T = np.asarray(root["temperature"][:], dtype=float)
+            p = np.asarray(root["pressure"][:], dtype=float)
+            return T, p
+
+    root = zarr.open_group(path, mode="r")
+    T = np.asarray(root["temperature"][:], dtype=float)
+    p = np.asarray(root["pressure"][:], dtype=float)
+    return T, p
 
 
 def modify_abundances(input_file, output_file, M_H, C_O_ratio):
@@ -93,37 +125,30 @@ def modify_abundances(input_file, output_file, M_H, C_O_ratio):
             # C/O = 10^(log_C - log_O)
             # log_C = log(C/O) + log_O
             C_abundance = np.log10(C_O_ratio) + O_abundance_new
-            modified_lines.append(f"{element}  {C_abundance:.2f}\n")
+            modified_lines.append(f"{element}  {C_abundance:.8f}\n")
         else:
-            modified_lines.append(f"{element}  {new_abundance:.2f}\n")
+            modified_lines.append(f"{element}  {new_abundance:.8f}\n")
 
     with open(output_file, 'w') as f:
         f.writelines(modified_lines)
 
     return output_file
 
-# Load T and p grid from opacity data to ensure exact matching
-opacity_file = '../opac_data/lbl/H2O_R10000.npz'
-opac_data = np.load(opacity_file)
-T = opac_data['temperature']  # Temperature in K
-p = opac_data['pressure']      # Pressure in bar
-
-# T = [500.0,1000.0]
-# T = np.array(T)
-# p = [1e-3,1e-2]
-# p = np.array(p)
-
-T = np.round(np.geomspace(300, 6000, 22), -1)
-p = round_in_log(np.geomspace(1e-8, 10, 20))
+# Load T and p grid from opacity data to ensure exact matching.
+# Update this path if you want FastChem to follow a different opacity reference file.
+opacity_grid_file = '../opac_data/ck/H2O_ck_R1000.zarr.zip'
+T, p = load_tp_grid_from_opacity(opacity_grid_file)
 
 # Setup M/H and C/O grid
-log_M_H = np.linspace(-1, 3, 11)  # [M/H] from -1 to +3 dex
-log_C_O = np.linspace(-1, 0.3, 16)  # log(C/O) from -1 to +3 dex
+log_M_H = np.linspace(-2, 3, 20)  # [M/H] from -2 to +3 dex
+log_C_O = np.linspace(-1, 1, 10)  # log(C/O) from -1 to +1 dex
 M_H_grid = log_M_H  # These are already in log space
 C_O_grid = 10.0**log_C_O  # Convert to linear C/O ratio
 
 print(f"Temperature grid: {len(T)} points")
 print(f"Pressure grid: {len(p)} points")
+print(f"log_M_H grid: {log_M_H}")
+print(f"log_C_O grid: {log_C_O}")
 print(f"Metallicity grid: {len(M_H_grid)} points, [M/H] = {M_H_grid}")
 print(f"C/O ratio grid: {len(C_O_grid)} points, C/O = {C_O_grid}")
 print(f"Total grid points: {len(T)} x {len(p)} x {len(M_H_grid)} x {len(C_O_grid)} = {len(T) * len(p) * len(M_H_grid) * len(C_O_grid)}")

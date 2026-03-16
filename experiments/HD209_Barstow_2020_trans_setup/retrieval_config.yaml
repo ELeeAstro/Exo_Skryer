@@ -28,8 +28,8 @@ physics:
   #                     ce (FastChem equil.) | fastchem_grid_jax (FastChem 5D interpolation grid) |
   #                     rate_ce (rate-based equil.) | quench_approx |
   #                     atmodeller (atmodeller equil.; requires atmodeller.species_network below) |
-  #                     element_potentials_jax (requires element_potentials_jax block below)
-  vert_chem: fastchem_grid_jax #constant_vmr
+  #                     easychem_jax (requires easychem_jax block below)
+  vert_chem: constant_vmr
 
   # Mean molecular weight. Options: dynamic (computed from VMR) | constant (uses 'mu' param) | auto
   vert_mu: dynamic
@@ -106,13 +106,13 @@ params:
   - {name: T_strat, dist: uniform, low: 100.0, high: 3000.0, transform: logit, init: 1500.0}  # stratospheric temperature [K]
 
   # --- Chemistry (log10 VMR) ---
-  #- {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
-  #- {name: log_10_f_Na,  dist: uniform, low: -12, high: -2, transform: logit, init: -6}
-  #- {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
+  - {name: log_10_f_Na,  dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  - {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
 
-  # --- Chemistry (atmodeller: replace log_10_f_* above with these when vert_chem: atmodeller or element_potentials_jax) ---
-  - {name: M_to_H, dist: uniform, low: -1.5, high: 3.0, transform: logit, init: 0.0}
-  - {name: C_to_O, dist: uniform, low: 0.05, high: 2.0, transform: logit, init: 0.55}
+  # --- Chemistry (atmodeller: replace log_10_f_* above with these when vert_chem: atmodeller or easychem_jax) ---
+  #- {name: M_to_H, dist: uniform, low: -1.5, high: 3.0, transform: logit, init: 0.0}
+  #- {name: C_to_O, dist: uniform, low: 0.05, high: 2.0, transform: logit, init: 0.55}
 
   # --- Cloud (constant profile + F18 opacity) ---
   - {name: log_10_q_c,  dist: uniform, low: -12, high: 0,  transform: logit, init: 0   }  # cloud mass mixing ratio [log10]
@@ -161,9 +161,9 @@ atmodeller:
     jac: fwd                 # Jacobian mode: fwd (forward-mode AD) or bwd (reverse)
 
 # ----------------------------------------------------------------------------------
-# Element-Potentials JAX Chemistry
+# EasyChem JAX Chemistry
 # ----------------------------------------------------------------------------------
-element_potentials_jax:
+easychem_jax:
   species:
     - C
     - C2H2
@@ -234,7 +234,7 @@ fastchem_grid_jax:
 sampling:
   # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest
   # Only the section matching 'engine' below is used at runtime.
-  engine: dynesty
+  engine: nautilus
 
   # NUTS / HMC settings
   nuts:
@@ -247,7 +247,7 @@ sampling:
   # JAXNS settings
   jaxns:
     max_samples: 100000
-    num_live_points: 1000
+    num_live_points: 100
     s: 4
     k: 0
     c: null
@@ -261,7 +261,7 @@ sampling:
     termination:
       ess: 10000
       evidence_uncert: null
-      dlogZ: 0.1
+      dlogZ: 1.0
       max_samples: 100000
       max_num_likelihood_evaluations: null
       rtol: null

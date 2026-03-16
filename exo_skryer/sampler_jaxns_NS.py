@@ -13,11 +13,31 @@ from __future__ import annotations
 
 from typing import Dict, Any, Tuple
 from pathlib import Path
+import types
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+
+def _patch_jax_for_tfp() -> None:
+    """Compatibility shim for TFP versions expecting removed JAX symbols."""
+    try:
+        interps = getattr(jax, "interpreters", None)
+        if interps is None:
+            return
+        xla_mod = getattr(interps, "xla", None)
+        if xla_mod is None:
+            xla_mod = types.SimpleNamespace()
+            setattr(interps, "xla", xla_mod)
+        if not hasattr(xla_mod, "pytype_aval_mappings"):
+            setattr(xla_mod, "pytype_aval_mappings", jax.core.pytype_aval_mappings)
+    except Exception:
+        # If patching fails, normal import path will raise the underlying error.
+        pass
+
+
+_patch_jax_for_tfp()
 import tensorflow_probability.substrates.jax as tfp
 from jaxns import NestedSampler, TerminationCondition, resample, Model, Prior, summary
 from jaxns.utils import save_results

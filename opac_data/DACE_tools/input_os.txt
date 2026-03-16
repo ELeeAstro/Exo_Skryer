@@ -1,0 +1,51 @@
+# wl start
+0.3
+# wl end
+30.0
+# resolution (R)
+20000
+# wavelength output file
+wl_R20000.txt
+# *.txt output_extension (will be *.zarr and *.zarr.zip)
+H2O_R20000.txt
+# input form
+1
+# sp, mw, minT maxT, start_wn, end_wn, dir
+H2O 18.01528 50 6100 0 42000 ../../opacities/H2O_EXOMOL
+
+#CaH 41.0859 50 4500 0 30000 ../../opacities/CaH_EXOMOL
+#SiO 44.08490 200 6100 0 66481 ../../opacities/SiO_EXOMOL 
+#CO2 44.0095 50 2900 0 20000 ../../opacities/CO2_EXOMOL
+#SO2 64.0638 50 1900 0 08000 ../../opacities/SO2_ExoAmes 
+#H2S 34.0809 50 2900 0 35000 ../../opacities/H2S_EXOMOL
+#HCN 27.0253 50 3900 0 18000 ../../opacities/HCN_EXOMOL
+#OH 17.00734 50 6100 0 50000 ../../opacities/OH_EXOMOL
+#C2H2 26.0373 50 2900 0 10000 ../../opacities/C2H2_EXOMOL
+
+#NH3 17.03052 50 1900 0 20000 ../../opacities/NH3_EXOMOL
+#CH4 16.0425 50 1900 0 12000 ../../opacities/CH4_EXOMOL
+#CO 28.0101 50 6100 0 23000 ../../opacities/CO_EXOMOL
+#K 39.09830 100 4000 0 36000 ../../opacities/K_Kitzmann
+#Na 22.989769280 100 4000 0 36000 ../../opacities/Na_Kitzmann
+
+
+#CO2 44.0095 50 2900 0 18000 ../opacities/CO2_HITEMP
+#OH 17.00734 200 6100 0 43409 ../opacities/OH_HITEMP
+#Fe 55.8450 200 6100 0 0 ../opacities/Fe_Kitzmann
+#FeII 55.8450 200 6100 0 0 ../opacities/FeII_Kitzmann
+#VO 66.9409 200 6100 0 35000 ../opacities/VO_EXOMOL 
+#TiO 63.8664 50 4900 0 30000 ../opacities/TiO_EXOMOL
+#SO 48.0644 50 4900 0 45000 ../opacities/SO_EXOMOL 
+#SO3 80.0632 50 1000 0 05000 ../opacities/SO3_EXOMOL
+#SH 33.0729 200 4900 0 37556 ../opacities/SH_EXOMOL 
+#PO 46.97316 50 4500 0 12000 ../opacities/PO_EXOMOL
+#PH3 33.99758 50 2900 0 10000 ../opacities/PH3_EXOMOL
+#CS2 76.1407 50 2500 0 06500 ../opacities/CS2_HITRAN
+#OCS 60.0751 50 1900 0 10000 ../opacities/OCS_EXOMOL 
+#HF 20.006343 200 4900 0 32352 ../opacities/HF_EXOMOL
+#FeH 56.8529 200 6100 0 16136 ../opacities/FeH_EXOMOL
+#HCl 36.4609 50 4500 0 21000 ../opacities/HCl_HITRAN
+#C2H4 28.0532 50 1500 0 08000 ../opacities/C2H4_EXOMOL
+#CH4 16.0425 50 2500 0 14000 ../opacities/CH4_HITEMP
+
+

@@ -33,7 +33,7 @@ Overview
            │
            │  input_os.txt / input_ck.txt
            ▼
-   Gen_os_table_R_zarr.py   →  <species>_R<R>.zarr  +  <species>_R<R>.zarr.zip
+   Gen_OS_table_R_zarr.py   →  <species>_R<R>.zarr  +  <species>_R<R>.zarr.zip
    Gen_ck_table_R_zarr.py   →  <species>_ck_R<R>.zarr  +  <species>_ck_R<R>.zarr.zip
            │
            │  wl_R<R>.txt / wl_ck_R<R>.txt  (shared wavelength grid)
@@ -62,7 +62,7 @@ Prerequisites
    All scripts and input templates live in::
 
       opac_data/DACE_tools/
-      ├── Gen_os_table_R_zarr.py
+      ├── Gen_OS_table_R_zarr.py
       ├── Gen_ck_table_R_zarr.py
       ├── input_os.txt          ← template for OS tables
       └── input_ck.txt          ← template for c-k tables
@@ -99,9 +99,9 @@ The scripts convert to cm² molecule⁻¹ using
 Input File Format
 =================
 
-Both scripts read the same plain-text input format.  Lines beginning with
-``#`` are comments, and blank/commented species lines are ignored, making it
-easy to switch between species without editing the file.
+Both scripts read the same plain-text input format. Lines beginning with
+``#`` are comments. After the 14-line header, the scripts process every
+uncommented species line until the first blank line after the active block.
 
 .. code-block:: text
 
@@ -113,12 +113,13 @@ easy to switch between species without editing the file.
    250
    # wavelength output file
    wl_ck_R250.txt
-   # output base name (.zarr and .zarr.zip will be produced)
+   # output base name template (.zarr and .zarr.zip will be produced)
    H2O_ck_R250.txt
    # input form (currently unused, set to 1)
    1
    # species  mol_weight  T_min  T_max  wn_start  wn_end  binary_dir
    H2O 18.01528 50 6100 0 42000 ../opacities/H2O_EXOMOL
+   CO  28.0101  50 6100 0 23000 ../opacities/CO_EXOMOL
 
 Field descriptions:
 
@@ -137,8 +138,9 @@ Field descriptions:
   and must be referenced as ``opac.wl_master`` in the YAML config.
 
 ``out_name``
-  Base output name. The scripts produce ``<out_name>.zarr`` (directory) and
-  ``<out_name>.zarr.zip`` (portable zip).
+  Output-name template. If exactly one species is active, the scripts use this
+  name directly. If multiple species are active, they auto-generate
+  per-species names such as ``H2O_R20000.zarr`` or ``H2O_ck_R250.zarr``.
 
 ``species``
   Molecule identifier string (informational; stored as a Zarr attribute).
@@ -158,8 +160,9 @@ Field descriptions:
   Path (relative to the script, or absolute) to the directory of DACE ``.bin``
   files for this species.
 
-To process multiple species in one run, add one species line per molecule.
-Comment out lines with ``#`` to skip them.
+To process multiple species in one run, add one active species line per
+molecule in a contiguous block. Comment out lines with ``#`` to skip them, and
+leave a blank line after the active block to stop processing.
 
 
 Generating Opacity Sampling (OS) Tables
@@ -167,7 +170,11 @@ Generating Opacity Sampling (OS) Tables
 
 Run the OS script from within ``opac_data/DACE_tools/``::
 
-   python Gen_os_table_R_zarr.py input_os.txt
+   python Gen_OS_table_R_zarr.py
+
+or explicitly::
+
+   python Gen_OS_table_R_zarr.py --input input_os.txt
 
 **What the script does:**
 
@@ -211,13 +218,23 @@ Run the OS script from within ``opac_data/DACE_tools/``::
      - str
      - Species name
 
+.. note::
+
+   Exo_Skryer reads the linear ``temperature`` and ``pressure`` arrays from the
+   Zarr store and computes ``log10(T)`` and ``log10(P)`` internally for
+   interpolation. The files do not need to provide separate log-axis arrays.
+
 
 Generating Correlated-k (c-k) Tables
 ======================================
 
 Run the c-k script from within ``opac_data/DACE_tools/``::
 
-   python Gen_ck_table_R_zarr.py input_ck.txt
+   python Gen_ck_table_R_zarr.py
+
+or explicitly::
+
+   python Gen_ck_table_R_zarr.py --input input_ck.txt
 
 **What the script does:**
 
@@ -272,6 +289,12 @@ Run the c-k script from within ``opac_data/DACE_tools/``::
      - str
      - Species name
 
+.. note::
+
+   As with OS tables, Exo_Skryer loads the linear ``temperature`` and
+   ``pressure`` axes and derives the log grids internally in the opacity
+   registries.
+
 
 Output Files
 ============
@@ -297,7 +320,8 @@ Both formats are read transparently by ``registry_ck.py`` and
 that is absent, the registry automatically falls back to the ``.zarr.zip``
 file in the same location.
 
-Move the output files into the appropriate subdirectory::
+Move the output files into the appropriate subdirectory. For multi-species
+runs, move each generated species table plus the shared wavelength file::
 
    mv H2O_R20000.zarr     opac_data/os/
    mv H2O_R20000.zarr.zip opac_data/os/

@@ -49,8 +49,9 @@ Opacity data
 Some input correlated-k tables, opacity sampled tables and CIA tables can be found at the following:
 `Exo Skryer opacity collection <https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link>`__
 
-Where I have prepared .npz and .zarr.zip files for each opacity source. 
-npz is a numpy native compression format, which is not flexible but easy to use. zarr is a modern compression format which is very fast and can do parallel reads.
+Where I have prepared ``.zarr`` directory stores and ``.zarr.zip`` archives for each opacity source.
+Zarr is the standard format for Exo Skryer: it is fast, supports parallel reads, and scales well.
+If only a ``.zarr`` path is specified in the YAML, the code will automatically fall back to ``.zarr.zip`` if the directory store is not present.
 
 Exo Skryer can also use the TauREX (opacity sampling mode) and petitRADTRANS (correlated-k mode) tables available from the `ExoMol website <https://www.exomol.com/>`__
 
@@ -76,13 +77,13 @@ From the repository root, run::
    wl_master: ../../opac_data/ck/wl_ck_R250.txt
 
    line:
-     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
-     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.npz}
-     - {species: K, path: ../../opac_data/ck/K_ck_R250.npz}
+     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
+     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr}
+     - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr}
 
    cia:
-     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
-     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
+     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
 
 This will produce a high-resolution spectrum file ``forward_spectrum_highres.txt`` containing two columns: wavelength (um) and transit depth.
 
@@ -149,20 +150,20 @@ Where the model will read the YAML file after the --config flag, which contains 
 The default will use the nautilus sampler with 250 live points which ensures decent posterior plots with a fast completion time.
 
 .. note::
-    Make sure that the retrieval_config.yaml file points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example (with the npz opacity files).
+    Make sure that the retrieval_config.yaml file points to the correct (relative) path to the line opacity, cia and wavelength data in the opac: section, for example (with the zarr opacity files).
 
 .. code-block:: yaml
 
    wl_master: ../../opac_data/ck/wl_ck_R250.txt
 
    line:
-     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.npz}
-     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.npz}
-     - {species: K, path: ../../opac_data/ck/K_ck_R250.npz}
+     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
+     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr}
+     - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr}
 
    cia:
-     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
-     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
+     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
 
 
 After completion (around 10 minutes), the code will output both the nautilus_checkpoint.hdf5 file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results. 
@@ -212,4 +213,59 @@ For this, we change the vert_chem scheme to rate_jax and now sample a C/O and M/
 
   params:
     - {name: M_to_H, dist: uniform, low: -2.0, high: 3.0, transform: logit, init: 0.0}    # metallicity [dex]
-    - {name: C_to_O, dist: uniform, low: 0.01, high: 2.0,  transform: logit, init: 0.55}  # carbon-to-oxygen ratio
+    - {name: C_to_O, dist: uniform, low: 0.1, high: 2.0,  transform: logit, init: 0.55}  # carbon-to-oxygen ratio
+
+
+Try the FastChem 5D interpolation chemistry backend
+---------------------------------------------------
+
+You can also run CE chemistry by interpolating a precomputed FastChem 5D grid.
+
+Download CE grids from:
+`Exo Skryer CE grid collection <https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link>`__
+
+Then place the downloaded grid file in your project (for example
+``FastChem/fastchem_grid_5d_log10.zarr``) and update the retrieval YAML:
+
+.. code-block:: yaml
+
+  physics:
+    vert_chem: fastchem_grid_jax
+    vert_mu: dynamic  # or auto, to use interpolated mean molecular weight
+
+  params:
+    - {name: M_to_H, dist: uniform, low: -2.0, high: 3.0, transform: logit, init: 0.0}
+    - {name: C_to_O, dist: uniform, low: 0.1, high: 2.0, transform: logit, init: 0.55}
+
+  fastchem_grid_jax:
+    grid_path: ../../FastChem/fastchem_grid_5d_log10.zarr
+    solver:
+      mode: vmap  # vmap | scan
+    bounds:
+      mode: clip
+    species_map:
+      # Optional: map retrieval species names to CE-grid species labels
+      # CO: C1O1
+
+Notes:
+
+* Interpolation uses log-space coordinates:
+  ``log10(T)``, ``log10(P)``, ``M/H`` (dex), ``log10(C/O)``.
+* Active chemistry outputs are inferred from the configured opacity species.
+* If H\ :sup:`-` special opacity is enabled (bf/ff), required species must be
+  present in the mapped CE-grid outputs:
+  bf requires ``H-``; ff requires ``H`` and ``e-``.
+
+After running a retrieval, you can plot the median vertical chemistry profile
+in the experiment directory using ``bestfit_chem.py``:
+
+.. code-block:: bash
+
+  cd experiments/HD209_Barstow_2020_trans_setup
+  python bestfit_chem.py --config retrieval_config.yaml
+
+To plot only selected species, pass a comma-separated list:
+
+.. code-block:: bash
+
+  python bestfit_chem.py --config retrieval_config.yaml --species H2O,CO,CH4,H-,H,e-

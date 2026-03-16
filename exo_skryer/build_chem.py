@@ -5,6 +5,7 @@ build_chem.py
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from typing import Iterable, Any
 
@@ -489,7 +490,7 @@ def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
         return
 
     vert_chem_name = str(vert_chem_raw).lower()
-    ep_names = ("element_potentials_jax", "ep_jax", "ce_element_potentials")
+    ep_names = ("easychem_jax", "easychem")
     fc_grid_names = (
         "fastchem_grid_jax",
         "ce_fastchem_grid",
@@ -695,7 +696,7 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
         return
 
     vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
-    if vert_chem_name not in ("element_potentials_jax", "ep_jax", "ce_element_potentials"):
+    if vert_chem_name not in ("easychem_jax", "easychem"):
         return
 
     from .vert_chem import is_element_potentials_cache_loaded, load_element_potentials_cache
@@ -704,11 +705,11 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
         print("[info] Element-potentials cache already loaded")
         return
 
-    ep_cfg = getattr(cfg, "element_potentials_jax", None)
+    ep_cfg = getattr(cfg, "easychem_jax", None)
     if ep_cfg is None:
         raise ValueError(
-            "element_potentials_jax config block is required when physics.vert_chem is "
-            "'element_potentials_jax'."
+            "easychem_jax config block is required when physics.vert_chem is "
+            "'easychem_jax'."
         )
 
     raw_species = list(getattr(ep_cfg, "species", None) or [])
@@ -721,7 +722,7 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
             species_list.append(str(sp))
     if not species_list:
         raise ValueError(
-            "element_potentials_jax.species must be a non-empty list in the YAML config."
+            "easychem_jax.species must be a non-empty list in the YAML config."
         )
 
     elements_val = getattr(ep_cfg, "elements", None)
@@ -730,7 +731,7 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
     solver_cfg = getattr(ep_cfg, "solver", None)
     solver_kwargs = {}
     if solver_cfg is not None:
-        for key in ("mode", "max_steps", "tol", "throw", "prefer_chord"):
+        for key in ("mode", "max_steps", "tol", "throw", "relax_limit", "prefer_chord"):
             val = getattr(solver_cfg, key, None)
             if val is not None:
                 solver_kwargs[key] = val
@@ -753,7 +754,7 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
     e_ref = str(getattr(ep_cfg, "e_ref", "H"))
     nlay = int(getattr(phys, "nlay", 99))
 
-    print("[info] Initializing CE scheme: element_potentials_jax")
+    print("[info] Initializing CE scheme: easychem_jax")
     print(f"[info]   NASA9 path: {nasa9_path}")
     print(f"[info]   Species count: {len(species_list)}")
     print(f"[info]   Elements: {elements if elements is not None else 'auto (inferred)'}")
@@ -764,7 +765,7 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
         f"max_steps={solver_kwargs.get('max_steps', 64)}, "
         f"tol={solver_kwargs.get('tol', 1.0e-11)}, "
         f"throw={solver_kwargs.get('throw', False)}, "
-        f"prefer_chord={solver_kwargs.get('prefer_chord', True)}"
+        f"relax_limit={solver_kwargs.get('relax_limit', 0.75)}"
     )
     load_element_potentials_cache(
         species_list=species_list,
@@ -801,6 +802,12 @@ def init_atmodeller_if_needed(cfg: Any, exp_dir: Path) -> None:
     vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
     if vert_chem_name != "atmodeller":
         return
+
+    if importlib.util.find_spec("atmodeller") is None:
+        raise ImportError(
+            "physics.vert_chem is set to 'atmodeller', but the optional 'atmodeller' "
+            "package is not installed."
+        )
 
     atm_cfg = getattr(cfg, "atmodeller", None)
     if atm_cfg in (False, "False", "false", "off", "none", "None"):

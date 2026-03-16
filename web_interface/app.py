@@ -90,7 +90,17 @@ EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso"]
 # - Modified_Milne: Modified Milne profile
 # - picket_fence: Picket-fence approximation
 # - MandS: Madhusudhan & Seager profile
-VERT_TP_OPTIONS = ["isothermal", "Guillot", "Modified_Guillot", "Barstow", "Line", "Milne", "Modified_Milne", "picket_fence", "MandS"]
+VERT_TP_OPTIONS = [
+    "isothermal",
+    "guillot",
+    "modified_guillot",
+    "barstow",
+    "line",
+    "milne",
+    "modified_milne",
+    "picket_fence",
+    "mands",
+]
 
 # How altitude/height is calculated in the atmosphere model
 # See: kernel_registry.VERT_ALT
@@ -102,10 +112,21 @@ VERT_ALT_OPTIONS = ["p_ref", "variable_g", "hypsometric"]
 # Chemistry profile options
 # See: kernel_registry.VERT_CHEM
 # - constant_vmr: Volume mixing ratios constant with altitude
-# - CE_fastchem_jax: Chemical equilibrium via FastChem (JAX)
-# - CE_rate_jax: Chemical equilibrium via rate equations (JAX)
+# - fastchem_grid_jax: Chemical equilibrium via precomputed FastChem grid
+# - rate_ce: Chemical equilibrium via rate equations (JAX)
+# - easychem_jax: EasyChem-style gas-phase equilibrium backend
+# - atmodeller: Atmodeller equilibrium backend
 # - quench_approx: Quenched chemistry approximation
-VERT_CHEM_OPTIONS = ["constant_vmr", "constant_vmr_clr", "CE_fastchem_jax", "CE_rate_jax", "quench_approx"]
+VERT_CHEM_OPTIONS = [
+    "constant_vmr",
+    "constant_vmr_clr",
+    "ce",
+    "fastchem_grid_jax",
+    "rate_ce",
+    "easychem_jax",
+    "quench_approx",
+    "atmodeller",
+]
 
 # Mean molecular weight handling
 # See: kernel_registry.VERT_MU
@@ -120,7 +141,7 @@ VERT_MU_OPTIONS = ["dynamic", "constant", "auto"]
 # - exponential_decay_profile: Exponential decay from cloud base
 # - slab_profile: Cloud slab between two pressure levels
 # - const_profile: Constant cloud throughout atmosphere
-VERT_CLOUD_OPTIONS = ["None", "exponential_decay_profile", "slab_profile", "const_profile"]
+VERT_CLOUD_OPTIONS = ["None", "exponential", "slab", "constant"]
 
 # Line opacity calculation methods
 # See: build_model.py _select_kernels() (opac_line block)
@@ -148,17 +169,17 @@ OPAC_CIA_OPTIONS = ["ck", "os", "None"]
 # - direct_nk: Use refractive index (n,k) data directly with Mie theory
 # - madt_rayleigh: MADT Rayleigh approximation for Mie scattering
 # - lxmie: Full Mie calculation (LX-MIE)
-OPAC_CLOUD_OPTIONS = ["None", "grey", "deck_and_powerlaw", "F18", "direct_nk", "madt_rayleigh", "lxmie"]
+OPAC_CLOUD_OPTIONS = ["None", "grey", "powerlaw", "f18", "direct_nk", "madt_rayleigh", "lxmie"]
 
 # Special opacity sources (like H- bound-free, free-free)
 # See: build_model.py _select_kernels() (opac_special block)
-OPAC_SPECIAL_OPTIONS = ["ck", "os", "None"]
+OPAC_SPECIAL_OPTIONS = ["ck", "os", "on", "None"]
 
 # Cloud particle size distributions
 # See: build_model.py _extract_fixed_params() (cloud_dist block)
 # - mono (or monodisperse): Single particle size
 # - lognormal: Log-normal size distribution (requires cld_sigma parameter)
-CLOUD_DIST_OPTIONS = ["mono", "lognormal"]
+CLOUD_DIST_OPTIONS = ["mono", "log_normal", "lognormal"]
 
 # Emission mode: how the planet's emission is calculated
 # See: build_model.py build_forward_model() (emission_mode block)
@@ -230,7 +251,7 @@ def init_session_state():
     defaults = {
         # Physics defaults
         'rt_scheme': 'emission_1d',
-        'vert_tp': 'Guillot',
+        'vert_tp': 'guillot',
         'vert_cloud': 'None',
         'opac_cloud': 'None',
         # Species lists (these are mutable lists that grow as user adds species)
@@ -245,6 +266,22 @@ def init_session_state():
         'params': [],
         # Sampling
         'sampling_engine': 'dynesty',
+        # Chemistry backend defaults
+        'easychem_mode': 'scan',
+        'easychem_max_steps': 64,
+        'easychem_tol': 1.0e-11,
+        'easychem_throw': True,
+        'easychem_relax_limit': 0.75,
+        'easychem_p0_bar': 1.0,
+        'easychem_e_ref': 'H',
+        'easychem_prefer_chord': False,
+        'fastchem_grid_solver_mode': 'vmap',
+        'fastchem_grid_bounds_mode': 'clip',
+        'atmodeller_solver_multistart': 10,
+        'atmodeller_solver_atol': 1.0e-6,
+        'atmodeller_solver_rtol': 1.0e-6,
+        'atmodeller_solver_max_steps': 256,
+        'atmodeller_solver_jac': 'fwd',
     }
     # Only initialize keys that don't exist yet
     for key, value in defaults.items():
@@ -295,6 +332,39 @@ def remove_parameter(index: int):
         st.session_state.params.pop(index)
 
 
+def _parse_text_list(raw: str) -> list[str]:
+    if not raw:
+        return []
+    parts = []
+    for line in raw.replace(",", "\n").splitlines():
+        item = line.strip()
+        if item:
+            parts.append(item)
+    return parts
+
+
+def _parse_mapping_lines(raw: str) -> dict[str, str]:
+    mappings: dict[str, str] = {}
+    if not raw:
+        return mappings
+    for line in raw.splitlines():
+        item = line.strip()
+        if not item or ":" not in item:
+            continue
+        key, value = item.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and value:
+            mappings[key] = value
+    return mappings
+
+
+def _none_if_disabled(value):
+    if value in (None, "None", "none", "off", "false", "0", ""):
+        return None
+    return value
+
+
 def build_config() -> dict:
     """
     Build the complete configuration dictionary from current session state.
@@ -327,18 +397,18 @@ def build_config() -> dict:
     # -------------------------------------------------------------------------
     config['physics'] = {
         'nlay': st.session_state.get('nlay', 99),  # Number of atmospheric layers
-        'vert_Tp': st.session_state.get('vert_tp', 'Guillot'),
+        'vert_Tp': st.session_state.get('vert_tp', 'guillot'),
         'vert_alt': st.session_state.get('vert_alt', 'p_ref'),
         'vert_chem': st.session_state.get('vert_chem', 'constant_vmr'),
         'vert_mu': st.session_state.get('vert_mu', 'dynamic'),
         # Cloud profile (convert string "None" to actual None for YAML)
-        'vert_cloud': st.session_state.get('vert_cloud', 'None') if st.session_state.get('vert_cloud') != 'None' else None,
-        'opac_line': st.session_state.get('opac_line', 'ck'),
+        'vert_cloud': _none_if_disabled(st.session_state.get('vert_cloud', 'None')),
+        'opac_line': _none_if_disabled(st.session_state.get('opac_line', 'ck')),
         # These opacity sources can be disabled (None)
-        'opac_ray': st.session_state.get('opac_ray', 'os') if st.session_state.get('opac_ray') != 'None' else None,
-        'opac_cia': st.session_state.get('opac_cia', 'os') if st.session_state.get('opac_cia') != 'None' else None,
-        'opac_cloud': st.session_state.get('opac_cloud', 'None') if st.session_state.get('opac_cloud') != 'None' else None,
-        'opac_special': st.session_state.get('opac_special', 'None') if st.session_state.get('opac_special') != 'None' else None,
+        'opac_ray': _none_if_disabled(st.session_state.get('opac_ray', 'os')),
+        'opac_cia': _none_if_disabled(st.session_state.get('opac_cia', 'os')),
+        'opac_cloud': _none_if_disabled(st.session_state.get('opac_cloud', 'None')),
+        'opac_special': _none_if_disabled(st.session_state.get('opac_special', 'None')),
         'cloud_dist': st.session_state.get('cloud_dist', 'mono'),
         'rt_scheme': st.session_state.get('rt_scheme', 'emission_1d'),
         # Emission-specific settings (only include if doing emission spectrum)
@@ -346,7 +416,7 @@ def build_config() -> dict:
         'emission_mode': st.session_state.get('emission_mode', 'planet') if st.session_state.get('rt_scheme') == 'emission_1d' else None,
         'contri_func': st.session_state.get('contri_func', False),
         # Refraction (only for transit mode)
-        'refraction': st.session_state.get('refraction', 'None') if st.session_state.get('rt_scheme') == 'transit_1d' and st.session_state.get('refraction', 'None') != 'None' else None,
+        'refraction': _none_if_disabled(st.session_state.get('refraction', 'None')) if st.session_state.get('rt_scheme') == 'transit_1d' else None,
     }
     # Remove None values from the dict (cleaner YAML output)
     config['physics'] = {k: v for k, v in config['physics'].items() if v is not None}
@@ -397,7 +467,7 @@ def build_config() -> dict:
 
     # Cloud opacity data path
     if st.session_state.get('cloud_opac_path'):
-        config['opac']['cloud'] = st.session_state.cloud_opac_path
+        config['opac']['cloud'] = [FlowStyleDict({'path': st.session_state.cloud_opac_path})]
 
     # -------------------------------------------------------------------------
     # PARAMS SECTION
@@ -407,6 +477,56 @@ def build_config() -> dict:
     if st.session_state.params:
         # Wrap each param in FlowStyleDict for compact YAML output
         config['params'] = [FlowStyleDict(p) for p in st.session_state.params]
+
+    vert_chem = st.session_state.get('vert_chem', 'constant_vmr')
+    if vert_chem == 'easychem_jax':
+        easychem_species = _parse_text_list(st.session_state.get('easychem_species', ''))
+        easychem_block = {
+            'species': easychem_species,
+            'solver': {
+                'mode': st.session_state.get('easychem_mode', 'scan'),
+                'max_steps': int(st.session_state.get('easychem_max_steps', 64)),
+                'tol': float(st.session_state.get('easychem_tol', 1.0e-11)),
+                'throw': bool(st.session_state.get('easychem_throw', True)),
+                'relax_limit': float(st.session_state.get('easychem_relax_limit', 0.75)),
+                'prefer_chord': bool(st.session_state.get('easychem_prefer_chord', False)),
+            },
+            'p0_bar': float(st.session_state.get('easychem_p0_bar', 1.0)),
+            'e_ref': st.session_state.get('easychem_e_ref', 'H'),
+        }
+        easychem_elements = _parse_text_list(st.session_state.get('easychem_elements', ''))
+        if easychem_elements:
+            easychem_block['elements'] = easychem_elements
+        config['easychem_jax'] = easychem_block
+
+    elif vert_chem == 'fastchem_grid_jax':
+        grid_path = st.session_state.get('fastchem_grid_path', '')
+        fc_block = {
+            'grid_path': grid_path,
+            'solver': {
+                'mode': st.session_state.get('fastchem_grid_solver_mode', 'vmap'),
+            },
+            'bounds': {
+                'mode': st.session_state.get('fastchem_grid_bounds_mode', 'clip'),
+            },
+        }
+        species_map = _parse_mapping_lines(st.session_state.get('fastchem_grid_species_map', ''))
+        if species_map:
+            fc_block['species_map'] = species_map
+        config['fastchem_grid_jax'] = fc_block
+
+    elif vert_chem == 'atmodeller':
+        species_network = _parse_text_list(st.session_state.get('atmodeller_species_network', ''))
+        config['atmodeller'] = {
+            'species_network': species_network,
+            'solver': {
+                'multistart': int(st.session_state.get('atmodeller_solver_multistart', 10)),
+                'atol': float(st.session_state.get('atmodeller_solver_atol', 1.0e-6)),
+                'rtol': float(st.session_state.get('atmodeller_solver_rtol', 1.0e-6)),
+                'max_steps': int(st.session_state.get('atmodeller_solver_max_steps', 256)),
+                'jac': st.session_state.get('atmodeller_solver_jac', 'fwd'),
+            },
+        }
 
     # -------------------------------------------------------------------------
     # SAMPLING SECTION
@@ -612,7 +732,7 @@ def render_data_section():
         st.text_input("Stellar spectrum path", key="stellar_path",
                       placeholder="e.g., ../data/stellar.txt")
         st.text_input("NASA9 database path", key="nasa9_path",
-                      placeholder="e.g., ../../thermo_data/NASA9.txt")
+                      placeholder="e.g., ../../NASA9")
 
 
 def render_physics_section():
@@ -625,6 +745,7 @@ def render_physics_section():
     - Opacity sources to include (line, Rayleigh, CIA, clouds)
     """
     st.header("Physics Configuration")
+    st.caption("Dropdown values use the canonical YAML scheme names used by the current Exo_Skryer registries.")
 
     # Three-column layout for organized grouping
     col1, col2, col3 = st.columns(3)
@@ -680,6 +801,7 @@ def render_opac_section():
     - Cloud opacity file paths
     """
     st.header("Opacity Configuration")
+    st.info("Prefer `.zarr` or `.zarr.zip` opacity tables in new configs. The current loaders still accept legacy `.npz`/`.h5` in some places, but the app now defaults to Zarr paths.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -705,7 +827,7 @@ def render_opac_section():
         new_species = st.selectbox("Add species", [""] + COMMON_LINE_SPECIES, key="new_line_species")
     with col2:
         new_path = st.text_input("Path (optional)", key="new_line_path",
-                                  placeholder="e.g., ../../opac_data/H2O.npz")
+                                  placeholder="e.g., ../../opac_data/os/H2O_R20000.zarr.zip")
     with col3:
         st.write("")  # Empty space for vertical alignment
         st.write("")  # (buttons need to align with inputs)
@@ -742,6 +864,7 @@ def render_opac_section():
     cia_species = st.multiselect("Select CIA pairs", COMMON_CIA_PAIRS,
                                   default=st.session_state.cia_species, key="cia_select")
     st.session_state.cia_species = cia_species
+    st.caption("CIA custom paths should point to `.zarr` or `.zarr.zip` tables when you override the defaults.")
 
     st.subheader("Special Opacity Sources")
     special_on = st.checkbox("Enable H- continuum (bf/ff)", key="special_hminus_enabled")
@@ -756,7 +879,94 @@ def render_opac_section():
     if st.session_state.get('opac_cloud') and st.session_state.opac_cloud != 'None':
         st.subheader("Cloud Opacity")
         st.text_input("Cloud opacity data path", key="cloud_opac_path",
-                      placeholder="e.g., ../../opac_data/cloud_nk.h5")
+                      placeholder="e.g., ../../opac_data/nk/silicate_nk.txt")
+
+
+def render_chemistry_backend_section():
+    """
+    Render backend-specific chemistry configuration blocks.
+    """
+    st.header("Chemistry Backend")
+    vert_chem = st.session_state.get("vert_chem", "constant_vmr")
+    st.markdown(f"Current chemistry backend: `{vert_chem}`")
+
+    if vert_chem == "easychem_jax":
+        st.info("Requires `data.nasa9`, plus retrieval parameters `M_to_H` and `C_to_O`.")
+        st.subheader("easychem_jax")
+        st.text_area(
+            "Species list",
+            key="easychem_species",
+            height=220,
+            placeholder="One species per line, e.g.\nH2O\nCO\nCO2\nCH4",
+        )
+        st.text_area(
+            "Elements (optional)",
+            key="easychem_elements",
+            height=120,
+            placeholder="One element per line, e.g.\nH\nHe\nC\nN\nO",
+        )
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.selectbox("Solver mode", ["scan", "vmap"], key="easychem_mode")
+            st.number_input("Max steps", min_value=1, value=64, key="easychem_max_steps")
+        with col2:
+            st.number_input("Tolerance", value=1.0e-11, format="%.3e", key="easychem_tol")
+            st.number_input("Relax limit", min_value=0.0, max_value=1.0, value=0.75, key="easychem_relax_limit")
+        with col3:
+            st.checkbox("Throw on solver failure", key="easychem_throw")
+            st.checkbox("Prefer chord fallback", key="easychem_prefer_chord")
+            st.number_input("P0 [bar]", min_value=0.0, value=1.0, key="easychem_p0_bar")
+            st.text_input("Reference element", key="easychem_e_ref")
+
+    elif vert_chem == "fastchem_grid_jax":
+        st.info("Requires retrieval parameters `M_to_H` and `C_to_O`, plus a FastChem 5D NPZ grid file.")
+        st.subheader("fastchem_grid_jax")
+        st.text_input(
+            "Grid path",
+            key="fastchem_grid_path",
+            placeholder="e.g. ../../FastChem/fastchem_grid_5d_log10.npz",
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.selectbox("Solver mode", ["vmap", "scan"], key="fastchem_grid_solver_mode")
+        with col2:
+            st.selectbox("Bounds mode", ["clip"], key="fastchem_grid_bounds_mode")
+        st.text_area(
+            "Species map overrides (optional)",
+            key="fastchem_grid_species_map",
+            height=120,
+            placeholder="One mapping per line, e.g.\nCO: C1O1\nH2O: H2O1",
+        )
+
+    elif vert_chem == "ce":
+        st.info("FastChem equilibrium backend. No extra top-level config block is required, but add retrieval parameters `M_to_H` and `C_to_O`.")
+
+    elif vert_chem == "rate_ce":
+        st.info("RateJAX equilibrium backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H` and `C_to_O`.")
+
+    elif vert_chem == "quench_approx":
+        st.info("Quenched-chemistry backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H`, `C_to_O`, `Kzz`, and `log_10_g`.")
+
+    elif vert_chem == "atmodeller":
+        st.info("Optional backend. Requires the `atmodeller` extra to be installed, plus retrieval parameters `M_to_H` and `C_to_O`.")
+        st.subheader("atmodeller")
+        st.text_area(
+            "Species network",
+            key="atmodeller_species_network",
+            height=220,
+            placeholder="One species per line, e.g.\nH2O_g\nCO_g\nCH4_g\nH2_g\nHe_g",
+        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input("Multistart", min_value=1, value=10, key="atmodeller_solver_multistart")
+            st.number_input("Absolute tolerance", value=1.0e-6, format="%.3e", key="atmodeller_solver_atol")
+            st.number_input("Relative tolerance", value=1.0e-6, format="%.3e", key="atmodeller_solver_rtol")
+        with col2:
+            st.number_input("Max steps", min_value=1, value=256, key="atmodeller_solver_max_steps")
+            st.selectbox("Jacobian mode", ["fwd", "bwd"], key="atmodeller_solver_jac")
+
+    else:
+        st.info("No backend-specific chemistry block is required for the currently selected chemistry scheme.")
 
 
 def render_params_section():
@@ -822,6 +1032,31 @@ def render_params_section():
     # =========================================================================
     st.subheader("Sampled Parameters (retrieved)")
     st.markdown("These parameters are retrieved with uniform priors.")
+
+    chem_backend = st.session_state.get("vert_chem", "constant_vmr")
+    if chem_backend in {"ce", "rate_ce", "fastchem_grid_jax", "easychem_jax", "atmodeller", "quench_approx"}:
+        st.markdown("**Chemistry helper**")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Add M_to_H and C_to_O", key="add_bulk_chem_params"):
+                existing = {p.get("name") for p in st.session_state.params}
+                if "M_to_H" not in existing:
+                    add_parameter("M_to_H", "uniform", low=-2.0, high=3.0, transform="logit", init=0.0)
+                if "C_to_O" not in existing:
+                    add_parameter("C_to_O", "uniform", low=0.1, high=2.0, transform="logit", init=0.55)
+                st.rerun()
+        with col_b:
+            if chem_backend == "quench_approx" and st.button("Add quench params", key="add_quench_param_bundle"):
+                existing = {p.get("name") for p in st.session_state.params}
+                if "M_to_H" not in existing:
+                    add_parameter("M_to_H", "uniform", low=-2.0, high=3.0, transform="logit", init=0.0)
+                if "C_to_O" not in existing:
+                    add_parameter("C_to_O", "uniform", low=0.1, high=2.0, transform="logit", init=0.55)
+                if "Kzz" not in existing:
+                    add_parameter("Kzz", "uniform", low=1e6, high=1e10, transform="logit", init=1e8)
+                if "log_10_g" not in existing:
+                    add_parameter("log_10_g", "uniform", low=2.0, high=5.5, transform="logit", init=3.5)
+                st.rerun()
 
     # Quick-add helpers for common parameter bundles
     if st.session_state.get("special_hminus_enabled", False):
@@ -1153,7 +1388,7 @@ def main():
     # st.radio creates a single-select list
     section = st.sidebar.radio(
         "Navigate to:",
-        ["Data", "Physics", "Opacity", "Parameters", "Sampling", "Runtime", "Preview & Export"]
+        ["Data", "Physics", "Chemistry Backend", "Opacity", "Parameters", "Sampling", "Runtime", "Preview & Export"]
     )
 
     # Quick info panel in sidebar (shows current state at a glance)
@@ -1172,6 +1407,8 @@ def main():
         render_data_section()
     elif section == "Physics":
         render_physics_section()
+    elif section == "Chemistry Backend":
+        render_chemistry_backend_section()
     elif section == "Opacity":
         render_opac_section()
     elif section == "Parameters":

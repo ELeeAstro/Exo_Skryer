@@ -49,7 +49,7 @@ from .vert_chem import (
     CE_fastchem_jax,
     CE_fastchem_grid_jax,
     CE_rate_jax,
-    CE_element_potentials_jax,
+    CE_easychem_jax,
     quench_approx,
     CE_atmodeller,
 )
@@ -134,7 +134,7 @@ VERT_CHEM: dict[str, Callable] = {
     "ce":                   CE_fastchem_jax,
     "fastchem_grid_jax":    CE_fastchem_grid_jax,
     "rate_ce":              CE_rate_jax,
-    "element_potentials_jax": CE_element_potentials_jax,
+    "easychem_jax":         CE_easychem_jax,
     "quench_approx":        quench_approx,
     "atmodeller":           CE_atmodeller,
     # aliases
@@ -148,8 +148,7 @@ VERT_CHEM: dict[str, Callable] = {
     "fastchem_ce_grid":     CE_fastchem_grid_jax,   # alias
     "rate_jax":             CE_rate_jax,        # alias
     "ce_rate_jax":          CE_rate_jax,        # alias
-    "ep_jax":               CE_element_potentials_jax,  # alias
-    "ce_element_potentials": CE_element_potentials_jax,  # alias
+    "easychem":             CE_easychem_jax,    # alias
     "quench":               quench_approx,      # alias
 }
 

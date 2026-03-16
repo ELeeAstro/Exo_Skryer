@@ -18,7 +18,7 @@ The configuration has these top-level blocks:
 * ``physics``: model scheme selectors (T-P, chemistry, RT, opac toggles)
 * ``opac``: opacity registries and wavelength grid controls
 * ``params``: retrieval parameter list (priors + fixed values)
-* ``element_potentials_jax``: explicit species/elements/solver config for EP chemistry (optional)
+* ``easychem_jax``: explicit species/elements/solver config for EasyChem chemistry (optional)
 * ``fastchem_grid_jax``: FastChem 5D grid interpolation config (optional)
 * ``sampling``: sampler engine selection and hyperparameters
 * ``runtime``: platform selection (cpu/gpu) and basic runtime knobs
@@ -108,7 +108,7 @@ data
 ``data.nasa9``
   Path to the NASA-9 thermo-coefficient folder, required for RateJAX chemical
   equilibrium (``physics.vert_chem: CE_rate_jax`` / ``ce_rate_jax`` aliases) and
-  for the element-potentials backend (``physics.vert_chem: element_potentials_jax``).
+  for the EasyChem backend (``physics.vert_chem: easychem_jax``).
 
   *Type*: string path or ``null``.
 
@@ -172,7 +172,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``fastchem_grid_jax`` (aliases: ``ce_fastchem_grid``, ``fastchem_ce_grid``)
   * ``CE_fastchem_jax`` (aliases: ``ce``, ``chemical_equilibrium``, ``fastchem_jax``) *(legacy alias for ``fastchem_grid_jax``)*
   * ``CE_rate_jax`` (aliases: ``rate_ce``, ``rate_jax``, ``ce_rate_jax``)
-  * ``CE_element_potentials_jax`` (aliases: ``element_potentials_jax``, ``ep_jax``, ``ce_element_potentials``)
+  * ``CE_easychem_jax`` (aliases: ``easychem_jax``, ``easychem``)
   * ``quench_approx`` (aliases: ``quench``)
 
   Notes:
@@ -188,8 +188,8 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``CE_rate_jax`` requires ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
   * ``fastchem_grid_jax`` requires parameters ``M_to_H`` and ``C_to_O`` and a top-level
     ``fastchem_grid_jax`` block with required ``grid_path``.
-  * ``CE_element_potentials_jax`` requires ``data.nasa9``, parameters ``M_to_H`` and ``C_to_O``,
-    and a top-level ``element_potentials_jax`` config block with explicit species list.
+  * ``CE_easychem_jax`` requires ``data.nasa9``, parameters ``M_to_H`` and ``C_to_O``,
+    and a top-level ``easychem_jax`` config block with explicit species list.
   * ``quench_approx`` uses RateJAX equilibrium plus quenching; requires at least
     ``M_to_H, C_to_O, Kzz, log_10_g``.
 
@@ -316,7 +316,7 @@ loaded into registries.
   Controls loading correlated-k tables. In most configs this is boolean:
 
   * ``true``: load correlated-k tables from ``opac.line`` (and use CK wavelength grid)
-  * ``false``: load LBL tables from ``opac.line``
+  * ``false``: load OS (opacity-sampling) tables from ``opac.line``
 
   Advanced: ``opac.ck`` can also be a list of ck-table entries instead of a bool
   (see ``exo_skryer/registry_ck.py``).
@@ -333,7 +333,7 @@ loaded into registries.
 ``opac.line``
   List of line opacity entries. Each entry is a mapping (flow-style shown)::
 
-    - {species: H2O, path: ../../opac_data/os/H2O_R20000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr}
 
   Fields:
 
@@ -342,8 +342,8 @@ loaded into registries.
 
   File formats:
 
-  * CK: ``.npz``, ``.h5``, ``.hdf5``
-  * LBL: ``.npz``
+  * CK: ``.zarr``, ``.zarr.zip``, ``.h5``, ``.hdf5``, ``.npz``
+  * OS: ``.zarr``, ``.zarr.zip``, ``.npz``
 
 ``opac.ray``
   List of Rayleigh species entries. Each entry is typically::
@@ -357,7 +357,7 @@ loaded into registries.
 ``opac.cia``
   List of CIA pair entries::
 
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
 
   Notes:
 

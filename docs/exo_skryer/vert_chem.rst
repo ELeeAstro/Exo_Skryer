@@ -12,11 +12,15 @@ Exo Skryer provides several vertical chemistry calculation functions in the `~ex
   X_{i} = \frac{n_{i}}{n_{\rm tot}}
 
 Several schemes are included in Exo Skryer, from simple constant profiles to chemical equilibrium to quenching timescale approximation.
-Throughout, we assume an H\ :sub:`2`-He dominated atmosphere, forcing the total VMR to satisfy
+In many schemes we assume an H\ :sub:`2`-He dominated atmosphere, forcing the total VMR to satisfy
 
 .. math::
 
   \sum_{i}X_{i} = 1
+
+For table-interpolated chemistry (``fastchem_grid_jax``), returned species are
+the mapped active-opacity set, and VMRs are used directly from the CE table
+without additional renormalization in ``vert_chem``.
 
 Background Gas: H\ :sub:`2` and He Filling
 -------------------------------------------
@@ -171,11 +175,53 @@ The constant VMR profile assumes a constant value for each species as given by t
      - { name: log_10_f_CH4, dist: uniform, low: -9, high: -1, transform: logit, init: -6 }
 
 
+Constant VMR (CLR Parameterization)
+-----------------------------------
+
+``constant_vmr_clr`` parameterizes composition in centered-log-ratio (CLR)
+space and applies a softmax transform so trace-species plus filler are always
+non-negative and normalized.
+
+Aliases: ``constant_clr``, ``clr``.
+
+This scheme supports two parameter styles:
+
+* native CLR parameters: ``clr_<species>``
+* standard abundance parameters: ``log_10_f_<species>``
+
+When ``log_10_f_*`` is provided, Exo Skryer converts those values to CLR
+coordinates internally before applying the softmax transform.
+
+**Example YAML Configuration:**
+
+.. code-block:: yaml
+
+   physics:
+     vert_chem: constant_vmr_clr
+
+   params:
+     - { name: clr_H2O, dist: uniform, low: -12.0, high: 2.0, transform: logit, init: -4.0 }
+     - { name: clr_CO,  dist: uniform, low: -12.0, high: 2.0, transform: logit, init: -5.0 }
+     - { name: clr_CH4, dist: uniform, low: -12.0, high: 2.0, transform: logit, init: -6.0 }
+
+**Alternative (log10 VMR inputs, internally converted to CLR):**
+
+.. code-block:: yaml
+
+   physics:
+     vert_chem: constant_vmr_clr
+
+   params:
+     - { name: log_10_f_H2O, dist: uniform, low: -12.0, high: -1.0, transform: logit, init: -4.0 }
+     - { name: log_10_f_CO,  dist: uniform, low: -12.0, high: -1.0, transform: logit, init: -5.0 }
+     - { name: log_10_f_CH4, dist: uniform, low: -12.0, high: -1.0, transform: logit, init: -6.0 }
+
+
 Chemical Equilibrium with rate JAX
 ----------------------------------
 
 We can also use the semi-analytical chemical equilibrium scheme, Reliable Analytic Thermochemical Equilibrium (rate), from `Cubillos et al (2019) <https://ui.adsabs.harvard.edu/abs/2019ApJ...872..111C/abstract>`_.
-This was converted into JAX compabitile python from the origional python code found on `GitHib <https://github.com/pcubillos/rate>`_.
+This was converted into JAX compatible python from the original python code found on `GitHib <https://github.com/pcubillos/rate>`_.
 
 .. plot::
    :include-source:
@@ -248,9 +294,25 @@ This backend interpolates a precomputed FastChem grid over
 ``(temperature, pressure, M_to_H, C_to_O)`` using JAX
 ``RegularGridInterpolator``.
 
+Interpolation is performed in log-space coordinates
+``(log10(T), log10(P), M/H[dex], log10(C/O))`` for both legacy linear NPZ
+grids and log10 NPZ grids. VMR and MMW tables are interpolated in log10 space
+and converted back to linear values.
+
 The chemistry key is ``fastchem_grid_jax`` (aliases: ``ce_fastchem_grid``,
 ``fastchem_ce_grid``). Legacy ``ce`` / ``fastchem_jax`` aliases are also
 supported and route to this backend.
+
+When ``physics.opac_special`` enables H\ :sup:`-` continuum:
+
+* bf requires mapped ``H-`` in the CE grid
+* ff requires mapped ``H`` and ``e-`` in the CE grid
+
+Initialization raises if required species are missing.
+
+The backend also provides interpolated mean molecular weight to the ``vert_mu``
+stage via an internal cache key (used automatically by ``vert_mu: dynamic`` and
+``vert_mu: auto``).
 
 **Example YAML Configuration:**
 
@@ -260,7 +322,7 @@ supported and route to this backend.
      vert_chem: fastchem_grid_jax
 
    fastchem_grid_jax:
-     grid_path: ../../FastChem/fastchem_grid_5d.npz
+     grid_path: ../../FastChem/fastchem_grid_5d.zarr
      solver:
        mode: vmap
      bounds:
@@ -270,14 +332,49 @@ supported and route to this backend.
        # CO: C1O1
 
 
+Chemical Equilibrium with Atmodeller
+------------------------------------
+
+This backend solves equilibrium chemistry with ``atmodeller`` using an explicit
+species network.
+
+The chemistry key is ``atmodeller``.
+
+**Example YAML Configuration:**
+
+.. code-block:: yaml
+
+   physics:
+     vert_chem: atmodeller
+
+   atmodeller:
+     species_network:
+       - H2O_g
+       - CO_g
+       - CO2_g
+       - CH4_g
+       - NH3_g
+       - H2_g
+       - H_g
+       - He_g
+     solver:
+       multistart: 5
+       atol: 1.0e-5
+       rtol: 1.0e-5
+       max_steps: 128
+
+   params:
+     - { name: M_to_H, dist: uniform, low: -1.0, high: 2.0, transform: logit, init: 0.0 }
+     - { name: C_to_O, dist: uniform, low: 0.1, high: 1.5, transform: logit, init: 0.55 }
+
+
 Chemical Equilibrium with Element Potentials JAX
 ------------------------------------------------
 
 This backend solves thermochemical equilibrium from NASA-9 Gibbs free energies
 using the element-potentials formulation (Lagrange multipliers on element budgets).
 
-The chemistry kernel key is ``element_potentials_jax`` (aliases: ``ep_jax``,
-``ce_element_potentials``). Species are configured explicitly in a dedicated
+The chemistry kernel key is ``easychem_jax`` (alias: ``easychem``). Species are configured explicitly in a dedicated
 YAML block, and all listed species must exist as ``<species>.txt`` files in
 ``data.nasa9``.
 
@@ -291,9 +388,9 @@ Solver mode can be configured:
 .. code-block:: yaml
 
    physics:
-     vert_chem: element_potentials_jax
+     vert_chem: easychem_jax
 
-   element_potentials_jax:
+   easychem_jax:
      species: [H2O, CO, CO2, CH4, NH3, HCN, H2, He]
      elements: [H, He, C, N, O]
      e_ref: H

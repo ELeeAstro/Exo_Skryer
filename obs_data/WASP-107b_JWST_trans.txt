@@ -1,7 +1,7 @@
 
 # WASP-107b observational data from Welbanks et al. 2024
 # Format: wavelength(um)  delta_wavelength(um)  transit_depth  uncertainty  response_mode offset_group
-# Combined JWST data: HST, NIRSpec G140H, NIRSpec G395H, MIRI LRS
+# Combined JWST data: HST, NIRCam, MIRI LRS
 # Data sorted by wavelength (lowest to highest)
 # ================================================================================
 0.891600 0.012727 0.020641 0.000082 boxcar 1
