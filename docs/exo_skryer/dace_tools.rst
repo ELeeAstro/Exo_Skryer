@@ -316,9 +316,10 @@ Compression: Blosc/lz4, level 1, byte-shuffle — optimised for read speed
 over file size.
 
 Both formats are read transparently by ``registry_ck.py`` and
-``registry_line.py``.  If the YAML config points to a ``.zarr`` directory
-that is absent, the registry automatically falls back to the ``.zarr.zip``
-file in the same location.
+``registry_line.py``.  Always use ``.zarr.zip`` in YAML configs — it is a
+single portable file that works everywhere.  If a ``.zarr`` directory path is
+given and the directory is absent, the registry will fall back to the
+``.zarr.zip`` file in the same location.
 
 Move the output files into the appropriate subdirectory. For multi-species
 runs, move each generated species table plus the shared wavelength file::
@@ -354,8 +355,8 @@ Reference the new files under ``opac`` in your ``retrieval_config.yaml``
      ck_mix: RORR
 
      line:
-       - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr}
-       - {species: CO,  path: ../../opac_data/os/CO_R20000.zarr}
+       - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr.zip}
+       - {species: CO,  path: ../../opac_data/os/CO_R20000.zarr.zip}
 
 **Correlated-k example:**
 
@@ -373,8 +374,8 @@ Reference the new files under ``opac`` in your ``retrieval_config.yaml``
      ck_mix: TRANS     # or RORR
 
      line:
-       - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
-       - {species: CO,  path: ../../opac_data/ck/CO_ck_R250.zarr}
+       - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+       - {species: CO,  path: ../../opac_data/ck/CO_ck_R250.zarr.zip}
 
 .. note::
 

@@ -87,7 +87,7 @@ def to_inferencedata(
     if not posterior:
         raise ValueError("No variables to export in posterior group.")
 
-    idata = az.from_dict(posterior)
+    idata = az.from_dict({"posterior": posterior})
 
     # attach minimal attrs for chain/draw counts
     c, d = next(iter(posterior.values())).shape
@@ -136,14 +136,13 @@ def save_inferencedata(
                 idata.attrs[key] = val
 
     out_nc = outdir / f"{stem}.nc"
-    az.to_netcdf(idata, out_nc)
+    idata.to_netcdf(out_nc)
 
     if make_summary_csv:
         summ = az.summary(
             idata,
             var_names=list(idata.posterior.data_vars),
-            stat_funcs=None,
-            round_to=None,
+            round_to="none",
             kind="all",
         )
         csv_path = outdir / "arviz_summary.csv"

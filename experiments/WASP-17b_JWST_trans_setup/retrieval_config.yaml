@@ -52,18 +52,18 @@ opac:
   ck_mix: RORR       # CK mixing scheme (only used when ck: True). Options: RORR | PRAS | TRANS
 
   line:
-    - {species: H2O, path: ../../opac_data/os/H2O_R20000.npz}
-    - {species: CO2, path: ../../opac_data/os/CO2_R20000.npz}
-    - {species: CO,  path: ../../opac_data/os/CO_R20000.npz}
-    - {species: CH4, path: ../../opac_data/os/CH4_R20000.npz}
-    - {species: Na,  path: ../../opac_data/os/Na_R20000.npz}
-    - {species: K,   path: ../../opac_data/os/K_R20000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr.zip}
+    - {species: CO2, path: ../../opac_data/os/CO2_R20000.zarr.zip}
+    - {species: CO,  path: ../../opac_data/os/CO_R20000.zarr.zip}
+    - {species: CH4, path: ../../opac_data/os/CH4_R20000.zarr.zip}
+    - {species: Na,  path: ../../opac_data/os/Na_R20000.zarr.zip}
+    - {species: K,   path: ../../opac_data/os/K_R20000.zarr.zip}
   ray:
     - {species: H2}
     - {species: He}
   cia:
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
-    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
   special:
     - {species: H-, bf: True, ff: False}
   cloud: None

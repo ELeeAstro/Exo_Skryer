@@ -8,10 +8,17 @@ Installation
 First: Get the code
 -------------------
 
-Clone the repository, change directories into it::
+Clone the repository:
 
-    git clone https://github.com/ELeeAstro/Exo_Skryer.git
-    cd Exo_Skryer
+.. code-block:: bash
+
+   git clone https://github.com/ELeeAstro/Exo_Skryer.git
+
+Change into the repository directory:
+
+.. code-block:: bash
+
+   cd Exo_Skryer
 
 .. note::
 
@@ -30,36 +37,64 @@ to avoid dependency conflicts (JAX, NumPyro, plotting, etc.).
 Conda / Mambaforge (recommended)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Create and activate a fresh environment, then install:
+**Step 1** — create a fresh environment:
 
 .. code-block:: bash
 
    conda create -n exo_skryer python=3.12 -y
+
+**Step 2** — activate the environment:
+
+.. code-block:: bash
+
    conda activate exo_skryer
+
+**Step 3** — install Exo Skryer and its dependencies:
+
+.. code-block:: bash
+
    python -m pip install -e .
 
 
 Python venv (alternative)
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Create and activate a venv inside the repo, then install:
+**Step 1** — create a venv inside the repo:
 
 .. code-block:: bash
 
    python -m venv .venv
-   source .venv/bin/activate   # Windows: .venv\Scripts\activate
+
+**Step 2** — activate the venv:
+
+.. code-block:: bash
+
+   source .venv/bin/activate
+
+.. note::
+
+   On Windows use: ``.venv\Scripts\activate``
+
+**Step 3** — install Exo Skryer and its dependencies:
+
+.. code-block:: bash
+
    python -m pip install -e .
 
 Install via pip (coming soon)
 -----------------------------
 
-Once ``exo_skryer`` is available on PyPI, you will be able to install it with::
+Once ``exo_skryer`` is available on PyPI, you will be able to install it with:
 
-    python -m pip install exo_skryer
+.. code-block:: bash
+
+   python -m pip install exo_skryer
 
 
 Verify installation
 -------------------
+
+Check that the package imports correctly:
 
 .. code-block:: bash
 
@@ -69,11 +104,18 @@ Building the docs
 -----------------
 
 For local use and browsing of the documentation, the easiest method is via tox
-from the repository root:
+from the repository root.
+
+Install tox:
 
 .. code-block:: bash
 
    python -m pip install tox
+
+Build the docs:
+
+.. code-block:: bash
+
    tox -e build-docs
 
 The built HTML documentation will be in:
@@ -86,14 +128,19 @@ Running the web app (config generator)
 The web interface is a Streamlit app in ``web_interface/``. It generates
 retrieval YAML configuration files.
 
-1) Install app dependencies (from the repo root):
+Navigate to the web interface directory:
 
 .. code-block:: bash
 
    cd web_interface
+
+Install the app dependencies:
+
+.. code-block:: bash
+
    python -m pip install -r requirements.txt
 
-2) Start the app:
+Start the app:
 
 .. code-block:: bash
 
@@ -105,4 +152,3 @@ Next steps
 ----------
 
 See :doc:`gettingstarted` for next steps, and running a test retrieval model!
-

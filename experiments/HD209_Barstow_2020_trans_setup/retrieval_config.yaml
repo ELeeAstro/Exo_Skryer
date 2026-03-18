@@ -69,9 +69,9 @@ opac:
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
-    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.zarr}
-    #- {species: K,   path: ../../opac_data/ck/K_ck_R250.zarr}
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+    - {species: Na,  path: ../../opac_data/ck/Na_ck_R250.zarr.zip}
+    - {species: K,   path: ../../opac_data/ck/K_ck_R250.zarr.zip}
 
   # Rayleigh scattering species
   ray:
@@ -80,8 +80,8 @@ opac:
 
   # CIA opacity files
   cia:
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
-    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
 
   # Special opacity (e.g. H- bound-free/free-free)
   special: None
@@ -108,7 +108,7 @@ params:
   # --- Chemistry (log10 VMR) ---
   - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
   - {name: log_10_f_Na,  dist: uniform, low: -12, high: -2, transform: logit, init: -6}
-  #- {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
+  - {name: log_10_f_K,   dist: uniform, low: -12, high: -2, transform: logit, init: -6}
 
   # --- Chemistry (atmodeller: replace log_10_f_* above with these when vert_chem: atmodeller or easychem_jax) ---
   #- {name: M_to_H, dist: uniform, low: -1.5, high: 3.0, transform: logit, init: 0.0}
@@ -234,7 +234,7 @@ fastchem_grid_jax:
 sampling:
   # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest
   # Only the section matching 'engine' below is used at runtime.
-  engine: dynesty
+  engine: nautilus
 
   # NUTS / HMC settings
   nuts:
@@ -283,7 +283,7 @@ sampling:
     nlive: 100
     bound: multi
     sample: auto
-    dlogz: 1.0
+    dlogz: 1000.0
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -314,7 +314,7 @@ sampling:
     filepath: nautilus_checkpoint.hdf5
     resume: false
 
-    f_live: 0.01
+    f_live: 0.1
     n_shell: 1
     n_eff: null
     n_like_max: null

@@ -49,9 +49,9 @@ Opacity data
 Some input correlated-k tables, opacity sampled tables and CIA tables can be found at the following:
 `Exo Skryer opacity collection <https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link>`__
 
-Where I have prepared ``.zarr`` directory stores and ``.zarr.zip`` archives for each opacity source.
+Where I have prepared ``.zarr.zip`` archives for each opacity source.
 Zarr is the standard format for Exo Skryer: it is fast, supports parallel reads, and scales well.
-If only a ``.zarr`` path is specified in the YAML, the code will automatically fall back to ``.zarr.zip`` if the directory store is not present.
+Always use the ``.zarr.zip`` form in YAML configs — it is a single portable file and works on all platforms without needing an unpacked directory store.
 
 Exo Skryer can also use the TauREX (opacity sampling mode) and petitRADTRANS (correlated-k mode) tables available from the `ExoMol website <https://www.exomol.com/>`__
 
@@ -77,13 +77,13 @@ From the repository root, run::
    wl_master: ../../opac_data/ck/wl_ck_R250.txt
 
    line:
-     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
-     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr}
-     - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr}
+     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr.zip}
+     - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr.zip}
 
    cia:
-     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
-     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
+     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
 
 This will produce a high-resolution spectrum file ``forward_spectrum_highres.txt`` containing two columns: wavelength (um) and transit depth.
 
@@ -157,13 +157,13 @@ The default will use the nautilus sampler with 250 live points which ensures dec
    wl_master: ../../opac_data/ck/wl_ck_R250.txt
 
    line:
-     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr}
-     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr}
-     - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr}
+     - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+     - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr.zip}
+     - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr.zip}
 
    cia:
-     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
-     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr}
+     - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+     - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
 
 
 After completion (around 10 minutes), the code will output both the nautilus_checkpoint.hdf5 file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results. 

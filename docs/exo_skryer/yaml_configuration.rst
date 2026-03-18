@@ -333,7 +333,7 @@ loaded into registries.
 ``opac.line``
   List of line opacity entries. Each entry is a mapping (flow-style shown)::
 
-    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr.zip}
 
   Fields:
 
@@ -342,8 +342,8 @@ loaded into registries.
 
   File formats:
 
-  * CK: ``.zarr``, ``.zarr.zip``, ``.h5``, ``.hdf5``, ``.npz``
-  * OS: ``.zarr``, ``.zarr.zip``, ``.npz``
+  * CK: ``.zarr.zip``, ``.zarr``, ``.h5``, ``.hdf5``, ``.npz``
+  * OS: ``.zarr.zip``, ``.zarr``, ``.npz``
 
 ``opac.ray``
   List of Rayleigh species entries. Each entry is typically::
@@ -357,7 +357,7 @@ loaded into registries.
 ``opac.cia``
   List of CIA pair entries::
 
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
 
   Notes:
 

@@ -22,6 +22,7 @@ import arviz as az
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 import yaml
 
 
@@ -99,6 +100,29 @@ def _median_params_from_posterior(cfg, posterior_ds) -> Dict[str, float]:
     return params
 
 
+def _build_param_draws_from_idata(cfg, posterior_ds):
+    """Return dict name->(N_total,) samples, filling fixed params with their constant value."""
+    params_cfg = getattr(cfg, "params", [])
+    if "chain" not in posterior_ds.dims or "draw" not in posterior_ds.dims:
+        raise ValueError("posterior.nc must have dims ('chain', 'draw').")
+    N_total = int(posterior_ds.sizes["chain"]) * int(posterior_ds.sizes["draw"])
+    out: Dict[str, np.ndarray] = {}
+    for p in params_cfg:
+        name = getattr(p, "name", None)
+        if not name:
+            continue
+        if name in posterior_ds.data_vars:
+            out[name] = _flatten_param(posterior_ds[name].values)
+        elif _is_fixed_param(p):
+            val = _fixed_value_param(p)
+            if val is None:
+                raise ValueError(f"Fixed parameter '{name}' requires value/init in YAML.")
+            out[name] = np.full((N_total,), float(val), dtype=float)
+        else:
+            raise KeyError(f"Free parameter '{name}' not found in posterior.")
+    return out, N_total
+
+
 def _build_pressure_grid(nlay: int, p_bot_bar: float, p_top_bar: float, bar_cgs: float):
     p_lev = jnp.logspace(jnp.log10(p_bot_bar * bar_cgs), jnp.log10(p_top_bar * bar_cgs), nlay + 1)
     p_lay = (p_lev[1:] - p_lev[:-1]) / jnp.log(p_lev[1:] / p_lev[:-1])
@@ -121,6 +145,9 @@ def main() -> None:
     ap.add_argument("--species", default=None, help="Comma-separated species list (default: config/all)")
     ap.add_argument("--outname", default="bestfit_chem", help="Output stem")
     ap.add_argument("--no-show", action="store_true", help="Do not display plot window")
+    ap.add_argument("--max-samples", type=int, default=500,
+                    help="Max posterior draws for 1σ bands (0 = use all, default: 500)")
+    ap.add_argument("--seed", type=int, default=123, help="Random seed for draw subsampling")
     args = ap.parse_args()
 
     cfg_path = Path(args.config).resolve()
@@ -200,30 +227,65 @@ def main() -> None:
     p_bar = np.asarray(p_lay / bar)
     mu_lay = np.asarray(vmr_lay["__mu_lay__"]) if "__mu_lay__" in vmr_lay else np.asarray(compute_mu(vmr_lay))
 
+    # --- 1σ bands: sample posterior draws and evaluate chemistry for each ---
+    param_draws, N_total = _build_param_draws_from_idata(cfg, posterior_ds)
+    rng = np.random.default_rng(args.seed)
+    max_s = args.max_samples
+    if max_s > 0 and max_s < N_total:
+        idx = np.sort(rng.choice(N_total, size=max_s, replace=False))
+    else:
+        idx = np.arange(N_total)
+    M = idx.size
+
+    vmr_samples: Dict[str, np.ndarray] = {sp: np.empty((M, nlay)) for sp in plot_species}
+    mu_samples = np.empty((M, nlay))
+
+    print(f"[bestfit_chem] Evaluating chemistry on {M} posterior draws for 1σ bands…")
+    for k, ii in enumerate(idx):
+        pars = {name: float(param_draws[name][ii]) for name in param_draws}
+        _, T_lay_k = Tp_kernel(p_lev, pars)
+        vmr_k = chemistry_kernel(p_lay, T_lay_k, pars, nlay)
+        for sp in plot_species:
+            vmr_samples[sp][k] = np.clip(np.asarray(vmr_k.get(sp, vmr_lay[sp])), 1e-300, 1.0)
+        mu_k = np.asarray(vmr_k["__mu_lay__"]) if "__mu_lay__" in vmr_k else np.asarray(compute_mu(vmr_k))
+        mu_samples[k] = mu_k
+
+    q1_lo, q1_hi = 0.15865525393145707, 0.8413447460685429
+    vmr_q1_lo = {sp: np.quantile(vmr_samples[sp], q1_lo, axis=0) for sp in plot_species}
+    vmr_q50   = {sp: np.quantile(vmr_samples[sp], 0.50,   axis=0) for sp in plot_species}
+    vmr_q1_hi = {sp: np.quantile(vmr_samples[sp], q1_hi,  axis=0) for sp in plot_species}
+    mu_q1_lo  = np.quantile(mu_samples, q1_lo, axis=0)
+    mu_q50    = np.quantile(mu_samples, 0.50,   axis=0)
+    mu_q1_hi  = np.quantile(mu_samples, q1_hi,  axis=0)
+
+    # --- VMR plot ---
+    palette = sns.color_palette("husl", len(plot_species))
     fig_vmr, ax_vmr = plt.subplots(figsize=(8.0, 6.0))
-    for sp in plot_species:
-        x = np.clip(np.asarray(vmr_lay[sp]), 1e-300, 1.0)
-        ax_vmr.plot(x, p_bar, lw=1.8, label=sp)
+    for sp, color in zip(plot_species, palette):
+        ax_vmr.fill_betweenx(p_bar, vmr_q1_lo[sp], vmr_q1_hi[sp],
+                             color=color, alpha=0.20)
+        ax_vmr.plot(vmr_q50[sp], p_bar, lw=1.8, label=sp, color=color)
 
     ax_vmr.set_xscale("log")
     ax_vmr.set_yscale("log")
     ax_vmr.invert_yaxis()
     ax_vmr.set_xlabel("VMR")
     ax_vmr.set_ylabel("Pressure [bar]")
-    ax_vmr.set_title("Best-fit Chemistry (Posterior Median)")
+    ax_vmr.set_title("Best-fit Chemistry (Posterior Median ± 1σ)")
     ax_vmr.set_xlim(1e-14, 1.0)
     ax_vmr.grid(True, alpha=0.25)
     ax_vmr.legend(fontsize=8, ncol=2)
     fig_vmr.tight_layout()
 
+    # --- Mean molecular weight plot ---
     fig_mu, ax_mu = plt.subplots(figsize=(7.0, 6.0))
-    ax_mu.plot(mu_lay, p_bar, lw=2.0, color="black")
-    ax_mu.set_xscale("log")
+    ax_mu.fill_betweenx(p_bar, mu_q1_lo, mu_q1_hi, color="black", alpha=0.20)
+    ax_mu.plot(mu_q50, p_bar, lw=2.0, color="black")
     ax_mu.set_yscale("log")
     ax_mu.invert_yaxis()
     ax_mu.set_xlabel("Mean Molecular Weight")
     ax_mu.set_ylabel("Pressure [bar]")
-    ax_mu.set_title("Best-fit Mean Molecular Weight")
+    ax_mu.set_title("Best-fit Mean Molecular Weight (Posterior Median ± 1σ)")
     ax_mu.grid(True, alpha=0.25)
     fig_mu.tight_layout()
 

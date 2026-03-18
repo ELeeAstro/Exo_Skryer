@@ -49,18 +49,18 @@ opac:
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/os/H2O_dnu_1.npz}
-    - {species: CO, path: ../../opac_data/os/CO_dnu_1.npz}
-    - {species: CO2, path: ../../opac_data/os/CO2_dnu_1.npz}
-    - {species: CH4, path: ../../opac_data/os/CH4_dnu_1.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_dnu_1.zarr.zip}
+    - {species: CO, path: ../../opac_data/os/CO_dnu_1.zarr.zip}
+    - {species: CO2, path: ../../opac_data/os/CO2_dnu_1.zarr.zip}
+    - {species: CH4, path: ../../opac_data/os/CH4_dnu_1.zarr.zip}
 
   # Rayleigh scattering species
   ray: None
 
   # CIA opacity files
   cia:
-    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.npz}
-    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.npz}
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
 
   # Special opacity (e.g. H- bound-free/free-free)
   special: None

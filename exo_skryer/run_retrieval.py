@@ -4,6 +4,7 @@ run_retrieval.py
 """
 
 import os
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")  # suppress XLA/Eigen bitcode warnings
 import time
 import argparse
 from pathlib import Path

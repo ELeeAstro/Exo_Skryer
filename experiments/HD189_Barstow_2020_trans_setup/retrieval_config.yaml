@@ -49,7 +49,7 @@ opac:
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/os/H2O_R10000.npz}
+    - {species: H2O, path: ../../opac_data/os/H2O_R10000.zarr.zip}
 
   # Rayleigh scattering species
   ray: None
