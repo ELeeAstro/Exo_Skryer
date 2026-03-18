@@ -2,7 +2,7 @@
 name = "Exo_Skryer"
 description = "A JAX accelerated sub-stellar atmosphere retrieval code"
 readme = "README.rst"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { file = "LICENSE", content-type = "text/plain" }
 authors = [
   { name = "Elspeth K. H. Lee", email = "elspeth.lee@unibe.ch" },
