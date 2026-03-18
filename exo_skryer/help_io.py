@@ -87,7 +87,7 @@ def to_inferencedata(
     if not posterior:
         raise ValueError("No variables to export in posterior group.")
 
-    idata = az.from_dict(posterior=posterior)
+    idata = az.from_dict(posterior)
 
     # attach minimal attrs for chain/draw counts
     c, d = next(iter(posterior.values())).shape

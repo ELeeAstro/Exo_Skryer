@@ -3,11 +3,18 @@ read_yaml.py
 ============
 """
 
+import collections
+import collections.abc
 from pathlib import Path
 from types import SimpleNamespace
 import yaml
 
 __all__ = ['read_yaml']
+
+
+# PyYAML 3.x still references collections.Hashable, which was removed in Python 3.12.
+if not hasattr(collections, "Hashable"):
+    collections.Hashable = collections.abc.Hashable
 
 
 def _to_ns(x):

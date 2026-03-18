@@ -78,7 +78,15 @@ def main() -> None:
         print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
         print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
     else:
-        print("[info] Platform: CPU (JAX defaults)")
+        xla_flags_cpu = (
+            "--xla_cpu_multi_thread_eigen=true "
+            f"intra_op_parallelism_threads={cfg.runtime.threads}"
+        )
+        existing_xla_flags = os.environ.get("XLA_FLAGS", "").strip()
+        os.environ["XLA_FLAGS"] = " ".join(
+            part for part in (existing_xla_flags, xla_flags_cpu) if part
+        )
+        print(f"[info] Platform: CPU (threads={cfg.runtime.threads})")
 
     # Print main yaml parameters to command line (after setting environment)
     from .help_print import print_cfg
