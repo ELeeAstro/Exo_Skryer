@@ -283,7 +283,7 @@ sampling:
     nlive: 100
     bound: multi
     sample: auto
-    dlogz: 1000.0
+    dlogz: 1.0
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -295,9 +295,9 @@ sampling:
 
   # UltraNest settings
   ultranest:
-    num_live_points: 1000
-    min_num_live_points: 1000
-    dlogz: 0.1
+    num_live_points: 100
+    min_num_live_points: 100
+    dlogz: 1.0
     max_iters: 0
     verbose: true
     show_status: true
