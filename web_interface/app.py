@@ -195,7 +195,7 @@ CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space
-SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "pymultinest"]
+SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nautilus", "pymultinest"]
 
 # Compute platforms
 RUNTIME_PLATFORMS = ["gpu", "cpu"]
@@ -614,7 +614,7 @@ def build_config() -> dict:
     elif engine == 'nuts':
         # NUTS: No-U-Turn Sampler (Hamiltonian Monte Carlo variant)
         config['sampling']['nuts'] = {
-            'backend': 'numpyro',  # Use NumPyro as the backend
+            'backend': st.session_state.get('nuts_backend', 'numpyro'),
             'warmup': st.session_state.get('nuts_warmup', 500),  # Burn-in steps
             'draws': st.session_state.get('nuts_draws', 2000),  # Posterior samples
             'chains': st.session_state.get('nuts_chains', 4),  # Parallel chains
@@ -662,6 +662,36 @@ def build_config() -> dict:
             pymultinest_config['const_efficiency_mode'] = st.session_state.get('pymultinest_const_efficiency_mode')
 
         config['sampling']['pymultinest'] = pymultinest_config
+
+    elif engine == 'nautilus':
+        # Nautilus: neural-network-accelerated nested sampling
+        nautilus_config = {
+            'n_live': st.session_state.get('nautilus_n_live', 2000),
+            'split_threshold': st.session_state.get('nautilus_split_threshold', 100),
+            'n_networks': st.session_state.get('nautilus_n_networks', 4),
+            'seed': st.session_state.get('nautilus_seed', 42),
+            'filepath': st.session_state.get('nautilus_filepath', 'nautilus_checkpoint.hdf5'),
+            'resume': st.session_state.get('nautilus_resume', False),
+            'f_live': st.session_state.get('nautilus_f_live', 0.01),
+            'n_shell': st.session_state.get('nautilus_n_shell', 1),
+            'discard_exploration': st.session_state.get('nautilus_discard_exploration', False),
+            'equal_weight': st.session_state.get('nautilus_equal_weight', True),
+            'verbose': st.session_state.get('nautilus_verbose', True),
+        }
+        # Optional parameters
+        if st.session_state.get('nautilus_n_update'):
+            nautilus_config['n_update'] = int(st.session_state.get('nautilus_n_update'))
+        if st.session_state.get('nautilus_n_batch'):
+            nautilus_config['n_batch'] = int(st.session_state.get('nautilus_n_batch'))
+        if st.session_state.get('nautilus_n_like_new_bound'):
+            nautilus_config['n_like_new_bound'] = int(st.session_state.get('nautilus_n_like_new_bound'))
+        if st.session_state.get('nautilus_n_eff'):
+            nautilus_config['n_eff'] = float(st.session_state.get('nautilus_n_eff'))
+        if st.session_state.get('nautilus_n_like_max'):
+            nautilus_config['n_like_max'] = int(st.session_state.get('nautilus_n_like_max'))
+        if st.session_state.get('nautilus_timeout'):
+            nautilus_config['timeout'] = float(st.session_state.get('nautilus_timeout'))
+        config['sampling']['nautilus'] = nautilus_config
 
     # -------------------------------------------------------------------------
     # RUNTIME SECTION
@@ -801,7 +831,7 @@ def render_opac_section():
     - Cloud opacity file paths
     """
     st.header("Opacity Configuration")
-    st.info("Prefer `.zarr` or `.zarr.zip` opacity tables in new configs. The current loaders still accept legacy `.npz`/`.h5` in some places, but the app now defaults to Zarr paths.")
+    st.info("Always use `.zarr.zip` opacity tables — a single portable file that works on all platforms. Legacy `.npz`/`.h5` formats are still accepted by the loaders but are not recommended for new configs.")
 
     col1, col2 = st.columns(2)
     with col1:
@@ -864,7 +894,7 @@ def render_opac_section():
     cia_species = st.multiselect("Select CIA pairs", COMMON_CIA_PAIRS,
                                   default=st.session_state.cia_species, key="cia_select")
     st.session_state.cia_species = cia_species
-    st.caption("CIA custom paths should point to `.zarr` or `.zarr.zip` tables when you override the defaults.")
+    st.caption("CIA custom paths should point to `.zarr.zip` tables when you override the defaults.")
 
     st.subheader("Special Opacity Sources")
     special_on = st.checkbox("Enable H- continuum (bf/ff)", key="special_hminus_enabled")
@@ -1247,9 +1277,10 @@ def render_sampling_section():
             st.number_input("Random seed", min_value=0, value=42, key="blackjax_seed")
 
     elif engine == "nuts":
-        st.subheader("NUTS (NumPyro) Configuration")
+        st.subheader("NUTS (HMC) Configuration")
         col1, col2 = st.columns(2)
         with col1:
+            st.selectbox("Backend", ["numpyro", "blackjax"], key="nuts_backend")
             st.number_input("Warmup steps", min_value=100, value=1000, key="nuts_warmup")
             st.number_input("Draws", min_value=100, value=1000, key="nuts_draws")
         with col2:
@@ -1301,6 +1332,36 @@ def render_sampling_section():
                 st.checkbox("Importance nested sampling", key="pymultinest_importance_nested_sampling")
                 st.checkbox("Multimodal", value=True, key="pymultinest_multimodal")
                 st.checkbox("Constant efficiency mode", key="pymultinest_const_efficiency_mode")
+
+    elif engine == "nautilus":
+        st.subheader("Nautilus Configuration")
+
+        with st.expander("Basic Settings", expanded=True):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("N live points", min_value=50, value=2000, key="nautilus_n_live")
+                st.number_input("Split threshold", min_value=10, value=100, key="nautilus_split_threshold")
+                st.number_input("N networks", min_value=1, value=4, key="nautilus_n_networks")
+                st.number_input("f_live", min_value=0.001, max_value=1.0, value=0.01, format="%.4f", key="nautilus_f_live")
+            with col2:
+                st.number_input("N shell", min_value=1, value=1, key="nautilus_n_shell")
+                st.checkbox("Discard exploration", key="nautilus_discard_exploration")
+                st.checkbox("Equal weight", value=True, key="nautilus_equal_weight")
+                st.checkbox("Verbose", value=True, key="nautilus_verbose")
+                st.checkbox("Resume", key="nautilus_resume")
+
+        with st.expander("Checkpoint & Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Checkpoint filepath", value="nautilus_checkpoint.hdf5", key="nautilus_filepath")
+                st.number_input("Random seed", min_value=0, value=42, key="nautilus_seed")
+                st.number_input("N update (optional)", min_value=0, value=0, key="nautilus_n_update", help="0 = default")
+                st.number_input("N batch (optional)", min_value=0, value=0, key="nautilus_n_batch", help="0 = default")
+            with col2:
+                st.number_input("N like new bound (optional)", min_value=0, value=0, key="nautilus_n_like_new_bound", help="0 = default")
+                st.number_input("N eff (optional)", min_value=0.0, value=0.0, format="%.1f", key="nautilus_n_eff", help="0 = default")
+                st.number_input("N like max (optional)", min_value=0, value=0, key="nautilus_n_like_max", help="0 = default")
+                st.number_input("Timeout seconds (optional)", min_value=0.0, value=0.0, format="%.1f", key="nautilus_timeout", help="0 = no timeout")
 
 
 def render_runtime_section():
