@@ -6,6 +6,7 @@ vert_chem.py
 from __future__ import annotations
 
 from dataclasses import replace
+from operator import itemgetter
 from typing import Any, Dict
 
 import numpy as np
@@ -28,7 +29,7 @@ from .chem_fastchem_grid_jax import (
     interpolate_profile_scan as interpolate_fc_profile_scan,
     interpolate_profile_vmap as interpolate_fc_profile_vmap,
 )
-from .vert_mu import compute_mu
+from .vert_mu import compute_mu, build_compute_mu
 
 
 # Solar reference abundances (relative to H) - Asplund et al. (2021)
@@ -459,17 +460,34 @@ def constant_vmr_clr(species_order: tuple[str, ...], use_log10_vmr: bool = False
         param_keys = tuple(f"clr_{s}" for s in species_order)
 
     n_trace = len(species_order)
+    packed_mu_species_no_h = tuple(dict.fromkeys((*species_order, "H2", "He")))
+    packed_mu_species_with_h = tuple(dict.fromkeys((*species_order, "H2", "He", "H")))
+    compute_mu_fast_no_h = build_compute_mu(packed_mu_species_no_h)
+    compute_mu_fast_with_h = build_compute_mu(packed_mu_species_with_h)
+
+    if n_trace == 0:
+        param_getter = None
+    elif n_trace == 1:
+        key0 = param_keys[0]
+
+        def _pack_param_values(params):
+            return jnp.asarray([params[key0]])
+    else:
+        param_getter = itemgetter(*param_keys)
+
+        def _pack_param_values(params):
+            return jnp.stack(param_getter(params))
 
     def _constant_vmr_clr_kernel(p_lay, T_lay, params, nlay):
         del p_lay, T_lay
 
         if n_trace == 0:
-            background = 1.0
+            background = jnp.asarray(1.0)
             vmr = {}
         else:
             if use_log10_vmr:
                 # Convert log10(VMR) to CLR coordinates
-                log10_vmrs = jnp.array([params[k] for k in param_keys])
+                log10_vmrs = _pack_param_values(params)
                 vmrs = 10.0 ** log10_vmrs
 
                 # Compute filler fraction (clamped to avoid log(0))
@@ -479,7 +497,7 @@ def constant_vmr_clr(species_order: tuple[str, ...], use_log10_vmr: bool = False
                 z_vals = jnp.log(vmrs) - jnp.log(filler)
             else:
                 # Direct CLR parameters
-                z_vals = jnp.array([params[k] for k in param_keys])
+                z_vals = _pack_param_values(params)
 
             # Numerically stable softmax with z_filler = 0:
             # log_denom = log(1 + sum(exp(z_j))) via logaddexp (softplus)
@@ -512,6 +530,9 @@ def constant_vmr_clr(species_order: tuple[str, ...], use_log10_vmr: bool = False
         vmr["He"] = jnp.full((nlay,), He)
         if "log_10_H_over_H2" in params:
             vmr["H"] = jnp.full((nlay,), H)
+            vmr["__mu_lay__"] = compute_mu_fast_with_h(vmr)
+        else:
+            vmr["__mu_lay__"] = compute_mu_fast_no_h(vmr)
         return vmr
 
     return _constant_vmr_clr_kernel

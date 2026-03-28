@@ -87,7 +87,7 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
     layer_vmr = state["vmr_lay"]
 
     # Get species names and mixing ratios
-    species_names = XS.line_species_names()
+    species_names = XS.line_runtime_species_order()
     layer_count = layer_pressures.shape[0]
     sigma_cube = opac["line_sigma_cube"]
     log_p_grid = opac["line_log10_pressure_grid"]

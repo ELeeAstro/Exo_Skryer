@@ -18,6 +18,7 @@ import types
 import jax
 import jax.numpy as jnp
 import numpy as np
+from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 
 def _patch_jax_for_tfp() -> None:
@@ -50,6 +51,7 @@ __all__ = [
 ]
 
 LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
+OFFSET_VECTOR_KEY = "__offset_values__"
 
 
 def _extract_offset_params(cfg, obs: dict) -> Tuple[list, jnp.ndarray, bool]:
@@ -74,8 +76,8 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[list, jnp.ndarray, bool]:
     param_map: Dict[str, str] = {}  # group_name -> param_name
     for p in cfg.params:
         name = p.name
-        if name.startswith("offset_"):
-            group_name = name[7:]  # strip "offset_" prefix
+        group_name = parse_offset_group_name(name, getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+        if group_name is not None:
             param_map[group_name] = name
 
     # Check if we have any real offset groups (not __no_offset__)
@@ -150,8 +152,9 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
     params_cfg = [p for p in cfg.params if str(getattr(p, "dist", "")).lower() != "delta"]
 
     # Silent defaults that only apply if the name is NOT present in YAML at all.
+    jitter_key = jitter_param_name(getattr(getattr(cfg, "physics", None), "rt_scheme", None))
     OPTIONAL_DEFAULTS: Dict[str, float] = {
-        "c": -99.0,  # log10(sigma_jit): "effectively zero jitter"
+        jitter_key: -99.0,
     }
     cfg_names = {p.name for p in cfg.params}
     optional_defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
@@ -223,6 +226,9 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
             if k not in params:
                 params[k] = jnp.asarray(v)
 
+        if has_offsets:
+            params[OFFSET_VECTOR_KEY] = jnp.stack([params[name] for name in offset_param_names])
+
         return params
 
     # ----- Gaussian (symmetric) log-likelihood with offset support -----
@@ -237,7 +243,7 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
         def valid_ll(_):
             # Apply instrument offsets if defined (offset params are in ppm)
             if has_offsets:
-                offset_values = jnp.array([theta_map[n] for n in offset_param_names])
+                offset_values = theta_map[OFFSET_VECTOR_KEY]
                 idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
                 mask = (offset_group_idx >= 0).astype(y_obs.dtype)
                 offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
@@ -248,7 +254,7 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
             r = y_shifted - mu  # (N,)
 
             # 'c' is guaranteed present: either in YAML (sampled/delta) or injected default
-            c = theta_map["c"]  # log10(sigma_jit)
+            c = theta_map[jitter_key]  # log10(sigma_jit)
 
             # sigma_jit^2 = 10^(2c)
             sig_jit2 = 10.0 ** (2.0 * c)

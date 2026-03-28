@@ -1,0 +1,99 @@
+data:
+
+  obs: None
+  obs_east: ../../obs_data/WASP-39b_JWST_evening_east.txt
+  obs_west: ../../obs_data/WASP-39b_JWST_morning_west.txt
+  stellar: None
+
+physics:
+
+  nlay: 99
+
+  vert_Tp: isothermal
+  vert_alt: p_ref
+  vert_chem: constant_vmr
+  vert_mu: dynamic
+  vert_cloud: none
+
+  opac_line: ck
+  opac_ray: ck
+  opac_cia: ck
+  opac_cloud: none
+  opac_special: None
+
+  rt_scheme: transit_2d   # transit_1d | transit_2d | emission_1d
+  contri_func: False
+  refraction: None
+
+opac:
+
+  wl_master: ../../opac_data/ck/wl_ck_R250.txt
+  full_grid: False
+  ck: True
+  ck_mix: TRANS
+
+  line:
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+    - {species: CO2, path: ../../opac_data/ck/CO2_ck_R250.zarr.zip}
+    - {species: CO,  path: ../../opac_data/ck/CO_ck_R250.zarr.zip}
+    - {species: CH4, path: ../../opac_data/ck/CH4_ck_R250.zarr.zip}
+  ray:
+    - {species: H2}
+    - {species: He}
+  cia:
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
+  special: None
+  cloud: None
+
+params:
+
+  # transit_2d requires every parameter name to end in _joint, _east, or _west.
+  # Use _joint for shared quantities, and paired _east/_west entries for limb-specific ones.
+
+  # --- Shared geometry / pressure structure ---
+  - { name: R_s_joint,          dist: delta,   value: 0.931, transform: identity, init: 0.931 }
+  - { name: p_bot_joint,        dist: delta,   value: 1000.0, transform: identity, init: 1000.0 }
+  - { name: p_top_joint,        dist: delta,   value: 1e-8,  transform: identity, init: 1e-8 }
+  - { name: log_10_p_ref_joint, dist: delta,   value: 1.0,   transform: identity, init: 1.0 }
+
+  # --- East limb ---
+  - { name: R_p_east,       dist: uniform, low: 1.00, high: 1.50, transform: logit, init: 1.25 }
+  - { name: log_10_g_east,  dist: uniform, low: 2.0,  high: 3.0,  transform: logit, init: 3.1 }
+  - { name: T_iso_east,     dist: uniform, low: 800.0, high: 1500.0, transform: logit, init: 1200.0 }
+  - { name: log_10_f_H2O_east, dist: uniform, low: -12, high: -2, transform: logit, init: -4.0 }
+  - { name: log_10_f_CO2_east, dist: uniform, low: -12, high: -2, transform: logit, init: -5.0 }
+  - { name: log_10_f_CO_east,  dist: uniform, low: -12, high: -2, transform: logit, init: -4.0 }
+  - { name: log_10_f_CH4_east, dist: uniform, low: -12, high: -2, transform: logit, init: -8.0 }
+
+  # --- West limb ---
+  - { name: R_p_west,       dist: uniform, low: 1.00, high: 1.50, transform: logit, init: 1.25 }
+  - { name: log_10_g_west,  dist: uniform, low: 2.0,  high: 3.0,  transform: logit, init: 3.1 }
+  - { name: T_iso_west,     dist: uniform, low: 800.0, high: 1500.0, transform: logit, init: 1000.0 }
+  - { name: log_10_f_H2O_west, dist: uniform, low: -12, high: -2, transform: logit, init: -4.5 }
+  - { name: log_10_f_CO2_west, dist: uniform, low: -12, high: -2, transform: logit, init: -5.5 }
+  - { name: log_10_f_CO_west,  dist: uniform, low: -12, high: -2, transform: logit, init: -4.5 }
+  - { name: log_10_f_CH4_west, dist: uniform, low: -12, high: -2, transform: logit, init: -7.0 }
+
+sampling:
+
+  engine: dynesty
+
+  dynesty:
+    nlive: 100
+    bound: multi
+    sample: auto
+    dlogz: 1.0
+    maxiter: null
+    maxcall: null
+    bootstrap: 0
+    enlarge: null
+    update_interval: null
+    dynamic: false
+    print_progress: true
+    seed: 42
+
+runtime:
+  platform: cpu
+  cuda_visible_devices: 0
+  threads: 1

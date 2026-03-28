@@ -9,7 +9,7 @@ from typing import Dict, Mapping, Tuple
 
 import jax.numpy as jnp
 
-from .refraction import refraction_cutoff_mask
+from .refraction import maybe_refraction_cutoff_mask
 
 __all__ = ["compute_transit_depth_1d_ck"]
 
@@ -33,8 +33,8 @@ def _sum_opacity_components_ck(
     Other opacities have shape (nlay, nwl) and are broadcast over g-dimension.
     Returns shape (nlay, nwl, ng).
     """
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay = state["rho_lay"].shape[0]
+    nwl = state["wl"].shape[0] if "wl" in state else int(state["nwl"])
 
     line_opacity = opacity_components.get("line")
     if line_opacity is None:
@@ -171,9 +171,7 @@ def _integrate_g_points(
     dR2 = jnp.sum(dR2_per_g * w[None, :], axis=-1)  # (nwl,)
 
     if not want_contrib:
-        nlay = state["nlay"]
-        nwl = state["nwl"]
-        layer_dR2 = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+        layer_dR2 = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
         return D_net, dR2, layer_dR2
 
     tau_eps = 1.0e-30
@@ -193,12 +191,7 @@ def compute_transit_depth_1d_ck(
     opac: Dict[str, jnp.ndarray],
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     contri_func = state.get("contri_func", False)
-    nlay = state["nlay"]
-    nwl = state["nwl"]
-
-    refraction_mask = None
-    if int(state.get("refraction_mode", 0)) == 1:
-        refraction_mask = refraction_cutoff_mask(state, params, opac)
+    refraction_mask = maybe_refraction_cutoff_mask(state, params, opac)
 
     geometry = _build_transit_geometry(state)
     k_tot = _sum_opacity_components_ck(state, opacity_components, opac)  # (nlay, nwl, ng)
@@ -234,7 +227,7 @@ def compute_transit_depth_1d_ck(
             )
 
             D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
-            contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+            contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
     else:
         if contri_func:
             D_net, dR2, layer_dR2 = _integrate_g_points(
@@ -245,6 +238,6 @@ def compute_transit_depth_1d_ck(
             D_net, _, _ = _integrate_g_points(
                 k_tot, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
-            contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+            contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
 
     return D_net, contrib_func_norm

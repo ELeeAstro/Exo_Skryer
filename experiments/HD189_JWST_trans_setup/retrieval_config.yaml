@@ -1,6 +1,8 @@
 data:
 
   obs: ../../obs_data/HD189733b_JWST_trans.txt
+  obs_east: None
+  obs_west: None
   stellar: None
 
 physics:
@@ -35,11 +37,11 @@ physics:
 
   cloud_dist: mono  # mono (monodisperse) | log_normal (lognormal size distribution)
 
-  rt_scheme: transit_1d   # transit_1d | emission_1d
+  rt_scheme: transit_1d   # transit_1d | transit_2d | emission_1d
   contri_func: False       # True to return contribution functions alongside spectra
   refraction: None
 
-  # --- Emission-only settings (ignored when rt_scheme: transit_1d) ---
+  # --- Emission-only settings (ignored when rt_scheme: transit_1d/transit_2d) ---
   # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
   # emission_mode: planet   # planet | brown_dwarf
 

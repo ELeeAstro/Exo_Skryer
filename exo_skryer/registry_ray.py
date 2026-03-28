@@ -23,6 +23,9 @@ __all__ = [
     "ray_sigma_table",
     "ray_nm1_table",
     "ray_nd_ref",
+    "ray_runtime_species_order",
+    "ray_sigma_linear_table",
+    "ray_refractivity_coeff_table",
     "ray_pick_arrays",
 ]
 
@@ -44,6 +47,9 @@ _RAY_SIGMA_CACHE: jnp.ndarray | None = None
 _RAY_WAVELENGTH_CACHE: jnp.ndarray | None = None
 _RAY_NM1_CACHE: jnp.ndarray | None = None
 _RAY_NDREF_CACHE: jnp.ndarray | None = None
+_RAY_SPECIES_NAMES: Tuple[str, ...] = ()
+_RAY_SIGMA_LINEAR_CACHE: jnp.ndarray | None = None
+_RAY_REFRACTIVITY_COEFF_CACHE: jnp.ndarray | None = None
 
 # Some required constants
 PI = np.pi
@@ -60,19 +66,28 @@ N_STP_H2 = 2.65163e19
 # Clear cache helper functions
 def _clear_cache():
     ray_species_names.cache_clear()
+    ray_runtime_species_order.cache_clear()
     ray_master_wavelength.cache_clear()
     ray_sigma_table.cache_clear()
+    ray_nm1_table.cache_clear()
+    ray_nd_ref.cache_clear()
+    ray_sigma_linear_table.cache_clear()
+    ray_refractivity_coeff_table.cache_clear()
     ray_pick_arrays.cache_clear()
 
 
 # Clear global data helper function
 def reset_registry():
     global _RAY_ENTRIES, _RAY_SIGMA_CACHE, _RAY_WAVELENGTH_CACHE, _RAY_NM1_CACHE, _RAY_NDREF_CACHE
+    global _RAY_SPECIES_NAMES, _RAY_SIGMA_LINEAR_CACHE, _RAY_REFRACTIVITY_COEFF_CACHE
     _RAY_ENTRIES = ()
     _RAY_SIGMA_CACHE = None
     _RAY_WAVELENGTH_CACHE = None
     _RAY_NM1_CACHE = None
     _RAY_NDREF_CACHE = None
+    _RAY_SPECIES_NAMES = ()
+    _RAY_SIGMA_LINEAR_CACHE = None
+    _RAY_REFRACTIVITY_COEFF_CACHE = None
     _clear_cache()
 
 # Check if Rayleigh data exists helper functions
@@ -258,6 +273,7 @@ def _compute_species_sigma_nm1_ndref(
 # Calculate and set the global Rayleigh cross section data caches
 def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None:
     global _RAY_ENTRIES, _RAY_SIGMA_CACHE, _RAY_WAVELENGTH_CACHE, _RAY_NM1_CACHE, _RAY_NDREF_CACHE
+    global _RAY_SPECIES_NAMES, _RAY_SIGMA_LINEAR_CACHE, _RAY_REFRACTIVITY_COEFF_CACHE
     entries: List[RayRegistryEntry] = []
     nm1_entries: List[np.ndarray] = []
     ndref_entries: List[float] = []
@@ -310,6 +326,9 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
     nm1_stacked = np.stack(nm1_entries, axis=0)
     _RAY_NM1_CACHE = jnp.asarray(nm1_stacked, dtype=jnp.float32)
     _RAY_NDREF_CACHE = jnp.asarray(np.asarray(ndref_entries, dtype=np.float64), dtype=jnp.float64)
+    _RAY_SPECIES_NAMES = tuple(entry.name for entry in _RAY_ENTRIES)
+    _RAY_SIGMA_LINEAR_CACHE = 10.0 ** _RAY_SIGMA_CACHE.astype(jnp.float64)
+    _RAY_REFRACTIVITY_COEFF_CACHE = _RAY_NM1_CACHE.astype(jnp.float64) / _RAY_NDREF_CACHE[:, None]
 
     print(f"[Ray] Cross section cache: {_RAY_SIGMA_CACHE.shape} (dtype: {_RAY_SIGMA_CACHE.dtype})")
 
@@ -324,7 +343,12 @@ def load_ray_registry(cfg, obs, lam_master: Optional[np.ndarray] = None) -> None
 
 @lru_cache(None)
 def ray_species_names() -> Tuple[str, ...]:
-    return tuple(entry.name for entry in _RAY_ENTRIES)
+    return _RAY_SPECIES_NAMES
+
+
+@lru_cache(None)
+def ray_runtime_species_order() -> Tuple[str, ...]:
+    return ray_species_names()
 
 
 @lru_cache(None)
@@ -353,6 +377,20 @@ def ray_nd_ref() -> jnp.ndarray:
     if _RAY_NDREF_CACHE is None:
         raise RuntimeError("Rayleigh reference number density table not built; call build_opacities() first.")
     return _RAY_NDREF_CACHE
+
+
+@lru_cache(None)
+def ray_sigma_linear_table() -> jnp.ndarray:
+    if _RAY_SIGMA_LINEAR_CACHE is None:
+        raise RuntimeError("Rayleigh linear sigma table not built; call build_opacities() first.")
+    return _RAY_SIGMA_LINEAR_CACHE
+
+
+@lru_cache(None)
+def ray_refractivity_coeff_table() -> jnp.ndarray:
+    if _RAY_REFRACTIVITY_COEFF_CACHE is None:
+        raise RuntimeError("Rayleigh refractivity coefficient table not built; call build_opacities() first.")
+    return _RAY_REFRACTIVITY_COEFF_CACHE
 
 
 @lru_cache(None)

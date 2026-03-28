@@ -108,21 +108,7 @@ def _get_ck_quadrature(opac: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.n
     weights : `~jax.numpy.ndarray`, shape (ng,)
         Quadrature weights for numerical integration over g-space. Sum to 1.0.
     """
-    g_points_all = opac["g_points"]
-    g_weights_all = opac["g_weights"]
-
-    # Values are already JAX arrays, no need to wrap
-    if g_points_all.ndim == 1:
-        g_eval = g_points_all
-    else:
-        g_eval = g_points_all[0]
-
-    if g_weights_all.ndim == 1:
-        weights = g_weights_all
-    else:
-        weights = g_weights_all[0]
-
-    return g_eval, weights
+    return opac["g_points"], opac["g_weights"]
 
 
 def zero_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
@@ -211,7 +197,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
     layer_count = layer_pressures.shape[0]
 
     # Get species names and mixing ratios
-    species_names = XS.ck_species_names()
+    species_names = XS.ck_runtime_species_order()
     layer_vmr = state["vmr_lay"]
 
     # Direct lookup - species names must match VMR keys exactly
@@ -348,7 +334,7 @@ def compute_ck_opacity_perspecies(
     layer_count = layer_pressures.shape[0]
 
     # Get species names and mixing ratios
-    species_names = XS.ck_species_names()
+    species_names = XS.ck_runtime_species_order()
     layer_vmr = state["vmr_lay"]
 
     # Stack VMRs for all species

@@ -1,0 +1,14 @@
+R_p_east: {label: "$R_{\\rm p, east}$ [$R_{\\mathrm{Jup}}$]", order: 1}
+R_p_west: {label: "$R_{\\rm p, west}$ [$R_{\\mathrm{Jup}}$]", order: 2}
+log_10_g_east: {label: "$\\log_{10} g_{\\rm east}$", order: 3}
+log_10_g_west: {label: "$\\log_{10} g_{\\rm west}$", order: 4}
+T_iso_east: {label: "$T_{\\rm east}$ [K]", order: 5}
+T_iso_west: {label: "$T_{\\rm west}$ [K]", order: 6}
+log_10_f_H2O_east: {label: "$\\log_{10} {\\rm H_2O}_{\\rm east}$", order: 7}
+log_10_f_H2O_west: {label: "$\\log_{10} {\\rm H_2O}_{\\rm west}$", order: 8}
+log_10_f_CO2_east: {label: "$\\log_{10} {\\rm CO_2}_{\\rm east}$", order: 9}
+log_10_f_CO2_west: {label: "$\\log_{10} {\\rm CO_2}_{\\rm west}$", order: 10}
+log_10_f_CO_east: {label: "$\\log_{10} {\\rm CO}_{\\rm east}$", order: 11}
+log_10_f_CO_west: {label: "$\\log_{10} {\\rm CO}_{\\rm west}$", order: 12}
+log_10_f_CH4_east: {label: "$\\log_{10} {\\rm CH_4}_{\\rm east}$", order: 13}
+log_10_f_CH4_west: {label: "$\\log_{10} {\\rm CH_4}_{\\rm west}$", order: 14}

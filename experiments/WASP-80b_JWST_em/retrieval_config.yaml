@@ -1,6 +1,8 @@
 data:
 
   obs: ../../obs_data/WASP-80b_JWST_em.txt
+  obs_east: None
+  obs_west: None
   stellar: ./WASP-80.txt
   nasa9: None
 
@@ -21,7 +23,7 @@ physics:
   opac_special: os
   cloud_dist: mono
 
-  rt_scheme: emission_1d
+  rt_scheme: emission_1d   # transit_1d | transit_2d | emission_1d
   em_scheme: eaa
   emission_mode: planet
   contri_func: False

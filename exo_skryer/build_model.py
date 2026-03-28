@@ -27,6 +27,8 @@ from .build_chem import (
     init_element_potentials_if_needed,
     init_atmodeller_if_needed,
 )
+from .vert_chem import constant_vmr, constant_vmr_clr
+from .vert_mu import build_compute_mu, constant_mu
 
 from .RT_trans_1D_ck import compute_transit_depth_1d_ck
 from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
@@ -265,22 +267,23 @@ def _build_opac_cache() -> Dict[str, jnp.ndarray]:
         opac_cache["ck_sigma_cube"] = XS.ck_sigma_cube()
         opac_cache["ck_log10_pressure_grid"] = XS.ck_log10_pressure_grid()
         opac_cache["ck_log10_temperature_grids"] = XS.ck_log10_temperature_grids()
-        opac_cache["ck_g_points"] = XS.ck_g_points()
-        opac_cache["ck_g_weights"] = XS.ck_g_weights()
+        opac_cache["g_points"] = XS.ck_g_points_1d()
+        opac_cache["g_weights"] = XS.ck_g_weights_1d()
     if XS.has_line_data():
         opac_cache["line_sigma_cube"] = XS.line_sigma_cube()
         opac_cache["line_log10_pressure_grid"] = XS.line_log10_pressure_grid()
         opac_cache["line_log10_temperature_grids"] = XS.line_log10_temperature_grids()
     if XS.has_cia_data():
         opac_cache["cia_master_wavelength"] = XS.cia_master_wavelength()
-        opac_cache["cia_sigma_cube"] = XS.cia_sigma_cube()
-        opac_cache["cia_log10_temperature_grids"] = XS.cia_log10_temperature_grids()
-        opac_cache["cia_temperature_grids"] = XS.cia_temperature_grids()
+        opac_cache["cia_pair_species_i"] = XS.cia_pair_species_i()
+        opac_cache["cia_pair_species_j"] = XS.cia_pair_species_j()
+        opac_cache["cia_retained_sigma_cube"] = XS.cia_retained_sigma_cube()
+        opac_cache["cia_retained_log10_temperature_grids"] = XS.cia_retained_log10_temperature_grids()
+        opac_cache["cia_retained_temperature_grids"] = XS.cia_retained_temperature_grids()
     if XS.has_ray_data():
         opac_cache["ray_master_wavelength"] = XS.ray_master_wavelength()
-        opac_cache["ray_sigma_table"] = XS.ray_sigma_table()
-        opac_cache["ray_nm1_table"] = XS.ray_nm1_table()
-        opac_cache["ray_nd_ref"] = XS.ray_nd_ref()
+        opac_cache["ray_sigma_linear_table"] = XS.ray_sigma_linear_table()
+        opac_cache["ray_refractivity_coeff_table"] = XS.ray_refractivity_coeff_table()
     if XS.has_cloud_nk_data():
         opac_cache["cloud_nk_n"] = XS.cloud_nk_n()
         opac_cache["cloud_nk_k"] = XS.cloud_nk_k()
@@ -362,7 +365,7 @@ def _validate_config(
         _require_cache_keys(
             opac_cache,
             ("ck_sigma_cube", "ck_log10_pressure_grid", "ck_log10_temperature_grids",
-             "ck_g_points", "ck_g_weights"),
+             "g_points", "g_weights"),
             "correlated-k",
         )
     if (not k.ck) and k.line_opac_str == "os":
@@ -374,12 +377,13 @@ def _validate_config(
     if k.cia_opac_kernel is not None:
         _require_cache_keys(
             opac_cache,
-            ("cia_master_wavelength", "cia_sigma_cube",
-             "cia_log10_temperature_grids", "cia_temperature_grids"),
+            ("cia_master_wavelength", "cia_pair_species_i", "cia_pair_species_j",
+             "cia_retained_sigma_cube", "cia_retained_log10_temperature_grids",
+             "cia_retained_temperature_grids"),
             "CIA",
         )
     if k.ray_opac_kernel is not None:
-        _require_cache_keys(opac_cache, ("ray_master_wavelength", "ray_sigma_table"), "Rayleigh")
+        _require_cache_keys(opac_cache, ("ray_master_wavelength", "ray_sigma_linear_table"), "Rayleigh")
     if k.special_opac_kernel is not None and XS.has_special_data():
         _require_cache_keys(
             opac_cache,
@@ -447,6 +451,16 @@ def build_forward_model(
           'binned' (convolved spectrum)
     """
 
+    rt_scheme_raw = getattr(getattr(cfg, "physics", None), "rt_scheme", None)
+    if str(rt_scheme_raw).lower() == "transit_2d":
+        from .build_model_2D import build_forward_model_2d
+        return build_forward_model_2d(
+            cfg,
+            obs,
+            stellar_flux=stellar_flux,
+            return_highres=return_highres,
+        )
+
     fixed_params = _extract_fixed_params(cfg)
 
     nlay = int(getattr(cfg.physics, "nlay", 99))
@@ -507,6 +521,28 @@ def build_forward_model(
             'special_opac': k.special_opac_str,
         }
     )
+
+    if k.chemistry_kernel in (constant_vmr, constant_vmr_clr):
+        cfg_param_names = {str(getattr(p, "name", "")) for p in getattr(cfg, "params", [])}
+        include_atomic_h = "log_10_H_over_H2" in cfg_param_names
+        packed_mu_species = tuple(
+            dict.fromkeys((*trace_species, "H2", "He", *(("H",) if include_atomic_h else ())))
+        )
+        compute_mu_fast = build_compute_mu(packed_mu_species)
+        mu_mode = str(getattr(cfg.physics, "vert_mu", "auto")).lower()
+
+        if mu_mode == "auto":
+            def mu_kernel(params, vmr_lay, nlay, _compute_mu_fast=compute_mu_fast):
+                if "mu" in params:
+                    return constant_mu(params, nlay)
+                if "__mu_lay__" in vmr_lay:
+                    return vmr_lay["__mu_lay__"]
+                return _compute_mu_fast(vmr_lay)
+        elif mu_mode in ("dynamic", "variable", "vmr"):
+            def mu_kernel(params, vmr_lay, nlay, _compute_mu_fast=compute_mu_fast):
+                if "__mu_lay__" in vmr_lay:
+                    return vmr_lay["__mu_lay__"]
+                return _compute_mu_fast(vmr_lay)
 
     # Capture kernel selections into local names for the JIT closure
     Tp_kernel = k.Tp_kernel
@@ -581,20 +617,6 @@ def build_forward_model(
 
         # Opacity cache for kernels (separate from atmospheric state)
         opac = opac_cache_runtime
-        if ck:
-            if "ck_g_weights" not in opac:
-                raise RuntimeError("Missing opac['ck_g_weights'] for c-k mode.")
-            if "ck_g_points" not in opac:
-                raise RuntimeError("Missing opac['ck_g_points'] for c-k mode.")
-            g_weights = opac["ck_g_weights"]
-            if g_weights.ndim > 1:
-                g_weights = g_weights[0]
-            g_points = opac["ck_g_points"]
-            if g_points.ndim > 1:
-                g_points = g_points[0]
-            opac = dict(opac)
-            opac["g_weights"] = g_weights
-            opac["g_points"] = g_points
 
         state = {
             "nwl": nwl,

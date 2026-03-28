@@ -25,6 +25,13 @@ __all__ = [
     "cia_temperature_grid",
     "cia_temperature_grids",
     "cia_log10_temperature_grids",
+    "cia_runtime_species_order",
+    "cia_kept_pair_indices",
+    "cia_pair_species_i",
+    "cia_pair_species_j",
+    "cia_retained_sigma_cube",
+    "cia_retained_temperature_grids",
+    "cia_retained_log10_temperature_grids",
 ]
 
 
@@ -47,6 +54,13 @@ _CIA_SIGMA_CACHE: jnp.ndarray | None = None
 _CIA_TEMPERATURE_CACHE: jnp.ndarray | None = None
 _CIA_WAVELENGTH_CACHE: jnp.ndarray | None = None
 _CIA_LOG10_TEMPERATURE_CACHE: jnp.ndarray | None = None
+_CIA_RUNTIME_SPECIES_ORDER: Tuple[str, ...] = ()
+_CIA_KEPT_PAIR_INDICES_CACHE: jnp.ndarray | None = None
+_CIA_PAIR_SPECIES_I_CACHE: jnp.ndarray | None = None
+_CIA_PAIR_SPECIES_J_CACHE: jnp.ndarray | None = None
+_CIA_RETAINED_SIGMA_CACHE: jnp.ndarray | None = None
+_CIA_RETAINED_TEMPERATURE_CACHE: jnp.ndarray | None = None
+_CIA_RETAINED_LOG10_TEMPERATURE_CACHE: jnp.ndarray | None = None
 
 # Clear cache helper function
 def _clear_cache():
@@ -56,16 +70,34 @@ def _clear_cache():
     cia_temperature_grid.cache_clear()
     cia_sigma_cube.cache_clear()
     cia_log10_temperature_grids.cache_clear()
+    cia_runtime_species_order.cache_clear()
+    cia_kept_pair_indices.cache_clear()
+    cia_pair_species_i.cache_clear()
+    cia_pair_species_j.cache_clear()
+    cia_retained_sigma_cube.cache_clear()
+    cia_retained_temperature_grids.cache_clear()
+    cia_retained_log10_temperature_grids.cache_clear()
 
 # Reset all registry values
 def reset_registry():
     global _CIA_SPECIES_NAMES, _CIA_SIGMA_CACHE, _CIA_TEMPERATURE_CACHE
     global _CIA_WAVELENGTH_CACHE, _CIA_LOG10_TEMPERATURE_CACHE
+    global _CIA_RUNTIME_SPECIES_ORDER, _CIA_KEPT_PAIR_INDICES_CACHE
+    global _CIA_PAIR_SPECIES_I_CACHE, _CIA_PAIR_SPECIES_J_CACHE
+    global _CIA_RETAINED_SIGMA_CACHE, _CIA_RETAINED_TEMPERATURE_CACHE
+    global _CIA_RETAINED_LOG10_TEMPERATURE_CACHE
     _CIA_SPECIES_NAMES = ()
     _CIA_SIGMA_CACHE = None
     _CIA_TEMPERATURE_CACHE = None
     _CIA_WAVELENGTH_CACHE = None
     _CIA_LOG10_TEMPERATURE_CACHE = None
+    _CIA_RUNTIME_SPECIES_ORDER = ()
+    _CIA_KEPT_PAIR_INDICES_CACHE = None
+    _CIA_PAIR_SPECIES_I_CACHE = None
+    _CIA_PAIR_SPECIES_J_CACHE = None
+    _CIA_RETAINED_SIGMA_CACHE = None
+    _CIA_RETAINED_TEMPERATURE_CACHE = None
+    _CIA_RETAINED_LOG10_TEMPERATURE_CACHE = None
     _clear_cache()
 
 # Helper function to check if data is in the global cache
@@ -228,6 +260,10 @@ def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_di
 
     # Initialise the global caches
     global _CIA_SPECIES_NAMES, _CIA_SIGMA_CACHE, _CIA_TEMPERATURE_CACHE, _CIA_WAVELENGTH_CACHE, _CIA_LOG10_TEMPERATURE_CACHE
+    global _CIA_RUNTIME_SPECIES_ORDER, _CIA_KEPT_PAIR_INDICES_CACHE
+    global _CIA_PAIR_SPECIES_I_CACHE, _CIA_PAIR_SPECIES_J_CACHE
+    global _CIA_RETAINED_SIGMA_CACHE, _CIA_RETAINED_TEMPERATURE_CACHE
+    global _CIA_RETAINED_LOG10_TEMPERATURE_CACHE
     entries: List[CiaRegistryEntry] = []
     config = getattr(cfg.opac, "cia", None)
     if not config:
@@ -309,6 +345,31 @@ def load_cia_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_di
     # Extract species names (lightweight: just strings)
     _CIA_SPECIES_NAMES = tuple(entry.name for entry in rectangularized_entries)
 
+    kept_pair_indices = [i for i, name in enumerate(_CIA_SPECIES_NAMES) if name.strip() != "H-"]
+    _CIA_KEPT_PAIR_INDICES_CACHE = jnp.asarray(kept_pair_indices, dtype=jnp.int32)
+
+    runtime_species_order: List[str] = []
+    pair_i: List[int] = []
+    pair_j: List[int] = []
+    species_to_idx: dict[str, int] = {}
+    for idx in kept_pair_indices:
+        parts = _CIA_SPECIES_NAMES[idx].strip().split("-")
+        if len(parts) != 2:
+            raise ValueError(f"CIA species '{_CIA_SPECIES_NAMES[idx]}' must be in 'A-B' format")
+        for species in parts:
+            if species not in species_to_idx:
+                species_to_idx[species] = len(runtime_species_order)
+                runtime_species_order.append(species)
+        pair_i.append(species_to_idx[parts[0]])
+        pair_j.append(species_to_idx[parts[1]])
+
+    _CIA_RUNTIME_SPECIES_ORDER = tuple(runtime_species_order)
+    _CIA_PAIR_SPECIES_I_CACHE = jnp.asarray(pair_i, dtype=jnp.int32)
+    _CIA_PAIR_SPECIES_J_CACHE = jnp.asarray(pair_j, dtype=jnp.int32)
+    _CIA_RETAINED_SIGMA_CACHE = _CIA_SIGMA_CACHE[_CIA_KEPT_PAIR_INDICES_CACHE]
+    _CIA_RETAINED_TEMPERATURE_CACHE = _CIA_TEMPERATURE_CACHE[_CIA_KEPT_PAIR_INDICES_CACHE]
+    _CIA_RETAINED_LOG10_TEMPERATURE_CACHE = _CIA_LOG10_TEMPERATURE_CACHE[_CIA_KEPT_PAIR_INDICES_CACHE]
+
     # Delete NumPy arrays to free memory (JAX caches now hold the data on device)
     # This saves ~50 MB for typical CIA tables
     del rectangularized_entries, entries, sigma_stacked, temp_stacked
@@ -358,3 +419,52 @@ def cia_log10_temperature_grids() -> jnp.ndarray:
     if _CIA_LOG10_TEMPERATURE_CACHE is None:
         raise RuntimeError("CIA log10(T) grids not built; call build_opacities() first.")
     return _CIA_LOG10_TEMPERATURE_CACHE
+
+
+@lru_cache(None)
+def cia_runtime_species_order() -> Tuple[str, ...]:
+    if not _CIA_RUNTIME_SPECIES_ORDER:
+        return ()
+    return _CIA_RUNTIME_SPECIES_ORDER
+
+
+@lru_cache(None)
+def cia_kept_pair_indices() -> jnp.ndarray:
+    if _CIA_KEPT_PAIR_INDICES_CACHE is None:
+        raise RuntimeError("CIA kept-pair indices not built; call build_opacities() first.")
+    return _CIA_KEPT_PAIR_INDICES_CACHE
+
+
+@lru_cache(None)
+def cia_pair_species_i() -> jnp.ndarray:
+    if _CIA_PAIR_SPECIES_I_CACHE is None:
+        raise RuntimeError("CIA pair species-i indices not built; call build_opacities() first.")
+    return _CIA_PAIR_SPECIES_I_CACHE
+
+
+@lru_cache(None)
+def cia_pair_species_j() -> jnp.ndarray:
+    if _CIA_PAIR_SPECIES_J_CACHE is None:
+        raise RuntimeError("CIA pair species-j indices not built; call build_opacities() first.")
+    return _CIA_PAIR_SPECIES_J_CACHE
+
+
+@lru_cache(None)
+def cia_retained_sigma_cube() -> jnp.ndarray:
+    if _CIA_RETAINED_SIGMA_CACHE is None:
+        raise RuntimeError("CIA retained sigma cube not built; call build_opacities() first.")
+    return _CIA_RETAINED_SIGMA_CACHE
+
+
+@lru_cache(None)
+def cia_retained_temperature_grids() -> jnp.ndarray:
+    if _CIA_RETAINED_TEMPERATURE_CACHE is None:
+        raise RuntimeError("CIA retained temperature grids not built; call build_opacities() first.")
+    return _CIA_RETAINED_TEMPERATURE_CACHE
+
+
+@lru_cache(None)
+def cia_retained_log10_temperature_grids() -> jnp.ndarray:
+    if _CIA_RETAINED_LOG10_TEMPERATURE_CACHE is None:
+        raise RuntimeError("CIA retained log10(T) grids not built; call build_opacities() first.")
+    return _CIA_RETAINED_LOG10_TEMPERATURE_CACHE

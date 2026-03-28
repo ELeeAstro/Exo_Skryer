@@ -29,6 +29,7 @@ __all__ = [
     "line_sigma_cube",
     "line_log10_pressure_grid",
     "line_log10_temperature_grids",
+    "line_runtime_species_order",
 ]
 
 
@@ -58,6 +59,7 @@ _LINE_LOG10_PRESSURE_CACHE: jnp.ndarray | None = None
 # Clear all the cache entries
 def _clear_cache():
     line_species_names.cache_clear()
+    line_runtime_species_order.cache_clear()
     line_master_wavelength.cache_clear()
     line_pressure_grid.cache_clear()
     line_temperature_grid.cache_clear()
@@ -455,6 +457,11 @@ def line_species_names() -> Tuple[str, ...]:
     if not _LINE_SPECIES_NAMES:
         raise RuntimeError("Line registry empty; call build_opacities() first.")
     return _LINE_SPECIES_NAMES
+
+
+@lru_cache(None)
+def line_runtime_species_order() -> Tuple[str, ...]:
+    return line_species_names()
 
 
 @lru_cache(None)

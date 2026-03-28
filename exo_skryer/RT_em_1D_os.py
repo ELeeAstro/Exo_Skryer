@@ -19,8 +19,8 @@ def _sum_opacity_components_os(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay = state["rho_lay"].shape[0]
+    nwl = state["wl"].shape[0]
 
     if not opacity_components:
         return jnp.zeros((nlay, nwl))
@@ -51,8 +51,7 @@ def _compute_scattering_properties(
     state: Dict[str, jnp.ndarray],
     k_tot: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay, nwl = k_tot.shape
 
     def _get_component(name, shape):
         arr = opacity_components.get(name)
@@ -157,8 +156,6 @@ def compute_emission_spectrum_1d_os(
         layer_contrib = jnp.clip(layer_contrib_flux, 0.0)
         contrib_func_norm = layer_contrib / jnp.maximum(layer_contrib.sum(axis=0, keepdims=True), 1e-30)
     else:
-        nlay = state["nlay"]
-        nwl = state["nwl"]
-        contrib_func_norm = jnp.zeros((nlay, nwl), dtype=final_spectrum.dtype)
+        contrib_func_norm = jnp.zeros((state["dz"].shape[0], final_spectrum.shape[0]), dtype=final_spectrum.dtype)
 
     return final_spectrum, contrib_func_norm

@@ -27,6 +27,12 @@ from pathlib import Path
 import numpy as np
 
 
+def _is_missing_obs_path(value) -> bool:
+    if value is None:
+        return True
+    return str(value).strip().lower() in {"", "none", "null", "~"}
+
+
 def main() -> None:
 
     p = argparse.ArgumentParser(description="Run a forward model and save the spectrum")
@@ -62,9 +68,18 @@ def main() -> None:
     # Determine obs path: CLI flag overrides config
     obs_path_raw = args.obs
     if obs_path_raw is None:
-        cfg_obs = getattr(cfg.data, "obs", None)
-        if cfg_obs is not None and str(cfg_obs).strip().lower() != "none":
-            obs_path_raw = str(cfg_obs)
+        cfg_obs_east = getattr(cfg.data, "obs_east", None)
+        cfg_obs_west = getattr(cfg.data, "obs_west", None)
+        has_east = not _is_missing_obs_path(cfg_obs_east)
+        has_west = not _is_missing_obs_path(cfg_obs_west)
+        if has_east or has_west:
+            if not has_east or not has_west:
+                raise ValueError("Both data.obs_east and data.obs_west must be set for separate limb observations.")
+            obs_path_raw = {"east": str(cfg_obs_east), "west": str(cfg_obs_west)}
+        else:
+            cfg_obs = getattr(cfg.data, "obs", None)
+            if not _is_missing_obs_path(cfg_obs):
+                obs_path_raw = str(cfg_obs)
     has_obs = obs_path_raw is not None
 
     # Configure JAX platform
@@ -92,7 +107,13 @@ def main() -> None:
 
     if has_obs:
         obs = read_obs_data(obs_path_raw, base_dir=exp_dir)
-        print(f"[info] Obs data loaded: {len(obs['wl'])} bins")
+        if obs.get("has_limb_observations", False):
+            print(
+                f"[info] Obs data loaded: east={len(obs['wl_east'])} bins, "
+                f"west={len(obs['wl_west'])} bins"
+            )
+        else:
+            print(f"[info] Obs data loaded: {len(obs['wl'])} bins")
     else:
         print("[info] No obs data — will produce high-res spectrum only")
         obs = None
@@ -160,30 +181,130 @@ def main() -> None:
     t1 = time.perf_counter()
     print(f"[info] Forward model evaluation took {t1 - t0:.3f} s (includes JIT compile)")
 
-    # Extract arrays
-    D_hires = np.asarray(result["hires"], dtype=float)
+    if "hires_east" in result and "hires_west" in result:
+        hires_east = np.asarray(result["hires_east"], dtype=float)
+        hires_west = np.asarray(result["hires_west"], dtype=float)
+        hires_east_scaled = np.asarray(result.get("hires_east_scaled", 0.5 * hires_east), dtype=float)
+        hires_west_scaled = np.asarray(result.get("hires_west_scaled", 0.5 * hires_west), dtype=float)
 
-    # Save high-res spectrum
-    hires_output = np.column_stack([cut_grid, D_hires])
-    hires_path = exp_dir / f"{args.output_prefix}_highres.txt"
-    np.savetxt(
-        hires_path, hires_output,
-        header="wavelength_um  transit_depth",
-        fmt="%.10e",
-    )
-    print(f"[info] High-res spectrum saved to: {hires_path}")
+        hires_east_output = np.column_stack([cut_grid, hires_east])
+        hires_east_path = exp_dir / f"{args.output_prefix}_east_highres.txt"
+        np.savetxt(
+            hires_east_path,
+            hires_east_output,
+            header="wavelength_um  transit_depth_east",
+            fmt="%.10e",
+        )
+        print(f"[info] East high-res spectrum saved to: {hires_east_path}")
+
+        hires_east_scaled_output = np.column_stack([cut_grid, hires_east_scaled])
+        hires_east_scaled_path = exp_dir / f"{args.output_prefix}_east_highres_scaled.txt"
+        np.savetxt(
+            hires_east_scaled_path,
+            hires_east_scaled_output,
+            header="wavelength_um  transit_depth_east_scaled",
+            fmt="%.10e",
+        )
+        print(f"[info] East scaled high-res spectrum saved to: {hires_east_scaled_path}")
+
+        hires_west_output = np.column_stack([cut_grid, hires_west])
+        hires_west_path = exp_dir / f"{args.output_prefix}_west_highres.txt"
+        np.savetxt(
+            hires_west_path,
+            hires_west_output,
+            header="wavelength_um  transit_depth_west",
+            fmt="%.10e",
+        )
+        print(f"[info] West high-res spectrum saved to: {hires_west_path}")
+        hires_west_scaled_output = np.column_stack([cut_grid, hires_west_scaled])
+        hires_west_scaled_path = exp_dir / f"{args.output_prefix}_west_highres_scaled.txt"
+        np.savetxt(
+            hires_west_scaled_path,
+            hires_west_scaled_output,
+            header="wavelength_um  transit_depth_west_scaled",
+            fmt="%.10e",
+        )
+        print(f"[info] West scaled high-res spectrum saved to: {hires_west_scaled_path}")
+    else:
+        D_hires = np.asarray(result["hires"], dtype=float)
+        hires_output = np.column_stack([cut_grid, D_hires])
+        hires_path = exp_dir / f"{args.output_prefix}_highres.txt"
+        np.savetxt(
+            hires_path, hires_output,
+            header="wavelength_um  transit_depth",
+            fmt="%.10e",
+        )
+        print(f"[info] High-res spectrum saved to: {hires_path}")
 
     # Save binned spectrum (only when real obs data was provided)
     if obs is not None:
-        D_binned = np.asarray(result["binned"], dtype=float)
-        binned_output = np.column_stack([obs["wl"], obs["dwl"], D_binned])
-        binned_path = exp_dir / f"{args.output_prefix}_binned.txt"
-        np.savetxt(
-            binned_path, binned_output,
-            header="wavelength_um  half_bin_width_um  transit_depth",
-            fmt="%.10e",
-        )
-        print(f"[info] Binned spectrum saved to: {binned_path}")
+        if "binned_east" in result and "binned_west" in result:
+            if obs.get("has_limb_observations", False):
+                east_slice = obs["east_slice"]
+                west_slice = obs["west_slice"]
+                east_wl = obs["wl_east"]
+                east_dwl = obs["dwl_east"]
+                west_wl = obs["wl_west"]
+                west_dwl = obs["dwl_west"]
+            else:
+                east_slice = slice(None)
+                west_slice = slice(None)
+                east_wl = obs["wl"]
+                east_dwl = obs["dwl"]
+                west_wl = obs["wl"]
+                west_dwl = obs["dwl"]
+
+            D_binned_east = np.asarray(result["binned_east"], dtype=float)[east_slice]
+            D_binned_east_scaled = np.asarray(result.get("binned_east_scaled", 0.5 * result["binned_east"]), dtype=float)[east_slice]
+            east_output = np.column_stack([east_wl, east_dwl, D_binned_east])
+            east_path = exp_dir / f"{args.output_prefix}_east_binned.txt"
+            np.savetxt(
+                east_path,
+                east_output,
+                header="wavelength_um  half_bin_width_um  transit_depth_east",
+                fmt="%.10e",
+            )
+            print(f"[info] East binned spectrum saved to: {east_path}")
+            east_scaled_output = np.column_stack([east_wl, east_dwl, D_binned_east_scaled])
+            east_scaled_path = exp_dir / f"{args.output_prefix}_east_binned_scaled.txt"
+            np.savetxt(
+                east_scaled_path,
+                east_scaled_output,
+                header="wavelength_um  half_bin_width_um  transit_depth_east_scaled",
+                fmt="%.10e",
+            )
+            print(f"[info] East scaled binned spectrum saved to: {east_scaled_path}")
+
+            D_binned_west = np.asarray(result["binned_west"], dtype=float)[west_slice]
+            D_binned_west_scaled = np.asarray(result.get("binned_west_scaled", 0.5 * result["binned_west"]), dtype=float)[west_slice]
+            west_output = np.column_stack([west_wl, west_dwl, D_binned_west])
+            west_path = exp_dir / f"{args.output_prefix}_west_binned.txt"
+            np.savetxt(
+                west_path,
+                west_output,
+                header="wavelength_um  half_bin_width_um  transit_depth_west",
+                fmt="%.10e",
+            )
+            print(f"[info] West binned spectrum saved to: {west_path}")
+            west_scaled_output = np.column_stack([west_wl, west_dwl, D_binned_west_scaled])
+            west_scaled_path = exp_dir / f"{args.output_prefix}_west_binned_scaled.txt"
+            np.savetxt(
+                west_scaled_path,
+                west_scaled_output,
+                header="wavelength_um  half_bin_width_um  transit_depth_west_scaled",
+                fmt="%.10e",
+            )
+            print(f"[info] West scaled binned spectrum saved to: {west_scaled_path}")
+        else:
+            D_binned = np.asarray(result["binned"], dtype=float)
+            binned_output = np.column_stack([obs["wl"], obs["dwl"], D_binned])
+            binned_path = exp_dir / f"{args.output_prefix}_binned.txt"
+            np.savetxt(
+                binned_path, binned_output,
+                header="wavelength_um  half_bin_width_um  transit_depth",
+                fmt="%.10e",
+            )
+            print(f"[info] Binned spectrum saved to: {binned_path}")
 
     t_end = time.perf_counter()
     print(f"[info] Total runtime: {t_end - t_start:.1f} s")

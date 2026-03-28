@@ -13,12 +13,14 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from numpyro.infer import MCMC, NUTS
+from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 __all__ = [
     "run_nuts_numpyro"
 ]
 
 LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
+OFFSET_VECTOR_KEY = "__offset_values__"
 
 
 # ---------------------------------------------------------------------
@@ -233,8 +235,8 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
     param_map: Dict[str, str] = {}  # group_name -> param_name
     for p in cfg.params:
         name = p.name
-        if name.startswith("offset_"):
-            group_name = name[7:]  # strip "offset_" prefix
+        group_name = parse_offset_group_name(name, getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+        if group_name is not None:
             param_map[group_name] = name
 
     # Check if we have any real offset groups (not __no_offset__)
@@ -307,7 +309,7 @@ def _build_logprior_u(sampled_params, bijectors, priors_tuple):
 
 
 def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_active, obs, fm,
-                    offset_param_names, offset_group_idx, has_offsets):
+                    offset_param_names, offset_group_idx, has_offsets, jitter_key):
     """Build log-likelihood in u-space with offset support."""
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
@@ -321,13 +323,15 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_acti
         for k, v in optional_defaults_active.items():
             if k not in theta_map:
                 theta_map[k] = jnp.asarray(v)
+        if has_offsets:
+            theta_map[OFFSET_VECTOR_KEY] = jnp.stack([theta_map[name] for name in offset_param_names])
 
         # Compute forward model
         mu = fm(theta_map)
 
         # Apply instrument offsets if defined (offset params are in ppm)
         if has_offsets:
-            offset_values = jnp.array([theta_map[n] for n in offset_param_names])
+            offset_values = theta_map[OFFSET_VECTOR_KEY]
             idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
             mask = (offset_group_idx >= 0).astype(y_obs.dtype)
             offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
@@ -336,7 +340,7 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_acti
             y_shifted = y_obs
 
         res = y_shifted - mu
-        c = theta_map["c"]  # log10(sigma_jit)
+        c = theta_map[jitter_key]  # log10(sigma_jit)
         sig_jit2 = 10.0 ** (2.0 * c)
         sig = jnp.sqrt(dy_obs**2 + sig_jit2)
         sig = jnp.clip(sig, 1e-300, jnp.inf)
@@ -396,7 +400,8 @@ def run_nuts_numpyro(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nda
     offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
 
     # Optional defaults only if parameter is not present in YAML
-    OPTIONAL_DEFAULTS: Dict[str, float] = {"c": -99.0}
+    jitter_key = jitter_param_name(getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+    OPTIONAL_DEFAULTS: Dict[str, float] = {jitter_key: -99.0}
     cfg_names = {p.name for p in cfg.params}
     optional_defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
 
@@ -415,7 +420,7 @@ def run_nuts_numpyro(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nda
     # Build log-functions
     logprior_u = _build_logprior_u(sampled_params, bijectors, priors_tuple)
     loglik_u = _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_active, obs, fm,
-                               offset_param_names, offset_group_idx, has_offsets)
+                               offset_param_names, offset_group_idx, has_offsets, jitter_key)
 
     def logprob(u):
         return loglik_u(u) + logprior_u(u)

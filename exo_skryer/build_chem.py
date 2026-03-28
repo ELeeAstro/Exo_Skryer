@@ -9,6 +9,8 @@ import importlib.util
 from pathlib import Path
 from typing import Iterable, Any
 
+from .limb_asymmetry import is_internal_parameter_name, split_limb_tag
+
 __all__ = [
     'infer_trace_species',
     'infer_log10_vmr_keys',
@@ -251,8 +253,20 @@ def infer_clr_keys(trace_species: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(f"clr_{s}" for s in trace_species)
 
 
+def _cfg_param_base_names(cfg) -> set[str]:
+    """Return config parameter names with any transit_2d limb tag stripped."""
+    base_names: set[str] = set()
+    for p in getattr(cfg, "params", []):
+        name = str(getattr(p, "name", ""))
+        if not name or is_internal_parameter_name(name):
+            continue
+        base, _tag = split_limb_tag(name)
+        base_names.add(base)
+    return base_names
+
+
 def validate_log10_vmr_params(cfg, trace_species: tuple[str, ...]) -> None:
-    cfg_param_names = {p.name for p in cfg.params}
+    cfg_param_names = _cfg_param_base_names(cfg)
     missing = [s for s in trace_species if f"log_10_f_{s}" not in cfg_param_names]
     if missing:
         joined = ", ".join(missing)
@@ -287,7 +301,7 @@ def validate_clr_params(cfg, trace_species: tuple[str, ...]) -> bool:
     ValueError
         If neither parameter style is found, or if mixing both styles.
     """
-    cfg_param_names = {p.name for p in cfg.params}
+    cfg_param_names = _cfg_param_base_names(cfg)
 
     # Check which parameter style is being used
     has_clr = any(f"clr_{s}" in cfg_param_names for s in trace_species)
@@ -448,7 +462,7 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
         from .vert_chem import constant_vmr, constant_vmr_clr
 
         if chemistry_kernel in (constant_vmr, constant_vmr_clr):
-            cfg_param_names = {p.name for p in cfg.params}
+            cfg_param_names = _cfg_param_base_names(cfg)
             if "log_10_H_over_H2" not in cfg_param_names:
                 raise ValueError(
                     "Atomic H is required by the configured CIA/special opacities, but parameter "

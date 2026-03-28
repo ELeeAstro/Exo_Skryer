@@ -28,8 +28,8 @@ def _sum_opacity_components_ck(
     opacity_components: Mapping[str, jnp.ndarray],
     opac: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay = state["rho_lay"].shape[0]
+    nwl = state["wl"].shape[0]
 
     if not opacity_components:
         g_weights = _get_ck_weights(opac)
@@ -66,8 +66,7 @@ def _compute_scattering_properties(
     state: Dict[str, jnp.ndarray],
     k_tot: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay, nwl = k_tot.shape[:2]
 
     def _get_component(name, shape):
         arr = opacity_components.get(name)
@@ -158,9 +157,7 @@ def compute_emission_spectrum_1d_ck(
                 return (lw_up_accum, contrib_accum), None
 
             lw_up_init = jnp.zeros_like(be_levels)
-            nlay = state["nlay"]
-            nwl = state["nwl"]
-            contrib_init = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
+            contrib_init = jnp.zeros((state["dz"].shape[0], state["wl"].shape[0]), dtype=be_levels.dtype)
             (lw_up_out, contrib_out), _ = lax.scan(
                 _scan_body, (lw_up_init, contrib_init), (dtau_by_g, ssa_by_g, g_by_g, g_weights)
             )
@@ -189,9 +186,7 @@ def compute_emission_spectrum_1d_ck(
 
             lw_up_init = jnp.zeros_like(be_levels)
             lw_up_out, _ = lax.scan(_scan_body, lw_up_init, (dtau_by_g, ssa_by_g, g_by_g, g_weights))
-            nlay = state["nlay"]
-            nwl = state["nwl"]
-            contrib_out = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
+            contrib_out = jnp.zeros((state["dz"].shape[0], state["wl"].shape[0]), dtype=be_levels.dtype)
             return lw_up_out, contrib_out
 
     k_tot_cloud = _sum_opacity_components_ck(state, opacity_components, opac)
@@ -228,8 +223,6 @@ def compute_emission_spectrum_1d_ck(
         layer_contrib = jnp.clip(layer_contrib_flux, 0.0)
         contrib_func_norm = layer_contrib / jnp.maximum(layer_contrib.sum(axis=0, keepdims=True), 1e-30)
     else:
-        nlay = state["nlay"]
-        nwl = state["nwl"]
-        contrib_func_norm = jnp.zeros((nlay, nwl), dtype=final_spectrum.dtype)
+        contrib_func_norm = jnp.zeros((state["dz"].shape[0], final_spectrum.shape[0]), dtype=final_spectrum.dtype)
 
     return final_spectrum, contrib_func_norm

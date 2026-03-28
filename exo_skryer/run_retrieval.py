@@ -113,8 +113,8 @@ def main() -> None:
     # Load the observational data - return a dictionary obs
     from .read_obs import resolve_obs_path, read_obs_data
     from .read_stellar import read_stellar_spectrum
-    rel_obs_path = resolve_obs_path(cfg)
-    obs = read_obs_data(rel_obs_path, base_dir=exp_dir)
+    obs_spec = resolve_obs_path(cfg)
+    obs = read_obs_data(obs_spec, base_dir=exp_dir)
 
     # Load the opacities (if present in YAML file)
     from .build_opacities import build_opacities, master_wavelength, master_wavelength_cut

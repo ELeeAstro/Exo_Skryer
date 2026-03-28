@@ -6,6 +6,7 @@ opacity_cia.py
 from typing import Dict
 
 import jax.numpy as jnp
+from jax import lax
 
 from . import build_opacities as XS
 
@@ -43,57 +44,6 @@ def zero_cia_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
     # Use shape directly without jnp.size() for JIT compatibility
     shape = (state["nlay"], state["nwl"])
     return jnp.zeros(shape)
-
-
-def _compute_pair_weight(
-    name: str,
-    layer_count: int,
-    layer_vmr: Dict[str, jnp.ndarray],
-) -> jnp.ndarray:
-    """Compute the volume mixing ratio product for a CIA molecular pair.
-
-    This function calculates the per-layer weight f_A × f_B for a collision pair,
-    where f_A and f_B are the volume mixing ratios of the two colliding species.
-    This weight is essential for computing the CIA opacity contribution since the
-    collision rate is proportional to the product of the two species' abundances.
-
-    Parameters
-    ----------
-    name : str
-        CIA pair name in 'A-B' format (e.g., 'H2-He', 'H2-H2').
-    layer_count : int
-        Number of atmospheric layers.
-    layer_vmr : dict[str, `~jax.numpy.ndarray`]
-        Mapping from species name to volume mixing ratio values. Each value
-        can be a scalar (constant profile) or array with shape (nlay,).
-
-    Returns
-    -------
-    pair_weight : `~jax.numpy.ndarray`, shape (nlay,)
-        Product of volume mixing ratios for the pair: f_A × f_B.
-        Scalar VMR values are automatically broadcast to (nlay,).
-
-    Raises
-    ------
-    ValueError
-        If `name` is not in 'A-B' format with exactly two hyphen-separated species.
-    """
-    name_clean = name.strip()
-
-    # Normal CIA pair: "H2-He" -> product of H2 and He VMRs
-    parts = name_clean.split("-")
-    if len(parts) != 2:
-        raise ValueError(f"CIA species '{name}' must be in 'A-B' format")
-
-    species_a, species_b = parts[0], parts[1]
-    # VMR values are already JAX arrays, no need to wrap
-    ratio_a = layer_vmr[species_a]
-    ratio_b = layer_vmr[species_b]
-    ratio_a = jnp.broadcast_to(ratio_a, (layer_count,))
-    ratio_b = jnp.broadcast_to(ratio_b, (layer_count,))
-    return ratio_a * ratio_b
-
-
 def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Compute collision-induced absorption (CIA) mass opacity for all molecular pairs.
 
@@ -152,25 +102,29 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("CIA wavelength grid must match the forward-model master grid.")
 
-    species_names = XS.cia_species_names()
-    keep_indices = [i for i, name in enumerate(species_names) if name.strip() != "H-"]
-    if not keep_indices:
+    species_order = XS.cia_runtime_species_order()
+    if not species_order:
         return zero_cia_opacity(state, params)
 
-    sigma_cube = opac["cia_sigma_cube"]  # (nspecies, nT, nwl) in log10
-    log_temperature_grids = opac["cia_log10_temperature_grids"]
-    temperature_grids = opac["cia_temperature_grids"]
+    sigma_cube = opac["cia_retained_sigma_cube"]  # (npairs, nT, nwl) in log10
+    log_temperature_grids = opac["cia_retained_log10_temperature_grids"]
+    temperature_grids = opac["cia_retained_temperature_grids"]
+    pair_i = opac["cia_pair_species_i"]
+    pair_j = opac["cia_pair_species_j"]
     log_t_layers = jnp.log10(layer_temperatures)
 
     weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)
     out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float64)
 
-    # Accumulate species one-by-one to avoid materializing (n_species, nlay, nwl).
-    # Use a Python loop so CIA pair parsing and vmr dict lookups happen at trace time.
-    for spec_idx in keep_indices:
-        sigma_log_table = sigma_cube[spec_idx]               # (nT, nwl)
-        log_temp_grid = log_temperature_grids[spec_idx]      # (nT,)
-        temp_grid = temperature_grids[spec_idx]              # (nT,)
+    vmr_stack = jnp.stack(
+        [jnp.broadcast_to(layer_vmr[species], (layer_count,)) for species in species_order],
+        axis=0,
+    )
+
+    def _accumulate_one(i: jnp.ndarray, acc: jnp.ndarray) -> jnp.ndarray:
+        sigma_log_table = sigma_cube[i]               # (nT, nwl)
+        log_temp_grid = log_temperature_grids[i]      # (nT,)
+        temp_grid = temperature_grids[i]              # (nT,)
 
         t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
         t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
@@ -187,8 +141,15 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         s_interp = jnp.where(below_min[:, None], tiny, s_interp)
 
         sigma_val = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl)
-        pair_weight = _compute_pair_weight(species_names[spec_idx], layer_count, layer_vmr)  # (nlay,)
+        pair_weight = vmr_stack[pair_i[i]] * vmr_stack[pair_j[i]]  # (nlay,)
         normalization = pair_weight * weights_nd2_over_rho  # (nlay,)
-        out = out + normalization[:, None] * sigma_val
+        return acc + normalization[:, None] * sigma_val
+
+    out = lax.fori_loop(
+        0,
+        sigma_cube.shape[0],
+        _accumulate_one,
+        out,
+    )
 
     return out

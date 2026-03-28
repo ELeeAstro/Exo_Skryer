@@ -7,6 +7,8 @@
 # ----------------------------------------------------------------------------------
 data:
   obs: ../../obs_data/HD209458b_transmission_Sing2016.txt
+  obs_east: None
+  obs_west: None
   stellar: None
   nasa9: ../../NASA9/
 
@@ -49,11 +51,11 @@ physics:
   cloud_dist: mono    # mono (monodisperse) | log_normal (lognormal size distribution)
 
   # Radiative transfer
-  rt_scheme: transit_1d   # transit_1d | emission_1d
+  rt_scheme: transit_1d   # transit_1d | transit_2d | emission_1d
   contri_func: false       # True to return contribution functions alongside spectra
   refraction: None         # none | cutoff (refractive cutoff; requires 'a_sm' param and ray data)
 
-  # --- Emission-only settings (ignored when rt_scheme: transit_1d) ---
+  # --- Emission-only settings (ignored when rt_scheme: transit_1d/transit_2d) ---
   # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
   # emission_mode: planet   # planet | brown_dwarf
 
@@ -247,7 +249,7 @@ sampling:
   # JAXNS settings
   jaxns:
     max_samples: 100000
-    num_live_points: 100
+    num_live_points: 1000
     s: 4
     k: 0
     c: null
@@ -261,7 +263,7 @@ sampling:
     termination:
       ess: 10000
       evidence_uncert: null
-      dlogZ: 1.0
+      dlogZ: 0.1
       max_samples: 100000
       max_num_likelihood_evaluations: null
       rtol: null

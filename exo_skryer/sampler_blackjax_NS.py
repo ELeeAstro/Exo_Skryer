@@ -19,6 +19,7 @@ import tqdm
 import blackjax
 from anesthetic import NestedSamples
 import distrax
+from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 __all__ = [
     "build_joint_prior_distrax",
@@ -26,6 +27,7 @@ __all__ = [
 ]
 
 LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
+OFFSET_VECTOR_KEY = "__offset_values__"
 
 
 def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool]:
@@ -49,8 +51,8 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
     param_map: Dict[str, str] = {}  # group_name -> param_name
     for p in cfg.params:
         name = p.name
-        if name.startswith("offset_"):
-            group_name = name[7:]  # strip "offset_" prefix
+        group_name = parse_offset_group_name(name, getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+        if group_name is not None:
             param_map[group_name] = name
 
     # Check if we have any real offset groups (not __no_offset__)
@@ -93,7 +95,8 @@ def _collect_delta_and_defaults(cfg) -> Tuple[Dict[str, float], Dict[str, float]
             delta_dict[p.name] = float(val)
 
     # Optional defaults only if NOT present anywhere in YAML
-    OPTIONAL_DEFAULTS: Dict[str, float] = {"c": -99.0}
+    jitter_key = jitter_param_name(getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+    OPTIONAL_DEFAULTS: Dict[str, float] = {jitter_key: -99.0}
     cfg_names = {p.name for p in cfg.params}
     defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
 
@@ -218,6 +221,18 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
         for k, v in defaults_active.items():
             if k not in out:
                 out[k] = jnp.full((num_live,), v, dtype=base_dtype)
+        if has_offsets:
+            offset_cols = []
+            for name in offset_param_names:
+                if name in out:
+                    offset_cols.append(out[name])
+                elif name in delta_dict:
+                    offset_cols.append(jnp.full((num_live,), delta_dict[name], dtype=base_dtype))
+                elif name in defaults_active:
+                    offset_cols.append(jnp.full((num_live,), defaults_active[name], dtype=base_dtype))
+                else:
+                    raise KeyError(f"Missing offset parameter '{name}' while packing offsets.")
+            out[OFFSET_VECTOR_KEY] = jnp.stack(offset_cols, axis=-1)
         return out
 
     particles = inject_fixed(particles)
@@ -239,7 +254,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
         def valid_ll(_):
             # Apply instrument offsets if defined (offset params are in ppm)
             if has_offsets:
-                offset_values = jnp.array([params[n] for n in offset_param_names])
+                offset_values = params[OFFSET_VECTOR_KEY]
                 idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
                 mask = (offset_group_idx >= 0).astype(y_obs.dtype)
                 offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
@@ -250,7 +265,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
             r = y_shifted - mu
 
             # c is always present due to injection (or present in YAML sampling)
-            c = params["c"]
+            c = params[jitter_key]
             sig_jit2 = 10.0 ** (2.0 * c)
 
             sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)

@@ -14,6 +14,8 @@ import jax
 import jax.numpy as jnp
 from scipy import stats as sps
 
+from .limb_asymmetry import jitter_param_name, parse_offset_group_name
+
 try:
     from nautilus import Prior, Sampler
     NAUTILUS_AVAILABLE = True
@@ -31,6 +33,7 @@ __all__ = [
 
 
 LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
+OFFSET_VECTOR_KEY = "__offset_values__"
 
 
 def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool]:
@@ -51,10 +54,11 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
     group_idx = obs.get("offset_group_idx", np.zeros(len(obs["y"]), dtype=int))
 
     param_map: Dict[str, str] = {}
+    rt_scheme = getattr(getattr(cfg, "physics", None), "rt_scheme", None)
     for p in cfg.params:
         name = p.name
-        if name.startswith("offset_"):
-            group_name = name[7:]
+        group_name = parse_offset_group_name(name, rt_scheme)
+        if group_name is not None:
             param_map[group_name] = name
 
     real_groups = [g for g in group_names if g != "__no_offset__"]
@@ -152,7 +156,8 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
             if val is not None:
                 delta_dict[p.name] = float(val)
 
-    OPTIONAL_DEFAULTS: Dict[str, float] = {"c": -99.0}
+    jitter_key = jitter_param_name(getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+    OPTIONAL_DEFAULTS: Dict[str, float] = {jitter_key: -99.0}
     cfg_names = {p.name for p in cfg.params}
     optional_defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
 
@@ -164,6 +169,8 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
         for k, v in optional_defaults_active.items():
             if k not in d:
                 d[k] = jnp.asarray(v, dtype=dtype)
+        if has_offsets:
+            d[OFFSET_VECTOR_KEY] = jnp.stack([d[name] for name in offset_param_names])
         return d
 
     @jax.jit
@@ -173,7 +180,7 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
 
         def valid_ll(_):
             if has_offsets:
-                offset_values = jnp.array([theta_map[n] for n in offset_param_names])
+                offset_values = theta_map[OFFSET_VECTOR_KEY]
                 idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
                 mask = (offset_group_idx >= 0).astype(y_obs.dtype)
                 offset_vec = (offset_values[idx_safe] / 1e6) * mask
@@ -182,7 +189,7 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
                 y_shifted = y_obs
 
             r = y_shifted - mu
-            c = theta_map["c"]
+            c = theta_map[jitter_key]
             sig_jit2 = 10.0 ** (2.0 * c)
 
             sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)
@@ -198,6 +205,8 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
     theta0_map = {name: jnp.asarray(theta0[i], dtype=y_obs.dtype) for i, name in enumerate(param_names)}
     theta0_map.update({k: jnp.asarray(v, dtype=y_obs.dtype) for k, v in delta_dict.items()})
     theta0_map.update({k: jnp.asarray(v, dtype=y_obs.dtype) for k, v in optional_defaults_active.items()})
+    if has_offsets:
+        theta0_map[OFFSET_VECTOR_KEY] = jnp.stack([theta0_map[name] for name in offset_param_names])
     _ = float(loglike_jax(theta0_map))
 
     def loglikelihood(theta_dict: Dict[str, Any]) -> float:

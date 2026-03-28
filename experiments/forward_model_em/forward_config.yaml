@@ -1,6 +1,8 @@
 data:
 
   obs: None
+  obs_east: None
+  obs_west: None
   stellar: None
 
 physics:
@@ -20,7 +22,7 @@ physics:
   opac_special: None
   cloud_dist: mono
 
-  rt_scheme: emission_1d
+  rt_scheme: emission_1d   # transit_1d | transit_2d | emission_1d
   emission_mode: brown_dwarf
   em_scheme: eaa
   contri_func: False

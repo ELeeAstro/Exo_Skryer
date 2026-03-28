@@ -21,7 +21,7 @@ from typing import Dict, Mapping, Tuple
 import jax.numpy as jnp
 from jax import lax
 
-from .refraction import refraction_cutoff_mask
+from .refraction import maybe_refraction_cutoff_mask
 
 __all__ = ["compute_transit_depth_1d_ck_trans"]
 
@@ -82,8 +82,8 @@ def _sum_opacity_components_2d(
 
     Returns shape (nlay, nwl).
     """
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay = state["rho_lay"].shape[0]
+    nwl = state["wl"].shape[0] if "wl" in state else int(state["nwl"])
     zeros_2d = jnp.zeros((nlay, nwl), dtype=state["rho_lay"].dtype)
 
     component_keys = ("rayleigh", "cia", "special", "cloud")
@@ -114,8 +114,8 @@ def _integrate_g_points_trans(
     dz = state["dz"]
     P1D, area_weight = geometry
 
-    nlay = state["nlay"]
-    nwl = state["nwl"]
+    nlay = state["rho_lay"].shape[0]
+    nwl = other_opacity_2d.shape[1]
 
     del g_points
 
@@ -200,12 +200,7 @@ def compute_transit_depth_1d_ck_trans(
         Normalized contribution function.
     """
     contri_func = state.get("contri_func", False)
-    nlay = state["nlay"]
-    nwl = state["nwl"]
-
-    refraction_mask = None
-    if int(state.get("refraction_mode", 0)) == 1:
-        refraction_mask = refraction_cutoff_mask(state, params, opac)
+    refraction_mask = maybe_refraction_cutoff_mask(state, params, opac)
 
     geometry = _build_transit_geometry(state)
     g_points, g_weights = _get_ck_quadrature(opac)
@@ -259,7 +254,7 @@ def compute_transit_depth_1d_ck_trans(
             )
 
             D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
-            contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+            contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
     else:
         # No cloud fraction handling
         if contri_func:
@@ -273,6 +268,6 @@ def compute_transit_depth_1d_ck_trans(
                 sigma_perspecies, vmr_perspecies, other_opacity_2d,
                 g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
             )
-            contrib_func_norm = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
+            contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
 
     return D_net, contrib_func_norm

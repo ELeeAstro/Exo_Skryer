@@ -82,13 +82,11 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
     if master_wavelength.shape != wavelengths.shape:
         raise ValueError("Rayleigh wavelength grid must match forward-model grid.")
 
-    sigma_log = opac["ray_sigma_table"]
-    sigma_values = 10.0 ** sigma_log.astype(jnp.float64)  # (n_species, nwl)
-    species_names = XR.ray_species_names()
-    # Accumulate directly into (nlay, nwl) without materializing (n_species, nlay).
-    # Use a Python loop so species-name dict lookups happen at trace time (no dynamic indexing).
-    sigma_weighted = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=sigma_values.dtype)
-    for i, name in enumerate(species_names):
-        vmr_i = jnp.broadcast_to(layer_vmr[name], (layer_count,))  # (nlay,)
-        sigma_weighted = sigma_weighted + vmr_i[:, None] * sigma_values[i][None, :]
+    sigma_values = opac["ray_sigma_linear_table"]  # (n_species, nwl)
+    species_names = XR.ray_runtime_species_order()
+    mixing_ratios = jnp.stack(
+        [jnp.broadcast_to(layer_vmr[name], (layer_count,)) for name in species_names],
+        axis=0,
+    )  # (n_species, nlay)
+    sigma_weighted = jnp.einsum("sl,sw->lw", mixing_ratios, sigma_values)
     return (number_density[:, None] * sigma_weighted) / density[:, None]

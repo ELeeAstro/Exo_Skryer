@@ -30,6 +30,9 @@ __all__ = [
     "ck_g_weights",
     "ck_log10_pressure_grid",
     "ck_log10_temperature_grids",
+    "ck_runtime_species_order",
+    "ck_g_points_1d",
+    "ck_g_weights_1d",
 ]
 
 
@@ -59,11 +62,15 @@ _CK_WAVELENGTH_CACHE: jnp.ndarray | None = None
 _CK_PRESSURE_CACHE: jnp.ndarray | None = None
 _CK_LOG10_TEMPERATURE_CACHE: jnp.ndarray | None = None
 _CK_LOG10_PRESSURE_CACHE: jnp.ndarray | None = None
+_CK_RUNTIME_SPECIES_ORDER: Tuple[str, ...] = ()
+_CK_G_POINTS_1D_CACHE: jnp.ndarray | None = None
+_CK_G_WEIGHTS_1D_CACHE: jnp.ndarray | None = None
 
 
 # Clear all the cache entries
 def _clear_cache():
     ck_species_names.cache_clear()
+    ck_runtime_species_order.cache_clear()
     ck_master_wavelength.cache_clear()
     ck_pressure_grid.cache_clear()
     ck_temperature_grid.cache_clear()
@@ -71,6 +78,8 @@ def _clear_cache():
     ck_sigma_cube.cache_clear()
     ck_g_points.cache_clear()
     ck_g_weights.cache_clear()
+    ck_g_points_1d.cache_clear()
+    ck_g_weights_1d.cache_clear()
     ck_log10_pressure_grid.cache_clear()
     ck_log10_temperature_grids.cache_clear()
 
@@ -79,6 +88,7 @@ def _clear_cache():
 def reset_registry() -> None:
     global _CK_SPECIES_NAMES, _CK_SIGMA_CACHE, _CK_TEMPERATURE_CACHE, _CK_G_POINTS_CACHE, _CK_G_WEIGHTS_CACHE
     global _CK_WAVELENGTH_CACHE, _CK_PRESSURE_CACHE, _CK_LOG10_TEMPERATURE_CACHE, _CK_LOG10_PRESSURE_CACHE
+    global _CK_RUNTIME_SPECIES_ORDER, _CK_G_POINTS_1D_CACHE, _CK_G_WEIGHTS_1D_CACHE
     _CK_SPECIES_NAMES = ()
     _CK_SIGMA_CACHE = None
     _CK_TEMPERATURE_CACHE = None
@@ -88,6 +98,9 @@ def reset_registry() -> None:
     _CK_PRESSURE_CACHE = None
     _CK_LOG10_TEMPERATURE_CACHE = None
     _CK_LOG10_PRESSURE_CACHE = None
+    _CK_RUNTIME_SPECIES_ORDER = ()
+    _CK_G_POINTS_1D_CACHE = None
+    _CK_G_WEIGHTS_1D_CACHE = None
     _clear_cache()
 
 # Check if the registries are set or not
@@ -499,6 +512,7 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir
     # Allocate the global scope caches
     global _CK_SPECIES_NAMES, _CK_SIGMA_CACHE, _CK_TEMPERATURE_CACHE, _CK_G_POINTS_CACHE, _CK_G_WEIGHTS_CACHE
     global _CK_WAVELENGTH_CACHE, _CK_PRESSURE_CACHE, _CK_LOG10_TEMPERATURE_CACHE, _CK_LOG10_PRESSURE_CACHE
+    global _CK_RUNTIME_SPECIES_ORDER, _CK_G_POINTS_1D_CACHE, _CK_G_WEIGHTS_1D_CACHE
 
     entries: List[CKRegistryEntry] = []
 
@@ -606,6 +620,9 @@ def load_ck_registry(cfg, obs, lam_master: Optional[np.ndarray] = None, base_dir
 
     # Extract species names (lightweight: just strings)
     _CK_SPECIES_NAMES = tuple(entry.name for entry in rectangularized_entries)
+    _CK_RUNTIME_SPECIES_ORDER = _CK_SPECIES_NAMES
+    _CK_G_POINTS_1D_CACHE = _CK_G_POINTS_CACHE[0] if _CK_G_POINTS_CACHE.ndim > 1 else _CK_G_POINTS_CACHE
+    _CK_G_WEIGHTS_1D_CACHE = _CK_G_WEIGHTS_CACHE[0] if _CK_G_WEIGHTS_CACHE.ndim > 1 else _CK_G_WEIGHTS_CACHE
 
     # Delete NumPy arrays to free memory (JAX caches now hold the data on device)
     # This saves ~500+ MB for typical CK tables (biggest memory savings!)
@@ -621,6 +638,13 @@ def ck_species_names() -> Tuple[str, ...]:
     if not _CK_SPECIES_NAMES:
         raise RuntimeError("CK registry empty; call build_opacities() first.")
     return _CK_SPECIES_NAMES
+
+
+@lru_cache(None)
+def ck_runtime_species_order() -> Tuple[str, ...]:
+    if not _CK_RUNTIME_SPECIES_ORDER:
+        raise RuntimeError("CK runtime species order not built; call build_opacities() first.")
+    return _CK_RUNTIME_SPECIES_ORDER
 
 
 @lru_cache(None)
@@ -682,3 +706,17 @@ def ck_log10_temperature_grids() -> jnp.ndarray:
     if _CK_LOG10_TEMPERATURE_CACHE is None:
         raise RuntimeError("c-k log10(T) grids not built; call build_opacities() first.")
     return _CK_LOG10_TEMPERATURE_CACHE
+
+
+@lru_cache(None)
+def ck_g_points_1d() -> jnp.ndarray:
+    if _CK_G_POINTS_1D_CACHE is None:
+        raise RuntimeError("c-k 1D g-points cache not built; call build_opacities() first.")
+    return _CK_G_POINTS_1D_CACHE
+
+
+@lru_cache(None)
+def ck_g_weights_1d() -> jnp.ndarray:
+    if _CK_G_WEIGHTS_1D_CACHE is None:
+        raise RuntimeError("c-k 1D g-weights cache not built; call build_opacities() first.")
+    return _CK_G_WEIGHTS_1D_CACHE

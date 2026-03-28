@@ -19,6 +19,8 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
+from .limb_asymmetry import jitter_param_name, parse_offset_group_name
+
 try:
     from ultranest import ReactiveNestedSampler
     ULTRANEST_AVAILABLE = True
@@ -33,6 +35,7 @@ __all__ = [
 ]
 
 LOG_FLOOR = -1e300  # finite invalid logL (robust for nested samplers)
+OFFSET_VECTOR_KEY = "__offset_values__"
 
 
 def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool]:
@@ -52,12 +55,12 @@ def _extract_offset_params(cfg, obs: dict) -> Tuple[List[str], jnp.ndarray, bool
     group_names = obs.get("offset_group_names", np.array(["__no_offset__"]))
     group_idx = obs.get("offset_group_idx", np.zeros(len(obs["y"]), dtype=int))
 
-    # Find offset parameters by naming convention "offset_<group_name>"
     param_map: Dict[str, str] = {}  # group_name -> param_name
+    rt_scheme = getattr(getattr(cfg, "physics", None), "rt_scheme", None)
     for p in cfg.params:
         name = p.name
-        if name.startswith("offset_"):
-            group_name = name[7:]  # strip "offset_" prefix
+        group_name = parse_offset_group_name(name, rt_scheme)
+        if group_name is not None:
             param_map[group_name] = name
 
     # Check if we have any real offset groups (not __no_offset__)
@@ -106,6 +109,30 @@ def _prior_center_theta0(cfg, param_names: List[str]) -> np.ndarray:
         else:
             raise ValueError(f"Unsupported distribution '{dist}' for warmup")
     return theta0
+
+
+def _build_offset_pack_arrays(
+    param_names: List[str],
+    offset_param_names: List[str],
+    delta_dict: Dict[str, float],
+    optional_defaults_active: Dict[str, float],
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Precompute sampled/fixed offset metadata for packed offset lookup."""
+    name_to_idx = {name: i for i, name in enumerate(param_names)}
+    sample_indices = []
+    fixed_values = []
+    for name in offset_param_names:
+        sample_indices.append(name_to_idx.get(name, -1))
+        if name in delta_dict:
+            fixed_values.append(float(delta_dict[name]))
+        elif name in optional_defaults_active:
+            fixed_values.append(float(optional_defaults_active[name]))
+        else:
+            fixed_values.append(0.0)
+    return (
+        jnp.asarray(sample_indices, dtype=jnp.int32),
+        jnp.asarray(fixed_values, dtype=jnp.float64),
+    )
 
 
 def build_prior_transform_ultranest(cfg) -> Tuple[Callable[[np.ndarray], np.ndarray], List[str]]:
@@ -222,9 +249,13 @@ def build_loglikelihood_ultranest(cfg, obs: dict, fm: Callable, param_names: Lis
                 delta_dict[p.name] = float(val)
 
     # Optional defaults only if parameter name not present anywhere in YAML
-    OPTIONAL_DEFAULTS: Dict[str, float] = {"c": -99.0}
+    jitter_key = jitter_param_name(getattr(getattr(cfg, "physics", None), "rt_scheme", None))
+    OPTIONAL_DEFAULTS: Dict[str, float] = {jitter_key: -99.0}
     cfg_names = {p.name for p in cfg.params}
     optional_defaults_active = {k: v for k, v in OPTIONAL_DEFAULTS.items() if k not in cfg_names}
+    offset_sample_indices, offset_fixed_values = _build_offset_pack_arrays(
+        param_names, offset_param_names, delta_dict, optional_defaults_active
+    )
 
     # Build a fixed-key dict inside jit
     def _vec_to_theta_dict(theta_vec: jnp.ndarray) -> Dict[str, jnp.ndarray]:
@@ -234,6 +265,14 @@ def build_loglikelihood_ultranest(cfg, obs: dict, fm: Callable, param_names: Lis
         for k, v in optional_defaults_active.items():
             if k not in d:
                 d[k] = jnp.asarray(v, dtype=theta_vec.dtype)
+        if has_offsets:
+            idx_safe = jnp.clip(offset_sample_indices, 0, max(len(param_names) - 1, 0))
+            sampled = theta_vec[idx_safe]
+            d[OFFSET_VECTOR_KEY] = jnp.where(
+                offset_sample_indices >= 0,
+                sampled,
+                offset_fixed_values.astype(theta_vec.dtype),
+            )
         return d
 
     @jax.jit
@@ -249,7 +288,7 @@ def build_loglikelihood_ultranest(cfg, obs: dict, fm: Callable, param_names: Lis
         def valid_ll(_):
             # Apply instrument offsets if defined (offset params are in ppm)
             if has_offsets:
-                offset_values = jnp.array([theta_map[n] for n in offset_param_names])
+                offset_values = theta_map[OFFSET_VECTOR_KEY]
                 idx_safe = jnp.clip(offset_group_idx, 0, offset_values.shape[0] - 1)
                 mask = (offset_group_idx >= 0).astype(y_obs.dtype)
                 offset_vec = (offset_values[idx_safe] / 1e6) * mask  # ppm -> fractional
@@ -259,7 +298,7 @@ def build_loglikelihood_ultranest(cfg, obs: dict, fm: Callable, param_names: Lis
 
             r = y_shifted - mu
 
-            c = theta_map["c"]                # always present (YAML or default)
+            c = theta_map[jitter_key]         # always present (YAML or default)
             sig_jit2 = 10.0 ** (2.0 * c)      # 10^(2c)
 
             sig_eff = jnp.sqrt(dy_obs**2 + sig_jit2)

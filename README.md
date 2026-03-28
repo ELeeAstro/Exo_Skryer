@@ -1,6 +1,8 @@
-# Exo-Scryer - A JAX accelerated retrieval code
+# Exo Skryer - A JAX accelerated retrieval code
 
-## (Under active development!!)
+## (Under active development, may be broken!! If broken, contact Elspeth! )
+
+### Documentation is currently sparse and basic! - Contact Elspeth if interested beyond the basic operations (e.g. 2D)
 
 Documentation (and first steps)
 [Read The Docs](https://exo-skryer.readthedocs.io/en/latest/)
@@ -14,8 +16,7 @@ YAML file config webapp (in pogress):
 
 TODO (in priority): 
 
-- Add [Atmodeller](https://github.com/ExPlanetology/atmodeller) chemical equilibrium scheme
 - Add NEMESIS emission RT scheme (doubling-adding)
-- Add more pre-made opacity files (npz format)
-- Add zarr support for opacity files
+- Add pRT emission RT method
 - Utilise [Equinox](https://github.com/patrick-kidger/equinox) package for easier functionality and future better ML support 
+- Test and push 2D limb spectra mode

@@ -5,7 +5,7 @@ vert_mu.py
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Callable, Dict
 
 import jax.numpy as jnp
 
@@ -16,7 +16,8 @@ _SPECIES_MASS = {entry["symbol"]: float(entry["molecular_weight"]) for entry in 
 
 __all__ = [
     "constant_mu",
-    "compute_mu"
+    "compute_mu",
+    "build_compute_mu",
 ]
 
 
@@ -70,3 +71,21 @@ def compute_mu(vmr_lay: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     vmr_stack = jnp.stack(vmr_arrays, axis=0)
     mu_profile = jnp.sum(vmr_stack * masses[:, None], axis=0)
     return mu_profile
+
+
+def build_compute_mu(species_order: tuple[str, ...]) -> Callable[[Dict[str, jnp.ndarray]], jnp.ndarray]:
+    """Build a mean-molecular-weight kernel with a fixed species ordering."""
+    valid_species = tuple(
+        species for species in species_order
+        if species in _SPECIES_MASS and species != "e-"
+    )
+    if not valid_species:
+        raise ValueError("No valid non-electron species were provided for mean molecular weight.")
+
+    masses = jnp.asarray([_SPECIES_MASS[species] for species in valid_species])
+
+    def _compute_mu_fixed(vmr_lay: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        vmr_stack = jnp.stack([vmr_lay[species] for species in valid_species], axis=0)
+        return jnp.sum(vmr_stack * masses[:, None], axis=0)
+
+    return _compute_mu_fixed

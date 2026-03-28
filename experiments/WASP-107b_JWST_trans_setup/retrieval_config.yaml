@@ -1,6 +1,8 @@
 data:
 
   obs: ../../obs_data/WASP-107b_JWST_2.txt
+  obs_east: None
+  obs_west: None
   stellar: None
 
 physics:
@@ -20,7 +22,7 @@ physics:
   opac_special: None
   cloud_dist: mono
 
-  rt_scheme: transit_1d
+  rt_scheme: transit_1d   # transit_1d | transit_2d | emission_1d
   em_scheme: None
   emission_mode: planet
   contri_func: False
@@ -185,4 +187,3 @@ runtime:
   platform: gpu           # cpu | gpu | cuda | metal
   cuda_visible_devices: 1  # or "0,1"
   threads: 1
-
