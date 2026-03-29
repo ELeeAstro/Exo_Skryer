@@ -31,6 +31,12 @@ def _infer_scalar_params(data_vars: Iterable) -> List[str]:
     return scalar_names
 
 
+def _select_params_by_suffix(var_names: Sequence[str], suffixes: Sequence[str]) -> List[str]:
+    """Return scalar parameter names that end with one of the requested suffixes."""
+    suffix_tuple = tuple(suffixes)
+    return [name for name in var_names if name.endswith(suffix_tuple)]
+
+
 def _resolve_var_names(posterior_ds, requested: Sequence[str] | None) -> List[str]:
     if requested:
         missing = [v for v in requested if v not in posterior_ds.data_vars]

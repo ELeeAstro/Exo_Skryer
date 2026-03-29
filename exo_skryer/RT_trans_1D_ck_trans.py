@@ -22,6 +22,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from .refraction import maybe_refraction_cutoff_mask
+from .RT_trans_1D_os import _get_base_transit_radius
 
 __all__ = ["compute_transit_depth_1d_ck_trans"]
 
@@ -108,7 +109,7 @@ def _integrate_g_points_trans(
         T_total = exp(-tau_cont) * Π_s <exp(-tau_s)>_g
     where <...>_g is the g-quadrature average at fixed (impact parameter, wavelength).
     """
-    R0 = state["R0"]
+    R_base = _get_base_transit_radius(state)
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
@@ -164,7 +165,7 @@ def _integrate_g_points_trans(
     one_minus_trans = 1.0 - jnp.clip(T_total, 0.0, 1.0)               # (nlay, nwl)
 
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)     # (nwl,)
-    D_net = (R0**2 + dR2) / (R_s**2)
+    D_net = (R_base**2 + dR2) / (R_s**2)
 
     layer_dR2 = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
     return D_net, dR2, layer_dR2

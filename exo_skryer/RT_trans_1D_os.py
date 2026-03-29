@@ -67,6 +67,11 @@ def _build_transit_geometry(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray,
     return P1D, area_weight
 
 
+def _get_base_transit_radius(state: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    """Return the opaque baseline radius at the deepest level in the grid."""
+    return state["R0"] + state["z_lev"][0]
+
+
 def _transit_depth_and_contrib_from_opacity(
     state: Dict[str, jnp.ndarray],
     k_tot: jnp.ndarray,  # (nlay, nwl)
@@ -74,7 +79,7 @@ def _transit_depth_and_contrib_from_opacity(
     refraction_mask: jnp.ndarray | None,
     want_contrib: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    R0 = state["R0"]
+    R_base = _get_base_transit_radius(state)
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
@@ -90,7 +95,7 @@ def _transit_depth_and_contrib_from_opacity(
     dR2_i = area_weight[:, None] * one_minus_trans
     dR2 = jnp.sum(dR2_i, axis=0)
 
-    D = (R0**2 + dR2) / (R_s**2)
+    D = (R_base**2 + dR2) / (R_s**2)
 
     if not want_contrib:
         layer_dR2 = jnp.zeros_like(dtau_v)
@@ -111,7 +116,7 @@ def _transit_depth_from_opacity(
     geometry: tuple[jnp.ndarray, jnp.ndarray],
     refraction_mask: jnp.ndarray | None,
 ) -> jnp.ndarray:
-    R0 = state["R0"]
+    R_base = _get_base_transit_radius(state)
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
@@ -125,7 +130,7 @@ def _transit_depth_from_opacity(
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)
-    return (R0**2 + dR2) / (R_s**2)
+    return (R_base**2 + dR2) / (R_s**2)
 
 
 def compute_transit_depth_1d_os(

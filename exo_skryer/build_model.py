@@ -579,7 +579,7 @@ def build_forward_model(
         # Dimension constants
         nwl = wl.shape[0]
 
-        # Planet and star radii (R0 is radius at p_bot)
+        # Planet and star radii (R0 is the radius anchor used by the altitude kernel)
         R0 = full_params["R_p"] * R_jup
         R_s = full_params["R_s"] * R_sun
 

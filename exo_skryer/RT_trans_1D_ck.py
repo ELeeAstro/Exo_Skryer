@@ -10,6 +10,7 @@ from typing import Dict, Mapping, Tuple
 import jax.numpy as jnp
 
 from .refraction import maybe_refraction_cutoff_mask
+from .RT_trans_1D_os import _get_base_transit_radius
 
 __all__ = ["compute_transit_depth_1d_ck"]
 
@@ -88,7 +89,7 @@ def _transit_depth_and_contrib_from_opacity(
     geometry: tuple[jnp.ndarray, jnp.ndarray],
     want_contrib: bool,
 ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    R0 = state["R0"]
+    R_base = _get_base_transit_radius(state)
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
@@ -102,7 +103,7 @@ def _transit_depth_and_contrib_from_opacity(
     dR2_i = area_weight[:, None] * one_minus_trans
     dR2 = jnp.sum(dR2_i, axis=0)
 
-    D = (R0**2 + dR2) / (R_s**2)
+    D = (R_base**2 + dR2) / (R_s**2)
 
     if not want_contrib:
         layer_dR2 = jnp.zeros_like(dtau_v)
@@ -122,7 +123,7 @@ def _transit_depth_from_opacity(
     k_tot: jnp.ndarray,  # (nlay, nwl)
     geometry: tuple[jnp.ndarray, jnp.ndarray],
 ) -> jnp.ndarray:
-    R0 = state["R0"]
+    R_base = _get_base_transit_radius(state)
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
@@ -134,7 +135,7 @@ def _transit_depth_from_opacity(
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)
-    return (R0**2 + dR2) / (R_s**2)
+    return (R_base**2 + dR2) / (R_s**2)
 
 
 def _integrate_g_points(
@@ -150,7 +151,7 @@ def _integrate_g_points(
     This vectorizes over the g dimension (ng) directly, avoiding a vmap over
     `k_array[:, :, g_idx]` gathers.
     """
-    R0 = state["R0"]
+    R_base = _get_base_transit_radius(state)
     R_s = state["R_s"]
     rho = state["rho_lay"]
     dz = state["dz"]
@@ -164,7 +165,7 @@ def _integrate_g_points(
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)  # (nlay, nwl, ng)
     dR2_per_g = jnp.sum(area_weight[:, None, None] * one_minus_trans, axis=0)  # (nwl, ng)
-    D_per_g = (R0**2 + dR2_per_g) / (R_s**2)  # (nwl, ng)
+    D_per_g = (R_base**2 + dR2_per_g) / (R_s**2)  # (nwl, ng)
 
     w = g_weights.astype(D_per_g.dtype)  # (ng,)
     D_net = jnp.sum(D_per_g * w[None, :], axis=-1)  # (nwl,)

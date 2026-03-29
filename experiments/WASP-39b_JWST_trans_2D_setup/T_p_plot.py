@@ -21,6 +21,7 @@ _configure_runtime()
 import arviz as az
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import seaborn as sns
 
@@ -45,9 +46,11 @@ def _build_param_draws_from_posterior(posterior_ds, params_cfg):
 
 def _quantiles(samples: np.ndarray):
     return (
-        np.quantile(samples, 0.16, axis=0),
+        np.quantile(samples, 0.15865525393145707, axis=0),
         np.quantile(samples, 0.50, axis=0),
-        np.quantile(samples, 0.84, axis=0),
+        np.quantile(samples, 0.8413447460685429, axis=0),
+        np.quantile(samples, 0.02275013194817921, axis=0),
+        np.quantile(samples, 0.9772498680518208, axis=0),
     )
 
 
@@ -112,39 +115,58 @@ def main() -> None:
         east_samples[k] = np.asarray(t_lay_east, dtype=float)
         west_samples[k] = np.asarray(t_lay_west, dtype=float)
 
-    east_q16, east_q50, east_q84 = _quantiles(east_samples)
-    west_q16, west_q50, west_q84 = _quantiles(west_samples)
+    east_q1_lo, east_q50, east_q1_hi, east_q2_lo, east_q2_hi = _quantiles(east_samples)
+    west_q1_lo, west_q50, west_q1_hi, west_q2_lo, west_q2_hi = _quantiles(west_samples)
     p_bar = np.asarray(p_lay / bar, dtype=float)
 
     np.savez_compressed(
         exp_dir / f"{args.outname}_quantiles.npz",
         pressure_bar=p_bar,
         draw_idx=idx,
-        east_p16=east_q16,
+        east_q1_lo=east_q1_lo,
         east_p50=east_q50,
-        east_p84=east_q84,
-        west_p16=west_q16,
+        east_q1_hi=east_q1_hi,
+        east_q2_lo=east_q2_lo,
+        east_q2_hi=east_q2_hi,
+        west_q1_lo=west_q1_lo,
         west_p50=west_q50,
-        west_p84=west_q84,
+        west_q1_hi=west_q1_hi,
+        west_q2_lo=west_q2_lo,
+        west_q2_hi=west_q2_hi,
     )
 
-    palette = sns.color_palette("colorblind")
+    palette = sns.color_palette("colorblind", 8)
     fig, axes = plt.subplots(1, 2, figsize=(10, 6), sharey=True)
 
     panels = [
-        (axes[0], "East limb", east_q16, east_q50, east_q84, palette[1]),
-        (axes[1], "West limb", west_q16, west_q50, west_q84, palette[4]),
+        (axes[0], "East limb", east_q2_lo, east_q2_hi, east_q1_lo, east_q1_hi, east_q50, palette[0], palette[1], palette[3]),
+        (axes[1], "West limb", west_q2_lo, west_q2_hi, west_q1_lo, west_q1_hi, west_q50, palette[4], palette[5], palette[6]),
     ]
-    for ax, title, q16, q50, q84, color in panels:
-        ax.fill_betweenx(p_bar, q16, q84, alpha=0.3, color=color, label=r"1$\sigma$")
-        ax.plot(q50, p_bar, lw=2, color=color, label="Median T(p)")
+    for ax, title, q2_lo, q2_hi, q1_lo, q1_hi, q50, color_2s, color_1s, color_med in panels:
+        ax.fill_betweenx(p_bar, q2_lo, q2_hi, alpha=0.25, color=color_2s, label=r"2$\sigma$")
+        ax.fill_betweenx(p_bar, q1_lo, q1_hi, alpha=0.35, color=color_1s, label=r"1$\sigma$")
+        ax.plot(q50, p_bar, lw=2, color=color_med, label="Median")
         ax.set_title(title)
         ax.set_yscale("log")
-        ax.invert_yaxis()
+        ax.invert_yaxis()  # low pressures at top
+        ax.yaxis.set_major_locator(mticker.LogLocator(base=10.0))
+        ax.yaxis.set_major_formatter(mticker.LogFormatterMathtext(base=10.0))
+        ax.yaxis.set_minor_locator(mticker.LogLocator(base=10.0, subs=np.arange(2, 10) * 0.1))
+        ax.yaxis.set_minor_formatter(mticker.NullFormatter())
+        ax.set_ylim(float(p_bar.max()), float(p_bar.min()))
         ax.set_xlabel("Temperature [K]", fontsize=14)
         ax.tick_params(axis="both", labelsize=12)
         ax.grid(False)
-        ax.legend()
+        ax.legend(
+            fontsize=12,
+            frameon=True,
+            fancybox=True,
+            framealpha=0.95,
+            borderpad=0.8,
+            labelspacing=0.6,
+            handlelength=2.2,
+            handletextpad=0.8,
+        )
 
     axes[0].set_ylabel("Pressure [bar]", fontsize=14)
     fig.tight_layout()
