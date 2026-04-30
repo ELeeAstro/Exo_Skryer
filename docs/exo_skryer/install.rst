@@ -49,6 +49,12 @@ Conda / Mambaforge (recommended)
 
    conda activate exo_skryer
 
+**Step 2b** — install pip:
+
+.. code-block:: bash
+
+   conda install pip
+
 **Step 3** — install Exo Skryer and its dependencies:
 
 .. code-block:: bash
