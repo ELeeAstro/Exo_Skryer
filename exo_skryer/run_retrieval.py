@@ -98,11 +98,11 @@ def main() -> None:
     jax_config.update("jax_enable_x64", True)
     #jax_config.update("jax_debug_nans", True)
 
-    import numpyro
-    numpyro.enable_x64(True)
-    numpyro.set_platform(platform)
-    if platform == "cpu":
-        numpyro.set_host_device_count(cfg.runtime.threads)
+    # import numpyro
+    # numpyro.enable_x64(True)
+    # numpyro.set_platform(platform)
+    # if platform == "cpu":
+    #     numpyro.set_host_device_count(cfg.runtime.threads)
 
     import jax
 
