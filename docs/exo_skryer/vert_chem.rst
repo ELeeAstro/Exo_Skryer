@@ -221,7 +221,7 @@ Chemical Equilibrium with rate JAX
 ----------------------------------
 
 We can also use the semi-analytical chemical equilibrium scheme, Reliable Analytic Thermochemical Equilibrium (rate), from `Cubillos et al (2019) <https://ui.adsabs.harvard.edu/abs/2019ApJ...872..111C/abstract>`_.
-This was converted into JAX compatible python from the original python code found on `GitHib <https://github.com/pcubillos/rate>`_.
+This was converted into JAX compatible python from the original python code found on `GitHub <https://github.com/pcubillos/rate>`_.
 
 .. plot::
    :include-source:

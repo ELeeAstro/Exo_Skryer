@@ -183,7 +183,7 @@ Or presenting kernel density estimates instead of histograms::
 
 You can also try plotting all the unweighted nautilus samples with::
 
-  python posterior_nautilus.py --config retrieval_config.ya
+  python posterior_nautilus.py --config retrieval_config.yaml
 
 Best-fit median models for transmission spectra models can be produced using::
 

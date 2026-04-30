@@ -59,7 +59,9 @@ Prerequisites
       pip install numpy "zarr>=3" numcodecs
 
 3. **Locate the tools.**
-   All scripts and input templates live in::
+   All scripts and input templates live in:
+
+   .. code-block:: text
 
       opac_data/DACE_tools/
       ├── Gen_OS_table_R_zarr.py

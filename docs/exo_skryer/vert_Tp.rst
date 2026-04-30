@@ -15,7 +15,7 @@ The simplest T-p profile is assuming that the entire atmosphere is a constant va
 
    T(p) = T_{\rm iso}
 
-This is particularly useful for transmission spectroscopy, where
+This is particularly useful for transmission spectroscopy.
 For emission, do not use an isothermal atmosphere unless under very specific test conditions, as no spectral features would be produced.
 
 Required parameters: :math:`T_{\rm iso}` [K]

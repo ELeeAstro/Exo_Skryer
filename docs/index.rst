@@ -22,6 +22,7 @@ The repository can be found here: https://github.com/ELeeAstro/Exo_Skryer
   exo_skryer/RT_trans.rst
   exo_skryer/RT_em.rst
   exo_skryer/RT_alb.rst
+  exo_skryer/dace_tools.rst
   exo_skryer/opacity_line.rst
   exo_skryer/opacity_ck.rst
   exo_skryer/ck_mix_PRAS.rst

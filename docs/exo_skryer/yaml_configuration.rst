@@ -530,7 +530,7 @@ runtime
   *Supported values*: ``cpu``, ``gpu``, ``cuda``, or ``metal``.
 
 ``runtime.cuda_visible_devices``
-  Only used when ``runtime.platform: gpu``. String like ``\"0\"`` or ``\"0,1\"``.
+  Only used when ``runtime.platform: gpu``. String like ``"0"`` or ``"0,1"``.
 
 ``runtime.threads``
   Only used when ``runtime.platform: cpu``; passed to NumPyro host device count.
