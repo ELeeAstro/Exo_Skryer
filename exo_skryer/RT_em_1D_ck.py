@@ -52,7 +52,7 @@ def _sum_opacity_components_ck(
 
 def _planck_lambda(wavelength_cm: jnp.ndarray, temperature: jnp.ndarray) -> jnp.ndarray:
     exponent = (h * c_light) / (wavelength_cm * kb * jnp.maximum(temperature, 1.0))
-    expm1 = jnp.expm1(jnp.clip(exponent, a_min=None, a_max=80.0))
+    expm1 = jnp.expm1(jnp.clip(exponent, None, 80.0))
     prefactor = 2.0 * h * c_light**2 / (wavelength_cm**5)
     return prefactor / jnp.maximum(expm1, 1e-300)
 
@@ -87,7 +87,7 @@ def _compute_scattering_properties(
     k_tot_scat = k_tot_scat[:, :, None]
     cloud_g = jnp.broadcast_to(cloud_g[:, :, None], k_tot.shape)
 
-    ssa = jnp.clip(k_tot_scat / k_tot_safe, a_min=0.0, a_max=0.95)
+    ssa = jnp.clip(k_tot_scat / k_tot_safe, 0.0, 0.99)
     g = cloud_g
     return ssa, g
 
