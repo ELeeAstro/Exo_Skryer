@@ -67,7 +67,6 @@ docs = [
     "tomli; python_version <\"3.11\"",
     "sphinx-astropy[confv2]",
     "sphinx-book-theme",
-    "sphinx-toolbox",
     "IPython",
     "tox",
     "blackjax",

@@ -149,7 +149,6 @@ man_pages = [('index', project.lower(), project + u' Documentation',
 extensions += [   # noqa
     'matplotlib.sphinxext.plot_directive',
     'sphinx.ext.graphviz',
-    'sphinx_toolbox.collapse',
 ]
 
 # -- Resolving issue number to links in changelog -----------------------------
