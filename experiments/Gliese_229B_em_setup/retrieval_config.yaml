@@ -12,7 +12,7 @@ physics:
 
   vert_Tp: Modified_Milne
   vert_alt: hypsometric_variable_g_pref
-  vert_chem: constant_vmr
+  vert_chem: quench_approx #constant_vmr
   vert_mu: dynamic
   vert_cloud: None
 
@@ -31,18 +31,20 @@ physics:
 
 opac:
 
-  wl_master: wl_R20000.txt
+  wl_master: ../../opac_data/os/wl_R10000.txt
   full_grid: False
   ck: False
   ck_mix: RORR
 
   line:
-    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr.zip}
-    - {species: CO, path: ../../opac_data/os/CO_R20000.zarr.zip}
-    - {species: CH4, path: ../../opac_data/os/CH4_R20000.zarr.zip}
-    - {species: NH3, path: ../../opac_data/os/NH3_R20000.zarr.zip}
-    - {species: Na, path: ../../opac_data/os/Na_R20000.zarr.zip}
-    - {species: K, path: ../../opac_data/os/K_R20000.zarr.zip}
+    - {species: H2O, path: ../../opac_data/os/H2O_R10000.zarr.zip}
+    - {species: CO, path: ../../opac_data/os/CO_R10000.zarr.zip}
+    - {species: CO2, path: ../../opac_data/os/CO2_R10000.zarr.zip}
+    - {species: CH4, path: ../../opac_data/os/CH4_R10000.zarr.zip}
+    - {species: NH3, path: ../../opac_data/os/NH3_R10000.zarr.zip}
+    - {species: HCN, path: ../../opac_data/os/HCN_R10000.zarr.zip}
+    - {species: Na, path: ../../opac_data/os/Na_R10000.zarr.zip}
+    - {species: K, path: ../../opac_data/os/K_R10000.zarr.zip}
 
   ray:
     - {species: H2}
@@ -58,7 +60,7 @@ params:
   - { name: R_s,   dist: delta,   value: 0.0, transform: identity, init: 0.0}
   - { name: D,   dist: delta,   value: 10.0, transform: identity, init: 10.0}
   - { name: p_bot, dist: delta,   value: 1000.0,  transform: identity, init: 1000.0 }
-  - { name: p_top, dist: delta,   value: 1e-4, transform: identity, init: 1e-4}
+  - { name: p_top, dist: delta,   value: 1e-6, transform: identity, init: 1e-6}
   - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
   - { name: R_p, dist: delta, value: 1.0,  transform: identity, init: 1.0}
   - { name: s_dilute, dist: delta, value: 1.0,  transform: identity, init: 1.0}
@@ -74,12 +76,38 @@ params:
   - { name: log_10_p_t, dist: uniform, low: -2,   high: 3,  transform: logit, init: 0}
   - { name: beta, dist: uniform, low: 0.01,   high: 1.0,  transform: logit, init: 0.5}
 
-  - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}
-  - { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -5}
-  - { name: log_10_f_CH4, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}
-  - { name: log_10_f_NH3, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}    
-  - { name: log_10_f_Na, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
-  - { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  - {name: M_to_H,      dist: uniform, low: -1.0,  high: 3.0,  transform: logit, init: 0.0}
+  - {name: C_to_O,      dist: uniform, low: 0.1,   high: 2.0,  transform: logit, init: 0.55}
+  - {name: log_10_Kzz,  dist: uniform, low: 4.0,   high: 12.0, transform: logit, init: 8.0}
+
+  #- { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}
+  #- { name: log_10_f_CO, dist: uniform, low: -12,   high: -2,  transform: logit, init: -5}
+  #- { name: log_10_f_CH4, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}
+  #- { name: log_10_f_NH3, dist: uniform, low: -12,   high: -2,  transform: logit, init: -3}    
+  #- { name: log_10_f_Na, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+  #- { name: log_10_f_K, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
+
+# ----------------------------------------------------------------------------------
+# FastChem 5D Grid (CE backend for quench_approx)
+# ----------------------------------------------------------------------------------
+fastchem_grid_jax:
+  grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
+  solver:
+    mode: vmap   # vmap | scan
+  bounds:
+    mode: clip
+  species_map:
+
+# ----------------------------------------------------------------------------------
+# Quench Approximation
+# ----------------------------------------------------------------------------------
+quench_approx:
+  quench_species:
+    - CO
+    - CO2
+    - CH4
+    - NH3
+    - HCN
 
 sampling:
 
