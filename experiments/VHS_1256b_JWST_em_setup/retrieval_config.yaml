@@ -19,24 +19,24 @@ physics:
   nlay: 99
 
   # Vertical structure schemes
-  vert_Tp: Guillot
-  vert_alt: p_ref
-  vert_chem: constant_vmr
+  vert_Tp: Modified_Milne
+  vert_alt: hypsometric_variable_g_pref
+  vert_chem: quench_approx
   vert_mu: dynamic
   vert_cloud: None
 
   # Opacity sources
   opac_line: os
-  opac_ray: None
+  opac_ray: os
   opac_cia: os
   opac_cloud: None
   opac_special: None
   cloud_dist: mono
 
   # Radiative transfer
-  rt_scheme: emission_1d   # transit_1d | transit_2d | emission_1d
+  rt_scheme: emission_1d
   em_scheme: eaa
-  emission_mode: planet
+  emission_mode: brown_dwarf
   contri_func: false
   refraction: None
 
@@ -44,20 +44,25 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: wl_dnu_1.txt
+  wl_master: ../../opac_data.os/wl_R30000.txt
   full_grid: false
   ck: false
   ck_mix: RORR
 
   # Line opacity files
   line:
-    - {species: H2O, path: ../../opac_data/os/H2O_dnu_1.zarr.zip}
-    - {species: CO, path: ../../opac_data/os/CO_dnu_1.zarr.zip}
-    - {species: CO2, path: ../../opac_data/os/CO2_dnu_1.zarr.zip}
-    - {species: CH4, path: ../../opac_data/os/CH4_dnu_1.zarr.zip}
+    - {species: H2O, path: ../../opac_data/os/H2O_R30000.zarr.zip}
+    - {species: CO, path: ../../opac_data/os/CO_R30000.zarr.zip}
+    - {species: CO2, path: ../../opac_data/os/CO2_R30000.zarr.zip}
+    - {species: CH4, path: ../../opac_data/os/CH4_R30000.zarr.zip}
+    - {species: NH3, path: ../../opac_data/os/NH3_R30000.zarr.zip}
+    - {species: Na, path: ../../opac_data/os/Na_R30000.zarr.zip}
+    - {species: K, path: ../../opac_data/os/K_R30000.zarr.zip}
 
   # Rayleigh scattering species
-  ray: None
+  ray:
+    - {species: H2}
+    - {species: He}
 
   # CIA opacity files
   cia:
@@ -74,38 +79,42 @@ opac:
 # Parameters Section
 # ----------------------------------------------------------------------------------
 params:
-  # Stellar parameters
-  - {name: R_s, dist: delta, value: 0.765, transform: identity, init: 0.765}
+  # Brown dwarf scaling
+  - {name: R_s,        dist: delta,   value: 0.0,    transform: identity, init: 0.0}
+  - {name: D,          dist: delta,   value: 22.16,  transform: identity, init: 22.16}
+  - {name: R_p,        dist: delta,   value: 1.35,   transform: identity, init: 1.35}
+  - {name: s_dilute,   dist: delta,   value: 1.0,    transform: identity, init: 1.0}
 
   # Atmospheric boundaries
-  - {name: p_bot, dist: delta, value: 100.0, transform: identity, init: 100.0}
-  - {name: p_top, dist: delta, value: 1e-6, transform: identity, init: 1e-6}
-  - {name: log_10_p_ref, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: f_hem, dist: delta, value: 0.25, transform: identity, init: 0.25}
+  - {name: p_bot,          dist: delta,   value: 1000.0, transform: identity, init: 1000.0}
+  - {name: p_top,          dist: delta,   value: 1e-6,   transform: identity, init: 1e-6}
+  - {name: log_10_p_ref,   dist: delta,   value: 1.0,    transform: identity, init: 1.0}
+
+  # Flux scaling and calibration
+  - {name: f_p, dist: uniform, low: 0.1,    high: 5.0,   transform: logit, init: 1.0}
+  - {name: c,   dist: uniform, low: -15.63, high: -6.66, transform: logit, init: -10.0}
 
   # Planetary parameters
-  - {name: log_10_g, dist: uniform, low: 2.7, high: 3.3, transform: logit, init: 3.0}
-  - {name: R_p, dist: uniform, low: 1.0, high: 1.2, transform: logit, init: 1.119}
+  - {name: log_10_g, dist: uniform, low: 4.0, high: 5.5, transform: logit, init: 4.7}
 
-  # T-p profile parameters
-  - {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
-  - {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
-  - {name: log_10_k_ir, dist: uniform, low: -6, high: 6, transform: logit, init: -6}
-  - {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
+  # T-p profile parameters (Modified_Milne)
+  - {name: T_ratio,      dist: uniform, low: 0.1,  high: 0.9,    transform: logit, init: 0.5}
+  - {name: T_int,        dist: uniform, low: 500.0, high: 1500.0, transform: logit, init: 1000.0}
+  - {name: log_10_k_ir,  dist: uniform, low: -4,   high: 0,      transform: logit, init: -1}
+  - {name: log_10_p_t,   dist: uniform, low: -2,   high: 3,      transform: logit, init: 0}
+  - {name: beta,         dist: uniform, low: 0.01, high: 1.0,    transform: logit, init: 0.5}
 
-  # Chemistry parameters
-  - {name: log_10_f_H2O, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CO, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CO2, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CH4, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
+  # Chemistry parameters (quench_approx: CE from FastChem grid + quenching)
+  - {name: M_to_H,      dist: uniform, low: -1.0,  high: 3.0,  transform: logit, init: 0.0}
+  - {name: C_to_O,      dist: uniform, low: 0.1,   high: 2.0,  transform: logit, init: 0.55}
+  - {name: log_10_Kzz,  dist: uniform, low: 4.0,   high: 12.0, transform: logit, init: 8.0}
 
 # ----------------------------------------------------------------------------------
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  engine: jaxns
+  engine: dynesty
 
-  # NUTS / HMC settings
   nuts:
     backend: numpyro
     warmup: 100
@@ -113,7 +122,6 @@ sampling:
     seed: 42
     chains: 1
 
-  # JAXNS settings
   jaxns:
     max_samples: 100000
     num_live_points: 1000
@@ -124,13 +132,13 @@ sampling:
     difficult_model: false
     parameter_estimation: true
     gradient_guided: false
-    init_efficiency_threshold: 0.05
+    init_efficiency_threshold: 0.1
     verbose: true
 
     termination:
       ess: 10000
       evidence_uncert: null
-      dlogZ: 0.1
+      dlogZ: 1.0
       max_samples: 100000
       max_num_likelihood_evaluations: null
       rtol: null
@@ -139,7 +147,6 @@ sampling:
     posterior_samples: 10000
     seed: 42
 
-  # BlackJAX nested sampling settings
   blackjax_ns:
     num_live_points: 150
     num_inner_steps: 50
@@ -147,12 +154,11 @@ sampling:
     dlogz_stop: 0
     seed: 42
 
-  # Dynesty settings
   dynesty:
-    nlive: 100
+    nlive: 1000
     bound: multi
     sample: auto
-    dlogz: 1.0
+    dlogz: 0.1
     maxiter: null
     maxcall: null
     bootstrap: 0
@@ -162,19 +168,53 @@ sampling:
     print_progress: true
     seed: 42
 
-  # UltraNest settings
   ultranest:
-    num_live_points: 500
-    min_num_live_points: 500
-    dlogz: 0.5
+    num_live_points: 1000
+    min_num_live_points: 100
+    dlogz: 0.1
     max_iters: 0
     verbose: true
     show_status: true
+
+  pymultinest:
+    n_live_points: 1000
+    evidence_tolerance: 0.1
+    sampling_efficiency: 0.3
+    n_iter_before_update: 100
+    null_log_evidence: -1.0e99
+    max_modes: 100
+    mode_tolerance: -1.0e99
+    seed: -1
+    verbose: true
+    resume: false
+    importance_nested_sampling: false
+    multimodal: true
+    const_efficiency_mode: false
 
 # ----------------------------------------------------------------------------------
 # Runtime Section
 # ----------------------------------------------------------------------------------
 runtime:
-  platform: cpu
+  platform: gpu
   cuda_visible_devices: 0
   threads: 1
+
+# ----------------------------------------------------------------------------------
+# FastChem 5D Grid (CE backend for quench_approx)
+# ----------------------------------------------------------------------------------
+fastchem_grid_jax:
+  grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
+  solver:
+    mode: vmap   # vmap | scan
+  bounds:
+    mode: clip
+  species_map:
+
+# ----------------------------------------------------------------------------------
+# Quench Approximation
+# ----------------------------------------------------------------------------------
+quench_approx:
+  quench_species:
+    - CO
+    - CH4
+    - NH3

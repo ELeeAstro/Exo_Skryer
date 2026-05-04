@@ -452,9 +452,9 @@ def build_forward_model(
     """
 
     rt_scheme_raw = getattr(getattr(cfg, "physics", None), "rt_scheme", None)
-    if str(rt_scheme_raw).lower() == "transit_2d":
-        from .build_model_2D import build_forward_model_2d
-        return build_forward_model_2d(
+    if str(rt_scheme_raw).lower() == "transit_1_5d":
+        from .build_model_1_5D import build_forward_model_1_5d
+        return build_forward_model_1_5d(
             cfg,
             obs,
             stellar_flux=stellar_flux,

@@ -34,7 +34,7 @@ physics:
 
 
   # Radiative transfer
-  rt_scheme: emission_1d   # transit_1d | transit_2d | emission_1d
+  rt_scheme: emission_1d   # transit_1d | transit_1_5d | emission_1d
   em_scheme: eaa
   emission_mode: planet
   contri_func: false
@@ -86,6 +86,7 @@ params:
   # Planetary parameters
   - {name: log_10_g, dist: uniform, low: 2.7, high: 3.3, transform: logit, init: 3.0}
   - {name: R_p, dist: uniform, low: 1.0, high: 1.2, transform: logit, init: 1.119}
+  - {name: s_dilute, dist: delta, value: 1.0, transform: identity, init: 1.0}
 
   # T-p profile parameters
   - {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}

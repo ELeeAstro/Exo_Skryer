@@ -152,6 +152,9 @@ def compute_emission_spectrum_1d_os(
     else:
         final_spectrum = _scale_flux_ratio(top_flux, state, params)
 
+    s_dilute = jnp.asarray(params.get("s_dilute", 1.0), dtype=final_spectrum.dtype)
+    final_spectrum = final_spectrum * s_dilute
+
     if contri_func:
         layer_contrib = jnp.clip(layer_contrib_flux, 0.0)
         contrib_func_norm = layer_contrib / jnp.maximum(layer_contrib.sum(axis=0, keepdims=True), 1e-30)

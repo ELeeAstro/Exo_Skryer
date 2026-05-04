@@ -23,6 +23,7 @@ __all__ = [
     'init_fastchem_grid_if_needed',
     'init_element_potentials_if_needed',
     'init_atmodeller_if_needed',
+    'init_quench_approx_if_needed',
 ]
 
 
@@ -254,7 +255,7 @@ def infer_clr_keys(trace_species: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def _cfg_param_base_names(cfg) -> set[str]:
-    """Return config parameter names with any transit_2d limb tag stripped."""
+    """Return config parameter names with any transit_1_5d limb tag stripped."""
     base_names: set[str] = set()
     for p in getattr(cfg, "params", []):
         name = str(getattr(p, "name", ""))
@@ -521,6 +522,10 @@ def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
         *ep_names,
     )
 
+    if vert_chem_name in ("quench_approx", "quench"):
+        init_quench_approx_if_needed(cfg, exp_dir)
+        return
+
     if vert_chem_name in fc_grid_names:
         init_fastchem_grid_if_needed(cfg, exp_dir)
         return
@@ -574,6 +579,8 @@ def init_fastchem_grid_if_needed(cfg: Any, exp_dir: Path) -> None:
         "chemical_equilibrium",
         "ce_fastchem_jax",
         "fastchem_jax",
+        "quench_approx",
+        "quench",
     )
     if vert_chem_name not in aliases:
         return
@@ -856,3 +863,65 @@ def init_atmodeller_if_needed(cfg: Any, exp_dir: Path) -> None:
         print(f"[info] Atmodeller solver settings: {solver_kwargs}")
     load_atmodeller_cache(species_list, nlay, solver_kwargs=solver_kwargs)
     print("[info] Atmodeller cache loaded")
+
+
+def init_quench_approx_if_needed(cfg: Any, exp_dir: Path) -> None:
+    """Initialise the FastChem 5D grid and quench species list for quench_approx.
+
+    Reads ``fastchem_grid_jax`` (grid path, solver, species map) and
+    ``quench_approx.quench_species`` from the YAML config.  Both caches are
+    idempotent — already-loaded caches are skipped.
+
+    Parameters
+    ----------
+    cfg : config object
+        Parsed YAML configuration object.
+    exp_dir : `~pathlib.Path`
+        Experiment directory for resolving relative paths.
+    """
+    phys = getattr(cfg, "physics", None)
+    if phys is None:
+        return
+
+    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
+    if vert_chem_name not in ("quench_approx", "quench"):
+        return
+
+    # Step 1: load the FastChem 5D grid (reuses init_fastchem_grid_if_needed,
+    # which now recognises quench_approx/quench in its aliases).
+    init_fastchem_grid_if_needed(cfg, exp_dir)
+
+    # Step 2: load the quench species list.
+    from .vert_chem import is_quench_approx_cache_loaded, load_quench_approx_cache
+
+    if is_quench_approx_cache_loaded():
+        print("[info] Quench species already loaded")
+        return
+
+    qa_cfg = getattr(cfg, "quench_approx", None)
+    if qa_cfg is None:
+        raise ValueError(
+            "quench_approx config block is required when physics.vert_chem is "
+            "'quench_approx'. Add a 'quench_approx:' section with 'quench_species:' list."
+        )
+
+    quench_species = list(getattr(qa_cfg, "quench_species", None) or [])
+    if not quench_species:
+        raise ValueError(
+            "quench_approx.quench_species must be a non-empty list in the YAML config. "
+            "Example:\n  quench_approx:\n    quench_species:\n      - CO\n      - CH4"
+        )
+
+    param_names = {p.name for p in getattr(cfg, "params", [])}
+    if "log_10_Kzz" not in param_names:
+        raise ValueError(
+            "quench_approx requires parameter 'log_10_Kzz' in cfg.params."
+        )
+    if "log_10_g" not in param_names and "M_p" not in param_names:
+        raise ValueError(
+            "quench_approx requires either 'log_10_g' or 'M_p' (+ 'R_p') in cfg.params "
+            "so that surface gravity is available for the mixing timescale."
+        )
+
+    load_quench_approx_cache(quench_species)
+    print(f"[info] Quench species loaded: {list(quench_species)}")

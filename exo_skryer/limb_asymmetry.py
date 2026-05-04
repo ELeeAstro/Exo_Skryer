@@ -2,7 +2,7 @@
 limb_asymmetry.py
 =================
 
-Helpers for the transit_2d explicit _joint/_east/_west parameter mode.
+Helpers for the transit_1_5d explicit _joint/_east/_west parameter mode.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def is_internal_parameter_name(name: str) -> bool:
 
 
 def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
-    """Validate explicit transit_2d tagging and return east/west duplicated bases."""
+    """Validate explicit transit_1_5d tagging and return east/west duplicated bases."""
     tagged: dict[str, set[str]] = {}
     untagged: set[str] = set()
 
@@ -66,7 +66,7 @@ def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
     if untagged:
         joined = ", ".join(sorted(untagged))
         raise ValueError(
-            "transit_2d requires every YAML parameter to use an explicit suffix: "
+            "transit_1_5d requires every YAML parameter to use an explicit suffix: "
             f"_joint, _east, or _west. Untagged parameter(s): {joined}"
         )
 
@@ -76,7 +76,7 @@ def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
     if mixed_joint:
         joined = ", ".join(mixed_joint)
         raise ValueError(
-            "transit_2d parameters cannot mix _joint with _east/_west for the same base name: "
+            "transit_1_5d parameters cannot mix _joint with _east/_west for the same base name: "
             f"{joined}"
         )
 
@@ -86,7 +86,7 @@ def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
     if missing_pairs:
         joined = ", ".join(missing_pairs)
         raise ValueError(
-            "transit_2d requires both _east and _west entries for each limb-specific base name. "
+            "transit_1_5d requires both _east and _west entries for each limb-specific base name. "
             f"Missing partner(s) for: {joined}"
         )
 
@@ -97,7 +97,7 @@ def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
 def split_limb_parameter_dict(
     params: Mapping[str, jnp.ndarray],
 ) -> tuple[Dict[str, jnp.ndarray], Dict[str, jnp.ndarray], Dict[str, jnp.ndarray]]:
-    """Split explicit-tag transit_2d params into joint/east/west dictionaries."""
+    """Split explicit-tag transit_1_5d params into joint/east/west dictionaries."""
     validate_limb_parameter_names(params.keys())
 
     joint: Dict[str, jnp.ndarray] = {}
@@ -144,13 +144,13 @@ def get_limb_value(param_map: Mapping[str, object], base_name: str, limb: str) -
 
 def jitter_param_name(rt_scheme: str | None) -> str:
     """Return the jitter parameter name for the requested RT scheme."""
-    return "c_joint" if str(rt_scheme).lower() == "transit_2d" else "c"
+    return "c_joint" if str(rt_scheme).lower() == "transit_1_5d" else "c"
 
 
 def parse_offset_group_name(param_name: str, rt_scheme: str | None) -> str | None:
     """Return the observation offset group name encoded in a parameter name."""
     name = str(param_name)
-    if str(rt_scheme).lower() == "transit_2d":
+    if str(rt_scheme).lower() == "transit_1_5d":
         base, tag = split_limb_tag(name)
         if tag != JOINT_TAG:
             return None

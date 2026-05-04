@@ -58,10 +58,11 @@ def main() -> None:
     # variables at JAX defaults; GPU-specific flags remain configurable.
     platform = str(getattr(cfg.runtime, "platform", "cpu")).lower()
 
-    if platform == "gpu":
+    if platform in ("gpu", "cuda"):
         cuda_devices = str(getattr(cfg.runtime, "cuda_visible_devices", ""))
         if cuda_devices:
             os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
+        os.environ["JAX_PLATFORMS"] = "cuda"
         os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
         os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
         tf_gpu_allocator = getattr(cfg.runtime, "tf_gpu_allocator", None)
@@ -78,7 +79,13 @@ def main() -> None:
 
         print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
         print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
-    else:
+    elif platform == "metal":
+        os.environ["JAX_PLATFORMS"] = "metal"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        print("[info] Platform: Metal (Apple GPU)")
+    else:  # cpu
+        os.environ["JAX_PLATFORMS"] = "cpu"
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
         xla_flags_cpu = (
             "--xla_cpu_multi_thread_eigen=true "
             f"intra_op_parallelism_threads={cfg.runtime.threads}"
@@ -94,6 +101,16 @@ def main() -> None:
     print_cfg(cfg)
 
     # Prepare JAX and numpyro JAX settings
+    # On non-GPU platforms JAX still discovers and tries to initialise every
+    # installed CUDA plugin, which logs a noisy ERROR when cuInit returns
+    # CUDA_ERROR_NO_DEVICE.  Silence that specific logger around the import,
+    # then restore the original level so nothing else is suppressed.
+    import logging
+    _xla_bridge_log = logging.getLogger("jax._src.xla_bridge")
+    if platform not in ("gpu", "cuda"):
+        _prev_xla_level = _xla_bridge_log.level
+        _xla_bridge_log.setLevel(logging.CRITICAL)
+
     from jax import config as jax_config
     jax_config.update("jax_enable_x64", True)
     #jax_config.update("jax_debug_nans", True)
@@ -105,6 +122,9 @@ def main() -> None:
     #     numpyro.set_host_device_count(cfg.runtime.threads)
 
     import jax
+
+    if platform not in ("gpu", "cuda"):
+        _xla_bridge_log.setLevel(_prev_xla_level)
 
     # Print the JAX setup
     print(f"[info] JAX backend: {jax.default_backend()}")

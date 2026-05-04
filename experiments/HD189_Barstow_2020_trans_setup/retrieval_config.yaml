@@ -34,7 +34,7 @@ physics:
   cloud_dist: mono
 
   # Radiative transfer
-  rt_scheme: transit_1d   # transit_1d | transit_2d | emission_1d
+  rt_scheme: transit_1d   # transit_1d | transit_1_5d | emission_1d
   em_scheme: eaa
   emission_mode: planet
   contri_func: false

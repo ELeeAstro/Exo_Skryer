@@ -1,5 +1,5 @@
 """
-build_model_2D.py
+build_model_1_5D.py
 =================
 """
 
@@ -20,9 +20,9 @@ from .opacity_ray import zero_ray_opacity, compute_ray_opacity
 from .opacity_cia import zero_cia_opacity, compute_cia_opacity
 from .opacity_special import zero_special_opacity, compute_special_opacity
 from .opacity_cloud import zero_cloud_opacity
-from .RT_trans_2D_os import compute_transit_depth_2d_os
-from .RT_trans_2D_ck import compute_transit_depth_2d_ck
-from .RT_trans_2D_ck_trans import compute_transit_depth_2d_ck_trans
+from .RT_trans_1_5D_os import compute_transit_depth_1_5d_os
+from .RT_trans_1_5D_ck import compute_transit_depth_1_5d_ck
+from .RT_trans_1_5D_ck_trans import compute_transit_depth_1_5d_ck_trans
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
 from .vert_chem import constant_vmr, constant_vmr_clr
 from .vert_mu import build_compute_mu, constant_mu
@@ -42,7 +42,7 @@ from . import build_opacities as XS
 from . import kernel_registry as KR
 from .build_model import _extract_fixed_params, _build_opac_cache, _require_cache_keys, _resolve_os_ck_opac
 
-__all__ = ["build_forward_model_2d"]
+__all__ = ["build_forward_model_1_5d"]
 
 
 def _stack_two_param_dicts(
@@ -95,16 +95,16 @@ def _resolve_refraction(phys) -> int:
     raise NotImplementedError(f"Unknown physics.refraction='{refraction_raw}'")
 
 
-def _select_kernels_2d(cfg) -> SimpleNamespace:
+def _select_kernels_1_5d(cfg) -> SimpleNamespace:
     phys = cfg.physics
 
     rt_raw = getattr(phys, "rt_scheme", None)
     rt_scheme = str(rt_raw).lower()
-    if rt_scheme != "transit_2d":
-        raise ValueError("build_forward_model_2d requires physics.rt_scheme='transit_2d'.")
+    if rt_scheme != "transit_1_5d":
+        raise ValueError("build_forward_model_1_5d requires physics.rt_scheme='transit_1_5d'.")
 
     if str(getattr(phys, "emission_mode", "planet")).lower() not in ("planet", "none"):
-        raise NotImplementedError("transit_2d is only implemented for transit radiative transfer.")
+        raise NotImplementedError("transit_1_5d is only implemented for transit radiative transfer.")
 
     Tp_kernel = KR.resolve(getattr(phys, "vert_Tp", None) or getattr(phys, "vert_struct", None), KR.VERT_TP, "physics.vert_Tp")
     altitude_kernel = KR.resolve(getattr(phys, "vert_alt", None), KR.VERT_ALT, "physics.vert_alt")
@@ -124,7 +124,7 @@ def _select_kernels_2d(cfg) -> SimpleNamespace:
     elif line_str == "ck":
         line_opac_kernel = compute_ck_opacity
     else:
-        raise NotImplementedError("transit_2d currently supports only physics.opac_line: os, ck, or None.")
+        raise NotImplementedError("transit_1_5d currently supports only physics.opac_line: os, ck, or None.")
 
     if line_str == "ck":
         ray_str, ray_opac_kernel = _resolve_os_ck_opac(phys, "opac_ray", compute_ray_opacity)
@@ -141,7 +141,7 @@ def _select_kernels_2d(cfg) -> SimpleNamespace:
 
     special_str = str(getattr(phys, "opac_special", "on")).lower()
     if special_str == "ck":
-        raise NotImplementedError("transit_2d does not support ck special opacity.")
+        raise NotImplementedError("transit_1_5d does not support ck special opacity.")
     special_opac_kernel = (
         None if special_str in ("none", "off", "false", "0")
         else compute_special_opacity
@@ -150,15 +150,15 @@ def _select_kernels_2d(cfg) -> SimpleNamespace:
     ck = (line_str == "ck")
     ck_mix_str = str(getattr(cfg.opac, "ck_mix", "RORR")).upper() if ck else "RORR"
     if ck_mix_str == "PRAS":
-        raise NotImplementedError("transit_2d does not support ck_mix: PRAS yet.")
+        raise NotImplementedError("transit_1_5d does not support ck_mix: PRAS yet.")
     if ck and ck_mix_str not in ("RORR", "TRANS"):
-        raise NotImplementedError(f"transit_2d does not support ck_mix: {ck_mix_str}")
+        raise NotImplementedError(f"transit_1_5d does not support ck_mix: {ck_mix_str}")
 
     if ck:
-        rt_kernel = compute_transit_depth_2d_ck_trans if ck_mix_str == "TRANS" else compute_transit_depth_2d_ck
+        rt_kernel = compute_transit_depth_1_5d_ck_trans if ck_mix_str == "TRANS" else compute_transit_depth_1_5d_ck
         ck_mix_code_static = 3 if ck_mix_str == "TRANS" else 1
     else:
-        rt_kernel = compute_transit_depth_2d_os
+        rt_kernel = compute_transit_depth_1_5d_os
         ck_mix_code_static = None
 
     return SimpleNamespace(
@@ -186,7 +186,7 @@ def _select_kernels_2d(cfg) -> SimpleNamespace:
     )
 
 
-def _validate_config_2d(cfg, k: SimpleNamespace, opac_cache: Dict[str, jnp.ndarray]) -> None:
+def _validate_config_1_5d(cfg, k: SimpleNamespace, opac_cache: Dict[str, jnp.ndarray]) -> None:
     validate_limb_parameter_names(p.name for p in cfg.params)
     param_base_names = {
         split_limb_tag(str(getattr(p, "name", "")))[0]
@@ -195,23 +195,23 @@ def _validate_config_2d(cfg, k: SimpleNamespace, opac_cache: Dict[str, jnp.ndarr
     }
     if "M_p" in param_base_names:
         raise NotImplementedError(
-            "transit_2d does not support M_p-based gravity inference. "
+            "transit_1_5d does not support M_p-based gravity inference. "
             "Provide explicit log_10_g_east/log_10_g_west instead."
         )
     if k.contri_func_enabled:
-        raise NotImplementedError("physics.contri_func=True is not supported for transit_2d.")
+        raise NotImplementedError("physics.contri_func=True is not supported for transit_1_5d.")
 
     if k.ck:
         ck_flag = str(getattr(cfg.opac, "ck", False)).strip().lower() in ("true", "1", "yes", "on")
         if not ck_flag:
-            raise ValueError("transit_2d with physics.opac_line: ck requires opac.ck: True.")
+            raise ValueError("transit_1_5d with physics.opac_line: ck requires opac.ck: True.")
         _require_cache_keys(
             opac_cache,
             ("ck_sigma_cube", "ck_log10_pressure_grid", "ck_log10_temperature_grids", "g_points", "g_weights"),
             "correlated-k opacity",
         )
     if k.line_opac_str == "os" and not XS.has_line_data():
-        raise RuntimeError("Line opacity requested but registry is empty for transit_2d.")
+        raise RuntimeError("Line opacity requested but registry is empty for transit_1_5d.")
     if k.line_opac_str == "os":
         _require_cache_keys(
             opac_cache,
@@ -239,15 +239,15 @@ def _validate_config_2d(cfg, k: SimpleNamespace, opac_cache: Dict[str, jnp.ndarr
     if k.refraction_mode == 1:
         param_names = {p.name for p in cfg.params}
         if "a_sm_joint" not in param_names:
-            raise ValueError("transit_2d refraction cutoff requires explicit joint parameter 'a_sm_joint'.")
+            raise ValueError("transit_1_5d refraction cutoff requires explicit joint parameter 'a_sm_joint'.")
         if not XS.has_ray_data():
-            raise RuntimeError("transit_2d refraction cutoff requires Rayleigh registry data.")
+            raise RuntimeError("transit_1_5d refraction cutoff requires Rayleigh registry data.")
 
     if k.cld_opac_str in ("madt_rayleigh", "madt-rayleigh", "mie_madt", "lxmie", "mie_full", "full_mie"):
         _require_cache_keys(opac_cache, ("cloud_nk_n", "cloud_nk_k"), "cloud n,k")
 
 
-def build_forward_model_2d(
+def build_forward_model_1_5d(
     cfg,
     obs: Dict,
     stellar_flux: Optional[np.ndarray] = None,
@@ -261,9 +261,9 @@ def build_forward_model_2d(
     _ = np.asarray(obs["dwl"], dtype=float)
     has_limb_observations = bool(obs.get("has_limb_observations", False))
 
-    k = _select_kernels_2d(cfg)
+    k = _select_kernels_1_5d(cfg)
     opac_cache = _build_opac_cache()
-    _validate_config_2d(cfg, k, opac_cache)
+    _validate_config_1_5d(cfg, k, opac_cache)
 
     wl_hi_array = np.asarray(XS.master_wavelength_cut(), dtype=float)
     wl_hi = jnp.asarray(wl_hi_array)

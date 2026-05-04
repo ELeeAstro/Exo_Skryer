@@ -1,5 +1,5 @@
 """
-RT_trans_2D_ck.py
+RT_trans_1_5D_ck.py
 =================
 """
 
@@ -11,10 +11,10 @@ import jax.numpy as jnp
 
 from .RT_trans_1D_ck import compute_transit_depth_1d_ck
 
-__all__ = ["compute_transit_depth_2d_ck"]
+__all__ = ["compute_transit_depth_1_5d_ck"]
 
 
-def compute_transit_depth_2d_ck(
+def compute_transit_depth_1_5d_ck(
     state_east: Dict[str, jnp.ndarray],
     params_east: Dict[str, jnp.ndarray],
     opacity_east: Mapping[str, jnp.ndarray],
@@ -23,7 +23,7 @@ def compute_transit_depth_2d_ck(
     opacity_west: Mapping[str, jnp.ndarray],
     opac: Mapping[str, jnp.ndarray],
 ) -> dict[str, jnp.ndarray]:
-    """Compute separate east/west CK transmission spectra for transit_2d."""
+    """Compute separate east/west CK transmission spectra for transit_1_5d."""
     state_east = dict(state_east)
     state_west = dict(state_west)
     state_east["contri_func"] = False

@@ -29,7 +29,7 @@ from .chem_fastchem_grid_jax import (
     interpolate_profile_scan as interpolate_fc_profile_scan,
     interpolate_profile_vmap as interpolate_fc_profile_vmap,
 )
-from .vert_mu import compute_mu, build_compute_mu
+from .vert_mu import build_compute_mu, compute_mu
 
 
 # Solar reference abundances (relative to H) - Asplund et al. (2021)
@@ -65,6 +65,8 @@ __all__ = [
     "load_fastchem_grid_cache",
     "is_fastchem_grid_cache_loaded",
     "get_fastchem_grid_cache_info",
+    "load_quench_approx_cache",
+    "is_quench_approx_cache_loaded",
 ]
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,7 @@ _FC_GRID_SPECIES_OUT: tuple[str, ...] = ()
 _FC_GRID_SPECIES_IDX: jnp.ndarray | None = None
 _FC_GRID_SOLVER_MODE: str = "vmap"
 _FC_GRID_UNMAPPED: tuple[str, ...] = ()
+_FC_QUENCH_SPECIES: tuple[str, ...] = ()
 
 
 def load_fastchem_grid_cache(
@@ -142,6 +145,21 @@ def get_fastchem_grid_cache_info() -> dict[str, Any]:
         "MH_range": (float(_FC_GRID_MODEL.M_H[0]), float(_FC_GRID_MODEL.M_H[-1])),
         "CO_range": (float(_FC_GRID_MODEL.C_O[0]), float(_FC_GRID_MODEL.C_O[-1])),
     }
+
+
+def load_quench_approx_cache(
+    quench_species: list[str] | tuple[str, ...],
+) -> None:
+    """Store the list of species to quench for the quench_approx kernel."""
+    global _FC_QUENCH_SPECIES
+    if not quench_species:
+        raise ValueError("quench_approx.quench_species must be a non-empty list.")
+    _FC_QUENCH_SPECIES = tuple(quench_species)
+
+
+def is_quench_approx_cache_loaded() -> bool:
+    """Return True if the quench species list has been configured."""
+    return bool(_FC_QUENCH_SPECIES)
 
 
 def load_element_potentials_cache(
@@ -836,83 +854,149 @@ def _apply_quench_single(
     return jnp.where(has_quench, vmr_frozen, vmr_eq)
 
 
+def _co2_quench_special(
+    T_lay: jnp.ndarray,
+    p_lay_bar: jnp.ndarray,
+    vmr: Dict[str, jnp.ndarray],
+    tau_mix: jnp.ndarray,
+) -> jnp.ndarray:
+    """Return a quenched CO2 profile using a three-region scheme.
+
+    Region 1 — below CO quench level (high pressure):
+        CE CO2 from the grid.
+    Region 2 — between CO and CO2 quench levels:
+        K_eq(T) * f_CO(layer) * f_H2O(layer) / f_H2(layer) at each layer,
+        using the post-quench CO profile so CO2 tracks the quenched carbon.
+    Region 3 — at and above CO2 quench level (low pressure):
+        Frozen at the K_eq value evaluated at the CO2 quench level.
+
+        
+    Wogan et al 2025 Res. Notes AAS 9 10
+    
+    K_eq(T) = 18.3 * exp(-2376/T - (932/T)^2)
+
+    If no CO2 quench level exists the CE CO2 profile is returned unchanged.
+    Requires "CO", "H2O", "H2", "CO2" to all be present in *vmr*.
+    """
+    K_eq_all = 18.3 * jnp.exp(-2376.0 / T_lay - (932.0 / T_lay) ** 2)
+    f_CO2_keq = jnp.clip(
+        K_eq_all * ((vmr["CO"] * vmr["H2O"]) / jnp.maximum(vmr["H2"], 1e-30)),
+        0.0, 1.0,
+    )
+
+    # CO quench index
+    tau_chem_co = _chemical_timescale("CO", T_lay, p_lay_bar)
+    co_quench_idx = jnp.argmax(tau_chem_co > tau_mix)
+
+    # CO2 quench index
+    tau_chem_co2 = _chemical_timescale("CO2", T_lay, p_lay_bar)
+    co2_quench_mask = tau_chem_co2 > tau_mix
+    has_co2_quench = jnp.any(co2_quench_mask)
+    co2_quench_idx = jnp.argmax(co2_quench_mask)
+
+    f_CO2_frozen = f_CO2_keq[co2_quench_idx]
+
+    layer_indices = jnp.arange(T_lay.shape[0])
+    in_keq_region = (layer_indices >= co_quench_idx) & (layer_indices < co2_quench_idx)
+    above_co2     =  layer_indices >= co2_quench_idx
+
+    profile = vmr["CO2"]
+    profile = jnp.where(in_keq_region, f_CO2_keq,    profile)
+    profile = jnp.where(above_co2,     f_CO2_frozen,  profile)
+    return jnp.where(has_co2_quench, profile, vmr["CO2"])
+
+
 def quench_approx(
     p_lay: jnp.ndarray,
     T_lay: jnp.ndarray,
     params: Dict[str, jnp.ndarray],
     nlay: int,
 ) -> Dict[str, jnp.ndarray]:
-    """Compute quenched chemical abundance profiles.
+    """Compute quenched chemical abundance profiles using the FastChem 5D grid.
+
+    Two-step process:
+
+    1. Interpolate the FastChem 5D grid at each layer to obtain chemical
+       equilibrium (CE) abundances for all active species.
+    2. Apply the quench approximation only to the species listed in
+       ``quench_approx.quench_species`` (YAML config).  For each such species,
+       the profile is frozen at the quench level where the chemical timescale
+       exceeds the eddy-mixing timescale; all other species retain their CE
+       values.
 
     Parameters
     ----------
     p_lay : `~jax.numpy.ndarray`, shape (nlay,)
-        Layer pressures. In the forward model this is typically in dyne cm⁻².
+        Layer pressures in dyne cm⁻² (converted to bar internally).
     T_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Layer temperatures in Kelvin.
     params : dict[str, `~jax.numpy.ndarray`]
-        Chemical abundance parameters containing:
+        Must contain:
 
-        - `M_to_H` : float
-            Metallicity relative to solar in dex.
-        - `C_to_O` : float
-            Carbon-to-oxygen ratio (dimensionless).
-        - `Kzz` : float
-            Eddy diffusion coefficient in cm² s⁻¹.
-        - `log_10_g` : float
-            Log₁₀ surface gravity in cm s⁻².
+        - ``M_to_H``    : metallicity relative to solar [dex]
+        - ``C_to_O``    : carbon-to-oxygen ratio [dimensionless]
+        - ``Kzz``       : eddy diffusion coefficient [cm² s⁻¹]
+        - ``log_10_g``  : log₁₀ surface gravity [cm s⁻²]
     nlay : int
         Number of atmospheric layers (unused; kept for API compatibility).
 
     Returns
     -------
     vmr_lay : dict[str, `~jax.numpy.ndarray`]
-        Dictionary mapping species names to quenched VMR profiles with shape (nlay,).
+        Species VMR profiles with shape ``(nlay,)``, plus ``__mu_lay__``
+        (mean molecular weight from the FastChem grid).
     """
-    del nlay  # Unused but kept for API compatibility
+    del nlay
 
-    # Get cached Gibbs tables (will raise RuntimeError if not loaded)
-    thermo = get_nasa9_cache()
+    if _FC_GRID_MODEL is None or _FC_GRID_SPECIES_IDX is None:
+        raise RuntimeError(
+            "FastChem-grid cache not loaded. "
+            "Call load_fastchem_grid_cache() before using quench_approx."
+        )
+    if not _FC_QUENCH_SPECIES:
+        raise RuntimeError(
+            "Quench species not configured. "
+            "Call load_quench_approx_cache() before using quench_approx."
+        )
 
-    # Extract metallicity and C_to_O ratio from params
-    metallicity = params['M_to_H']  # [dex]
-    CO_ratio = params['C_to_O']  # dimensionless
+    metallicity = params["M_to_H"]
+    co_ratio = params["C_to_O"]
+    Kzz = 10.0 ** params["log_10_Kzz"]
+    g = 10.0 ** params["log_10_g"]
+    p_lay_bar = p_lay / bar
 
-    Kzz = params['Kzz']  # Eddy diffusion coefficient [cm²/s]
-    g = 10.0**params['log_10_g']  # Surface gravity [cm/s²]
+    # Step 1: CE abundances from the FastChem 5D grid
+    if _FC_GRID_SOLVER_MODE == "scan":
+        vmr_matrix, mmw_lay = interpolate_fc_profile_scan(
+            _FC_GRID_MODEL, T_lay, p_lay_bar, metallicity, co_ratio, _FC_GRID_SPECIES_IDX
+        )
+    else:
+        vmr_matrix, mmw_lay = interpolate_fc_profile_vmap(
+            _FC_GRID_MODEL, T_lay, p_lay_bar, metallicity, co_ratio, _FC_GRID_SPECIES_IDX
+        )
 
-    # Convert M_to_H and C_to_O to elemental abundances
-    O = solar_O * (10.0 ** metallicity)
-    N = solar_N * (10.0 ** metallicity)
-    C = CO_ratio * O
+    vmr_matrix = jnp.clip(vmr_matrix, 0.0, jnp.inf)
+    vmr_eq = {sp: vmr_matrix[:, i] for i, sp in enumerate(_FC_GRID_SPECIES_OUT)}
+    mu_bar = jnp.clip(mmw_lay, 1e-30, jnp.inf)
 
+    # Step 2: Apply quench approximation for listed species only
+    tau_mix = _mixing_timescale(T_lay, p_lay_bar, Kzz, mu_bar, g)
 
-    # Create RateJAX solver and compute chemical equilibrium
-    rate = RateJAX(thermo=thermo, C=C, N=N, O=O, fHe=solar_He)
-    vmr_eq = rate.solve_profile(T_lay, p_lay / bar)
-
-    # Compute mean molecular weight (needed for mixing timescale)
-    mu_bar = compute_mu(vmr_eq)
-
-    # Compute mixing timescale (same for all species)
-    tau_mix = _mixing_timescale(T_lay, p_lay, Kzz, mu_bar, g)
-
-    # Apply quenching to relevant species
-    # Species that undergo quenching: CO, CH4, NH3, HCN, CO2
-    # Non-quenched species: H2O, C2H2, C2H4, N2, H2, H, He
-    quenched_species = ["CO", "CH4", "NH3", "HCN", "CO2"]
-
-    vmr_quenched = {}
-    for species in vmr_eq.keys():
-        if species in quenched_species:
-            # Compute chemical timescale and apply quenching
-            tau_chem = _chemical_timescale(species, T_lay, p_lay / bar)
-            vmr_quenched[species] = _apply_quench_single(vmr_eq[species], tau_chem, tau_mix)
+    vmr_out = {}
+    for sp, vmr_prof in vmr_eq.items():
+        if sp in _FC_QUENCH_SPECIES:
+            tau_chem = _chemical_timescale(sp, T_lay, p_lay_bar)
+            vmr_out[sp] = _apply_quench_single(vmr_prof, tau_chem, tau_mix)
         else:
-            # Non-quenched species: use equilibrium values
-            vmr_quenched[species] = vmr_eq[species]
+            vmr_out[sp] = vmr_prof
 
-    return vmr_quenched
+    # CO2 special quench: overrides the standard quench for CO2 when the
+    # required species (CO, H2O, H2) are all present in the grid output.
+    if "CO2" in _FC_QUENCH_SPECIES and {"CO", "H2O", "H2", "CO2"}.issubset(vmr_out.keys()):
+        vmr_out["CO2"] = _co2_quench_special(T_lay, p_lay_bar, vmr_out, tau_mix)
+
+    vmr_out["__mu_lay__"] = compute_mu(vmr_out)
+    return vmr_out
 
 
 def CE_atmodeller(

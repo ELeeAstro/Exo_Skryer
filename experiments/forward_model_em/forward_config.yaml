@@ -22,7 +22,7 @@ physics:
   opac_special: None
   cloud_dist: mono
 
-  rt_scheme: emission_1d   # transit_1d | transit_2d | emission_1d
+  rt_scheme: emission_1d   # transit_1d | transit_1_5d | emission_1d
   emission_mode: brown_dwarf
   em_scheme: eaa
   contri_func: False
@@ -60,6 +60,7 @@ params:
   - { name: p_top,        dist: delta, value: 1e-4,   transform: identity, init: 1e-4 }
   - { name: log_10_p_ref, dist: delta, value: 1.0,    transform: identity, init: 1.0 }
   - { name: R_p,          dist: delta, value: 1.0,    transform: identity, init: 1.0 }
+  - { name: s_dilute,     dist: delta, value: 1.0,    transform: identity, init: 1.0 }
 
   # Brown dwarf physical parameters
   - { name: f_p,  dist: delta, value: 1.0,    transform: identity, init: 1.0 }

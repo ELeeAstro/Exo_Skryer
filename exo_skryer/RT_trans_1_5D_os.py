@@ -1,5 +1,5 @@
 """
-RT_trans_2D_os.py
+RT_trans_1_5D_os.py
 =================
 """
 
@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from .RT_trans_1D_os import _build_transit_geometry, _sum_opacity_components_os, _transit_depth_from_opacity
 from .refraction import maybe_refraction_cutoff_mask
 
-__all__ = ["compute_transit_depth_2d_os"]
+__all__ = ["compute_transit_depth_1_5d_os"]
 
 
 def _compute_limb_transit(
@@ -31,7 +31,7 @@ def _compute_limb_transit(
     return _transit_depth_from_opacity(state, k_tot, geometry=geometry, refraction_mask=refraction_mask)
 
 
-def compute_transit_depth_2d_os(
+def compute_transit_depth_1_5d_os(
     state_east: Dict[str, jnp.ndarray],
     params_east: Dict[str, jnp.ndarray],
     opacity_east: Mapping[str, jnp.ndarray],
@@ -40,7 +40,7 @@ def compute_transit_depth_2d_os(
     opacity_west: Mapping[str, jnp.ndarray],
     opac: Mapping[str, jnp.ndarray] | None = None,
 ) -> dict[str, jnp.ndarray]:
-    """Compute separate east/west transmission spectra for the transit_2d mode."""
+    """Compute separate east/west transmission spectra for the transit_1_5d mode."""
     limb_east = _compute_limb_transit(state_east, params_east, opacity_east, opac)
     limb_west = _compute_limb_transit(state_west, params_west, opacity_west, opac)
 

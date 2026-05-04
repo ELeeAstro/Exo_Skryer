@@ -51,11 +51,11 @@ physics:
   cloud_dist: mono    # mono (monodisperse) | log_normal (lognormal size distribution)
 
   # Radiative transfer
-  rt_scheme: transit_1d   # transit_1d | transit_2d | emission_1d
+  rt_scheme: transit_1d   # transit_1d | transit_1_5d | emission_1d
   contri_func: false       # True to return contribution functions alongside spectra
   refraction: None         # none | cutoff (refractive cutoff; requires 'a_sm' param and ray data)
 
-  # --- Emission-only settings (ignored when rt_scheme: transit_1d/transit_2d) ---
+  # --- Emission-only settings (ignored when rt_scheme: transit_1d/transit_1_5d) ---
   # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
   # emission_mode: planet   # planet | brown_dwarf
 
