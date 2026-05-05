@@ -87,6 +87,46 @@ Python venv (alternative)
 
    python -m pip install -e .
 
+GPU Installation (NVIDIA/CUDA)
+------------------------------
+
+GPU support requires Linux with an NVIDIA GPU (SM ≥ 7.5, i.e. Turing or newer)
+and NVIDIA driver ≥ 580. GPU JAX wheels are not available for macOS or Windows.
+
+**Option 1 — pip (GPU extra)**
+
+Install the ``gpu`` optional dependency group, which pulls in ``jax[cuda13]``
+including the CUDA runtime:
+
+.. code-block:: bash
+
+   python -m pip install -e ".[gpu]"
+
+Verify that JAX sees your GPU:
+
+.. code-block:: bash
+
+   python -c "import jax; print(jax.devices())"
+
+You should see a ``CudaDevice`` listed alongside the CPU device.
+
+**Option 2 — conda (recommended for HPC clusters)**
+
+A ready-made conda environment file is provided that installs the CUDA-enabled
+``jaxlib`` from conda-forge and then installs Exo_Skryer via pip:
+
+.. code-block:: bash
+
+   conda env create -f environment_gpu.yml
+   conda activate exo_skryer_gpu
+
+.. note::
+
+   The JAX team recommends ``jax[cuda13]`` (CUDA 13, cuDNN ≥ 9.8) and plans
+   to drop CUDA 12 support in a future release. See the
+   `JAX installation guide <https://docs.jax.dev/en/latest/installation.html>`_
+   for the latest requirements.
+
 Install via pip (coming soon)
 -----------------------------
 

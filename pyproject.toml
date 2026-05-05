@@ -36,11 +36,11 @@ dynamic = ["version"]
 exo-skryer = "exo_skryer.run_retrieval:main"
 
 [project.optional-dependencies]
+gpu = [
+    "jax[cuda13]",
+]
 atmodeller = [
     "atmodeller",
-]
-gpu = [
-    "jax[cuda12_pip]",
 ]
 blackjax = [
     "blackjax",

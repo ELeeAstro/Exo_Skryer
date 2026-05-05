@@ -515,6 +515,11 @@ def build_config() -> dict:
             fc_block['species_map'] = species_map
         config['fastchem_grid_jax'] = fc_block
 
+    elif vert_chem == 'quench_approx':
+        quench_species = _parse_text_list(st.session_state.get('quench_species', ''))
+        if quench_species:
+            config['quench_approx'] = {'quench_species': quench_species}
+
     elif vert_chem == 'atmodeller':
         species_network = _parse_text_list(st.session_state.get('atmodeller_species_network', ''))
         config['atmodeller'] = {
@@ -975,7 +980,14 @@ def render_chemistry_backend_section():
         st.info("RateJAX equilibrium backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H` and `C_to_O`.")
 
     elif vert_chem == "quench_approx":
-        st.info("Quenched-chemistry backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H`, `C_to_O`, `Kzz`, and `log_10_g`.")
+        st.info("Quenched-chemistry backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H`, `C_to_O`, `log_10_Kzz`, and `log_10_g` (or `M_p` + `R_p`).")
+        st.subheader("quench_approx")
+        st.text_area(
+            "Quench species",
+            key="quench_species",
+            height=150,
+            placeholder="One species per line, e.g.\nCO\nCO2\nCH4\nNH3\nH2O",
+        )
 
     elif vert_chem == "atmodeller":
         st.info("Optional backend. Requires the `atmodeller` extra to be installed, plus retrieval parameters `M_to_H` and `C_to_O`.")
