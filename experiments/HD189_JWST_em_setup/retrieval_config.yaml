@@ -21,7 +21,7 @@ physics:
   # Vertical structure schemes
   vert_Tp: Modified_Guillot
   vert_alt: p_ref
-  vert_chem: constant_vmr
+  vert_chem: constant_vmr_clr
   vert_mu: dynamic    
   vert_cloud: exponential_decay_profile
 
@@ -104,11 +104,17 @@ params:
   - {name: log_10_f_CH4, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
 
   # Cloud parameters
-  - {name: log_10_q_c, dist: uniform, low: -9, high: 1, transform: logit, init: 0}
-  - {name: log_10_p_base, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
+  - {name: log_10_q_c, dist: uniform, low: -12, high: 1, transform: logit, init: 0}
+  - {name: log_10_p_base, dist: uniform, low: -8, high: 2, transform: logit, init: 0}
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
   - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
   - {name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5}
+
+  - {name: log_10_cld_r_f18, dist: uniform, low: -3, high: 2,   transform: logit, init: 0}
+  - {name: cld_rho_f18, dist: delta,   value: 2.5, transform: identity, init: 2.5}
+  - {name: cld_Q0, dist: uniform, low: 0.1, high: 50.0, transform: logit, init: 1.0}
+  - {name: cld_Q1, dist: delta, value: 4.21, transform: identity, init: 4.21}
+  - {name: cld_a, dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 1.0}
 
   - { name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 7.0}
   - { name: wl_node_1, dist: delta, value: 7.5, transform: identity, init: 7.5}

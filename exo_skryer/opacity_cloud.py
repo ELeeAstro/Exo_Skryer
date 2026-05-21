@@ -15,10 +15,13 @@ __all__ = [
     "compute_cloud_efficiencies",
     "compute_cloud_opacity",
     "zero_cloud_opacity",
-    "grey_cloud",
+    "grey_const_cloud",
+    "grey_profile_cloud",
     "deck_and_powerlaw",
     "F18_cloud",
     "direct_nk",
+    "nk_f18_blend",
+    "f18_skew_cloud",
 ]
 
 _LXMIE_NMAX = 2000
@@ -26,6 +29,7 @@ _LXMIE_CF_MAX_TERMS = 2000
 _LXMIE_CF_EPS = 1e-10
 _DIV_EPS = 1e-30
 _QC_EPS = 1e-30
+_Q_EXT_MAX = 4.0
 
 
 def _safe_div(num: jnp.ndarray, den: jnp.ndarray) -> jnp.ndarray:
@@ -336,7 +340,8 @@ def compute_cloud_opacity(
         Cloud opacity scheme identifier. Options:
 
         - `"none"` or `"zero"`: No cloud opacity (default)
-        - `"grey"`: Wavelength-independent grey opacity
+        - `"grey_const"`: Wavelength-independent grey opacity in every layer
+        - `"grey_profile"`: Wavelength-independent grey opacity masked by q_c_lay
         - `"direct_nk"`: Retrieved refractive index with Mie/MADT scattering
         - `"F18"`: Fisher & Heng (2018) empirical model
         - `"madt_rayleigh"`: Mie/MADT blend using cached n,k on master grid
@@ -360,8 +365,10 @@ def compute_cloud_opacity(
     # First check if zero cloud, grey or deck and powerlaw cloud
     if scheme_lower in ("none", "zero", "off", "no_cloud"):
         return zero_cloud_opacity(state, params)
-    elif scheme_lower in ("grey", "gray"):
-        return grey_cloud(state, params)    
+    elif scheme_lower == "grey_const":
+        return grey_const_cloud(state, params)
+    elif scheme_lower in ("grey_profile", "grey_slab"):
+        return grey_profile_cloud(state, params)
     elif scheme_lower in ("powerlaw", "power_law", "deck_and_powerlaw"):
         return deck_and_powerlaw(state, params)
     elif scheme_lower in ("direct_nk", "nk"):
@@ -374,7 +381,7 @@ def compute_cloud_opacity(
     elif scheme_lower not in ("f18", "fisher18", "fisher_heng"):
         raise ValueError(
             f"Unknown cloud opacity scheme: '{opacity_scheme}'. "
-            "Valid options: none, grey, powerlaw, direct_nk, f18, madt_rayleigh, lxmie"
+            "Valid options: none, grey_const, grey_profile, powerlaw, direct_nk, f18, madt_rayleigh, lxmie"
         )
 
     # ------------------------------------------------------------
@@ -618,8 +625,8 @@ def zero_cloud_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
     return k_cld, ssa, g
 
 
-def grey_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute a grey (wavelength-independent) cloud opacity floor.
+def grey_const_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute a globally constant grey cloud opacity.
 
     Parameters
     ----------
@@ -634,7 +641,7 @@ def grey_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) ->
     Returns
     -------
     k_cld : `~jax.numpy.ndarray`, shape (nlay, nwl)
-        Grey cloud extinction coefficient in cm² g⁻¹.
+        Grey cloud extinction coefficient in cm² g⁻¹ in every layer.
     ssa : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Single-scattering albedo (zeros; pure absorption).
     g : `~jax.numpy.ndarray`, shape (nlay, nwl)
@@ -644,6 +651,49 @@ def grey_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) ->
     shape = (state["nlay"], state["nwl"])
     opacity_value = 10.0**params["log_10_k_cld_grey"]
     k_cld = jnp.full(shape, opacity_value)
+    ssa = jnp.zeros(shape)
+    g = jnp.zeros(shape)
+    return k_cld, ssa, g
+
+
+def grey_profile_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Compute grey cloud opacity masked by the vertical cloud profile.
+    
+    Parameters
+    ----------
+    state : dict[str, `~jax.numpy.ndarray`]
+        Atmospheric state dictionary containing:
+
+        - ``nlay`` : int
+            Number of atmospheric layers.
+        - ``nwl`` : int
+            Number of wavelength points.
+        - ``q_c_lay`` : `~jax.numpy.ndarray`, shape (nlay,)
+            Cloud mass mixing ratio per layer from the selected ``vert_cloud``
+            kernel. Layers with values greater than zero receive grey opacity.
+
+    params : dict[str, `~jax.numpy.ndarray`]
+        Parameter dictionary containing:
+
+        - ``log_10_k_cld_grey`` : float
+            Log10 grey cloud extinction coefficient in cm² g⁻¹.
+
+    Returns
+    -------
+    k_cld : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Grey cloud extinction coefficient in cm² g⁻¹, set to
+        ``10**log_10_k_cld_grey`` where ``q_c_lay > 0`` and zero elsewhere.
+    ssa : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Single-scattering albedo (zeros; pure absorption).
+    g : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Asymmetry parameter (zeros).
+    """
+    shape = (state["nlay"], state["nwl"])
+    opacity_value = 10.0**params["log_10_k_cld_grey"]
+    q_c_lay = state["q_c_lay"]
+    cloud_mask = q_c_lay > 0.0
+
+    k_cld = jnp.where(cloud_mask[:, None], opacity_value, 0.0) + jnp.zeros(shape)
     ssa = jnp.zeros(shape)
     g = jnp.zeros(shape)
     return k_cld, ssa, g
@@ -779,9 +829,9 @@ def direct_nk(
     q_c_lay = jnp.where(q_c_lay > _QC_EPS, q_c_lay, 0.0)
     has_cloud_any = jnp.any(q_c_lay > 0)
 
-    # -----------------------------
+    # -----------------------------------------------------------------------
     # Retrieved / configured knobs
-    # -----------------------------
+    # -----------------------------------------------------------------------
     r_eff = 10.0 ** params["log_10_cld_r"]  # particle radius (um)
     cld_rho = params["cld_rho"]  # Cloud bulk density, defaults to 1.0 g/cm³
 
@@ -829,6 +879,187 @@ def direct_nk(
         ssa = jnp.where(q_mask, ssa, 0.0)
         g = jnp.where(q_mask, g, 0.0)
         return k_cld, ssa, g
+
+    def _skip_cloud(_):
+        zeros = jnp.zeros((state["nlay"], state["nwl"]), dtype=wl.dtype)
+        return zeros, zeros, zeros
+
+    return jax.lax.cond(has_cloud_any, _do_cloud, _skip_cloud, operand=None)
+
+
+def nk_f18_blend(
+    state: Dict[str, jnp.ndarray],
+    params: Dict[str, jnp.ndarray],
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Additive combination of direct_nk and F18 cloud opacity.
+
+    Both components share the same vertical cloud profile (``q_c_lay`` from
+    ``state``).  The ``direct_nk`` component uses the standard node parameters
+    (``wl_node_*``, ``n_*``, ``log_10_k_*``, ``log_10_cld_r``, ``cld_rho``).
+    The F18 component uses namespaced parameters to avoid collision:
+    ``log_10_cld_r_f18``, ``cld_rho_f18``, ``cld_Q0``, ``cld_Q1``, ``cld_a``.
+
+    Extinction is additive.  The combined single-scattering albedo and
+    asymmetry parameter are weighted by each component's scattering opacity
+    (k_ext × ssa), so the result is physically consistent regardless of the
+    relative magnitudes of the two contributions.
+
+    Parameters
+    ----------
+    state : dict
+        Atmospheric state; must contain ``wl``, ``q_c_lay``, ``nlay``, ``nwl``.
+    params : dict
+        Must contain all ``direct_nk`` params plus the F18-namespaced params
+        listed above.
+
+    Returns
+    -------
+    k_cld : jnp.ndarray, shape (nlay, nwl)
+        Combined cloud extinction coefficient in cm² g⁻¹.
+    ssa : jnp.ndarray, shape (nlay, nwl)
+        Combined single-scattering albedo.
+    g : jnp.ndarray, shape (nlay, nwl)
+        Combined asymmetry parameter (flux-weighted over scattering opacities).
+    """
+    # --- direct_nk component ---
+    k_nk, ssa_nk, g_nk = direct_nk(state, params)
+
+    # --- F18 component ---
+    wl = state["wl"]
+    q_c_lay = state["q_c_lay"]
+    q_c_lay = jnp.where(q_c_lay > _QC_EPS, q_c_lay, 0.0)
+
+    r_um_f18 = 10.0 ** params["log_10_cld_r_f18"]
+    r_cm_f18 = r_um_f18 * 1e-4
+    cld_rho_f18 = params["cld_rho_f18"]
+
+    Q_ext_f18, Q_sca_f18, g_eff_f18 = F18_cloud(wl, r_cm_f18, params)
+
+    # Convert efficiencies to mass extinction coefficient (cm² g⁻¹):
+    #   k = (3 q_c Q_ext) / (4 rho r)
+    k_f18_wl = (3.0 * Q_ext_f18) / (4.0 * cld_rho_f18 * r_cm_f18)  # (nwl,)
+    k_f18 = q_c_lay[:, None] * k_f18_wl[None, :]                     # (nlay, nwl)
+
+    ssa_f18_wl = jnp.clip(
+        Q_sca_f18 / jnp.maximum(Q_ext_f18, _DIV_EPS), 0.0, 1.0
+    )
+    ssa_f18 = ssa_f18_wl[None, :] + jnp.zeros_like(k_f18)
+    g_f18 = g_eff_f18[None, :] + jnp.zeros_like(k_f18)
+
+    # Zero out layers with no cloud mass
+    q_mask = (q_c_lay > 0)[:, None]
+    k_f18 = jnp.where(q_mask, k_f18, 0.0)
+    ssa_f18 = jnp.where(q_mask, ssa_f18, 0.0)
+    g_f18 = jnp.where(q_mask, g_f18, 0.0)
+
+    # --- Additive combination ---
+    k_total = k_nk + k_f18
+
+    # Flux-weighted ssa and g: conserve scattered power and phase function
+    sca_nk = ssa_nk * k_nk
+    sca_f18 = ssa_f18 * k_f18
+    sca_total = sca_nk + sca_f18
+    ssa_total = _safe_div(sca_total, k_total)
+    g_total = _safe_div(
+        g_nk * sca_nk + g_f18 * sca_f18,
+        jnp.maximum(sca_total, _DIV_EPS),
+    )
+
+    return k_total, ssa_total, g_total
+
+
+def f18_skew_cloud(
+    state: Dict[str, jnp.ndarray],
+    params: Dict[str, jnp.ndarray],
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """F18 continuum plus a skew-normal spectral feature with a Rayleigh size window.
+
+    The extinction efficiency is
+
+        Q_ext(λ) = clip(Q_cont(λ) + W(x) · Q_feat(λ), 0, _Q_EXT_MAX)
+
+    where the continuum follows Fisher & Heng (2018),
+
+        Q_cont = Q1 / (Q0 · x^{-a} + x^{0.2}),   x = 2π r / λ,
+
+    the spectral feature is a skew-normal profile in wavelength,
+
+        Q_feat = 2 A exp(-z²/2) Φ(ξ z),   z = (λ - λ0) / ω,
+
+    with Φ the standard normal CDF, and the size-parameter window
+
+        W(x) = exp(-x / x0)
+
+    suppresses the feature for large particles (geometric-optics regime),
+    consistent with the Rayleigh origin of the absorption feature.
+    Pure absorption is assumed (Q_sca = 0, g = 0).
+
+    Parameters
+    ----------
+    state : dict
+        Must contain ``wl`` (μm), ``q_c_lay``, ``nlay``, ``nwl``.
+    params : dict
+        ``log_10_cld_r``   — log₁₀ particle radius (μm)
+        ``cld_rho``        — bulk density (g cm⁻³)
+        ``cld_Q0``         — continuum opacity scale
+        ``cld_Q1``         — continuum opacity scale
+        ``cld_a``          — continuum power-law index
+        ``cld_amp``        — skew-normal feature amplitude A
+        ``cld_lam0``       — feature central wavelength λ0 (μm)
+        ``cld_omega``      — feature width ω (μm)
+        ``cld_xi``         — skewness parameter ξ  (0 → symmetric Gaussian)
+        ``cld_x0``         — size-window rolloff scale x0
+
+    Returns
+    -------
+    k_cld : jnp.ndarray, shape (nlay, nwl)
+        Cloud extinction coefficient in cm² g⁻¹.
+    ssa : jnp.ndarray, shape (nlay, nwl)
+        Single-scattering albedo (zeros — pure absorption).
+    g : jnp.ndarray, shape (nlay, nwl)
+        Asymmetry parameter (zeros).
+    """
+    wl = state["wl"]                  # (nwl,) μm
+    q_c_lay = state["q_c_lay"]        # (nlay,)
+    q_c_lay = jnp.where(q_c_lay > _QC_EPS, q_c_lay, 0.0)
+    has_cloud_any = jnp.any(q_c_lay > 0)
+
+    r_um  = 10.0 ** params["log_10_cld_r"]
+    r_cm  = r_um * 1e-4
+    rho   = params["cld_rho"]
+    Q0    = params["cld_Q0"]
+    Q1    = params["cld_Q1"]
+    a     = params["cld_a"]
+    amp   = params["cld_amp"]
+    lam0  = params["cld_lam0"]
+    omega = params["cld_omega"]
+    xi    = params["cld_xi"]
+    x0    = params["cld_x0"]
+
+    # Size parameter (nwl,)
+    x = (2.0 * jnp.pi * r_um) / jnp.maximum(wl, _DIV_EPS)
+
+    # F18 continuum
+    Q_cont = Q1 / (Q0 * x ** (-a) + x ** 0.2)
+
+    # Skew-normal feature: 2 A exp(-z²/2) Φ(ξz)
+    z = (wl - lam0) / jnp.maximum(omega, _DIV_EPS)
+    Phi_xi_z = 0.5 * (1.0 + jax.scipy.special.erf(xi * z / jnp.sqrt(2.0)))
+    Q_feat = 2.0 * amp * jnp.exp(-0.5 * z ** 2) * Phi_xi_z
+
+    # Rayleigh size window — suppresses feature for large particles
+    W = jnp.exp(-x / jnp.maximum(x0, _DIV_EPS))
+
+    # Combined, clipped to guard against unphysical values
+    Q_ext = jnp.clip(Q_cont + W * Q_feat, 0.0, _Q_EXT_MAX)
+
+    def _do_cloud(_):
+        k_wl  = (3.0 * Q_ext) / (4.0 * rho * r_cm)         # (nwl,)
+        k_cld = q_c_lay[:, None] * k_wl[None, :]            # (nlay, nwl)
+        q_mask = (q_c_lay > 0)[:, None]
+        k_cld = jnp.where(q_mask, k_cld, 0.0)
+        zeros = jnp.zeros_like(k_cld)
+        return k_cld, zeros, zeros
 
     def _skip_cloud(_):
         zeros = jnp.zeros((state["nlay"], state["nwl"]), dtype=wl.dtype)

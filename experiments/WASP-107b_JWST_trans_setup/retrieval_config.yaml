@@ -1,6 +1,6 @@
 data:
 
-  obs: ../../obs_data/WASP-107b_JWST_2.txt
+  obs: ../../obs_data/WASP-107b_JWST_3.txt
   obs_east: None
   obs_west: None
   stellar: None
@@ -9,16 +9,16 @@ physics:
 
   nlay: 99
 
-  vert_Tp: MandS
+  vert_Tp: Modified_Guillot
   vert_alt: p_ref
-  vert_chem: constant_vmr
+  vert_chem: constant_vmr_clr
   vert_mu: dynamic
   vert_cloud: exponential_decay_profile
 
   opac_line: os
   opac_ray: os
   opac_cia: os
-  opac_cloud: F18
+  opac_cloud: f18_skew
   opac_special: None
   cloud_dist: mono
 
@@ -63,20 +63,23 @@ params:
   - { name: log_10_g,  dist: uniform, low: 2.0,   high: 3.5,  transform: logit, init: 3.0}
   - { name: R_p, dist: uniform, low: 0.66,   high: 1.22,  transform: logit, init: 1.4}
 
-    #- {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
-    #- {name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
-    #- {name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
-    #- {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
-    #- { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
-  
-  - { name: a1,        dist: uniform, low: 0.02, high: 2.00, transform: logit, init: 0.50 }
-  - { name: a2,        dist: uniform, low: 0.02, high: 2.00, transform: logit, init: 0.50 }
+  - { name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
+  - { name: T_int, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
+  - { name: log_10_k_ir, dist: uniform, low: -6, high: 2, transform: logit, init: -6}
+  - { name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -6}
+  - { name: f_hem, dist: delta,   value: 0.25, transform: identity, init: 0.25}
+  - { name: q_irr_0, dist: uniform, low: 0.01, high: 0.66, transform: logit, init: 0.3}
+  - { name: log_10_p_t, dist: uniform, low: -7, high: 1, transform: logit, init: -2}
+  - { name: beta, dist: uniform, low: 0.1, high: 1.0, transform: logit, init: 0.5}  
 
-  - { name: log_10_P1, dist: uniform, low: -7.0, high: -4.0, transform: logit, init: -4.5 }  # bar
-  - { name: log_10_P2, dist: uniform, low: -4.0, high: -1.0, transform: logit, init: -2.2 }  # bar
-  - { name: log_10_P3, dist: uniform, low: -1.0, high:  3.0, transform: logit, init:  0.8 }  # bar
+  # - { name: a1,        dist: uniform, low: 0.02, high: 2.00, transform: logit, init: 0.50 }
+  # - { name: a2,        dist: uniform, low: 0.02, high: 2.00, transform: logit, init: 0.50 }
 
-  - { name: T_ref,     dist: uniform, low: 100.0, high: 4000.0, transform: logit, init: 1400.0 }
+  # - { name: log_10_P1, dist: uniform, low: -7.0, high: -4.0, transform: logit, init: -4.5 }  # bar
+  # - { name: log_10_P2, dist: uniform, low: -4.0, high: -1.0, transform: logit, init: -2.2 }  # bar
+  # - { name: log_10_P3, dist: uniform, low: -1.0, high:  3.0, transform: logit, init:  0.8 }  # bar
+
+  # - { name: T_ref,     dist: uniform, low: 100.0, high: 4000.0, transform: logit, init: 1400.0 }
 
   - { name: log_10_f_H2O, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
   - { name: log_10_f_CO2, dist: uniform, low: -12,   high: -2,  transform: logit, init: -6}
@@ -91,12 +94,21 @@ params:
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
   - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
 
-  - {name: cld_rho, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: cld_Q0, dist: uniform, low: 1.0, high: 65.0, transform: logit, init: 20.0}
-  - {name: cld_Q1, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: cld_a, dist: uniform, low: 3.0, high: 5.0, transform: logit, init: 4.0}
-  - {name: cld_sigma, dist: delta, value: 1.0, transform: identity, init: 1.0}
-  - {name: f_cloud, dist: uniform, low: 0.001, high: 0.999, transform: logit, init: 0.5}
+  - {name: cld_rho,  dist: delta,   value: 2.5,  transform: identity, init: 2.5 }   # particle bulk density [g/cm^3]
+
+  # --- F18 continuum ---
+  - {name: cld_Q0,   dist: uniform, low: 0.1,  high: 65.0, transform: logit, init: 20.0}  # continuum opacity scale
+  - {name: cld_Q1,   dist: delta,   value: 4.21, transform: identity, init: 4.21 }           # continuum opacity scale (fixed)
+  - {name: cld_a,    dist: uniform, low: 3.0,  high: 5.0,  transform: logit, init: 4.0 }  # continuum power-law index
+
+  # --- Skew-normal feature ---
+  - {name: cld_amp,  dist: uniform, low: 0.0,  high: 5.0,  transform: logit, init: 0.5 }  # feature amplitude
+  - {name: cld_lam0, dist: uniform, low: 8.0,  high: 12.0, transform: logit, init: 10.0}  # feature centre [micron]
+  - {name: cld_omega,dist: uniform, low: 0.1,  high: 4.0,  transform: logit, init: 1.0 }  # feature width [micron]
+  - {name: cld_xi,   dist: uniform, low: 0.0,  high: 10.0,  transform: logit, init: 0.0 }  # skewness (0=symmetric Gaussian)
+  - {name: cld_x0,   dist: delta,   value: 0.5, transform: identity, init: 0.5}            # size-window rolloff scale (fixed; retrieve by switching to uniform)
+
+  - {name: f_cloud,  dist: uniform, low: 0.0, high: 1.0, transform: logit, init: 0.5}
 
   - {name: offset_1, dist: delta, value: 0, transform: identity, init: 0}
   - {name: offset_MIRI, dist: uniform, low: -50, high: 500, transform: logit, init: 0}

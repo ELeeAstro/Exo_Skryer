@@ -2,7 +2,7 @@
 
 ## (Under active development, may be broken!! If broken, contact Elspeth! )
 
-### Documentation is currently sparse and basic! - Contact Elspeth if interested beyond the basic operations (e.g. 2D)
+### Documentation is currently sparse and basic! - Contact Elspeth if interested beyond the basic operations (e.g. 2D) or if additional features are required at a rapid development speed (e.g. new cloud schemes etc).
 
 Documentation (and first steps)
 [Read The Docs](https://exo-skryer.readthedocs.io/en/latest/)

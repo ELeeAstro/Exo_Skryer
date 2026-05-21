@@ -235,7 +235,8 @@ determines which retrieval parameters (in ``params``) you must provide.
   *Supported values*:
 
   * ``None`` (disable cloud opacity)
-  * ``grey``
+  * ``grey_const``: grey opacity in every layer
+  * ``grey_profile``: grey opacity only where ``vert_cloud`` gives ``q_c_lay > 0`` (alias: ``grey_slab``)
   * ``deck_and_powerlaw`` (alias: ``powerlaw``)
   * ``F18``
   * ``direct_nk`` (alias: ``nk``)

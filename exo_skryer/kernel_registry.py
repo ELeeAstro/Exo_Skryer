@@ -64,9 +64,12 @@ from .vert_cloud import (
 # --- cloud opacity ---
 from .opacity_cloud import (
     compute_cloud_opacity,
-    grey_cloud,
+    grey_const_cloud,
+    grey_profile_cloud,
     deck_and_powerlaw,
     direct_nk,
+    nk_f18_blend,
+    f18_skew_cloud,
 )
 
 __all__ = [
@@ -223,14 +226,20 @@ VERT_CLOUD: dict[str, Callable] = {
 OPAC_CLOUD: dict[str, Optional[Callable]] = {
     # canonical names
     "none":          None,
-    "grey":          grey_cloud,
+    "grey_const":    grey_const_cloud,
+    "grey_profile":  grey_profile_cloud,
     "powerlaw":      deck_and_powerlaw,
     "f18":           partial(compute_cloud_opacity, opacity_scheme="f18"),
     "madt_rayleigh": partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh"),
     "lxmie":         partial(compute_cloud_opacity, opacity_scheme="lxmie"),
     "direct_nk":     direct_nk,
+    "nk_f18_blend":  nk_f18_blend,
+    "f18_skew":      f18_skew_cloud,
     # aliases
+    "nk_f18":           nk_f18_blend,                                                  # alias
+    "f18_skewnormal":   f18_skew_cloud,                                                # alias
     "off":              None,                                                          # alias
+    "grey_slab":        grey_profile_cloud,                                            # alias
     "deck_and_powerlaw": deck_and_powerlaw,                                            # alias
     "madt-rayleigh":    partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh"), # alias
     "mie_madt":         partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh"), # alias

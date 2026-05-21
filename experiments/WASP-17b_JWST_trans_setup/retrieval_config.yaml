@@ -31,8 +31,8 @@ physics:
   opac_line: os
   opac_ray: os    # os | ck | None
   opac_cia: os    # os | ck | None
-  # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk
-  opac_cloud: direct_nk
+  # Cloud opacity. Options: none | grey | powerlaw | f18 | madt_rayleigh | lxmie | direct_nk | nk_f18_blend
+  opac_cloud: nk_f18_blend
   opac_special: os   # on (H- bound-free/free-free) | None
 
   cloud_dist: mono  # mono (monodisperse) | log_normal (lognormal size distribution)
@@ -92,13 +92,20 @@ params:
   - { name: log_10_f_K,   dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
   - { name: log_10_f_H-,  dist: uniform, low: -12, high: -1, transform: logit, init: -6 }
 
-  # --- Cloud (slab profile + direct n,k opacity) ---
-  - { name: log_10_q_c,       dist: uniform, low: -12, high:  0, transform: logit, init: 0 }   # cloud mass mixing ratio [log10]
-  - { name: log_10_cld_r,     dist: uniform, low:  -3, high: -1, transform: logit, init: 0 }   # particle radius [log10 micron]
-  - { name: log_10_p_top_slab, dist: uniform, low:  -8, high:  2, transform: logit, init: 0 }  # slab top pressure [log10 bar]
-  - { name: log_10_dp_slab,   dist: uniform, low:   0, high: 10, transform: logit, init: 0 }   # slab thickness [log10 bar]
+  # --- Cloud (slab profile + nk_f18_blend opacity) ---
+  - { name: log_10_q_c,        dist: uniform, low: -12, high:  0, transform: logit, init: 0 }   # cloud mass mixing ratio [log10]
+  - { name: log_10_cld_r,      dist: uniform, low:  -3, high: -1, transform: logit, init: 0 }   # direct_nk particle radius [log10 micron]
+  - { name: log_10_p_top_slab, dist: uniform, low:  -8, high:  2, transform: logit, init: 0 }   # slab top pressure [log10 bar]
+  - { name: log_10_dp_slab,    dist: uniform, low:  -8, high: 2, transform: logit, init: 0 }   # slab thickness [log10 bar]
 
-  - { name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5 }  # particle density [g/cm^3]
+  - { name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5 }  # direct_nk particle density [g/cm^3]
+
+  # --- F18 component parameters ---
+  - { name: log_10_cld_r_f18, dist: uniform, low: -3, high: 2,   transform: logit, init: 0   }  # F18 particle radius [log10 micron]
+  - { name: cld_rho_f18,      dist: delta,   value: 2.5,         transform: identity, init: 2.5 }  # F18 particle density [g/cm^3]
+  - { name: cld_Q0,           dist: uniform, low: 0.1, high: 50.0, transform: logit, init: 1.0 }  # F18 Q0 (opacity scale)
+  - {name: cld_Q1, dist: delta, value: 4.21, transform: identity, init: 4.21}  # F18 Q1 (opacity scale)
+  - { name: cld_a,            dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 1.0 }  # F18 power-law index
 
   # --- Wavelength nodes for n,k interpolation [micron] ---
   - { name: wl_node_0,  dist: delta, value: 7.0,  transform: identity, init: 7.0  }
@@ -215,5 +222,5 @@ sampling:
 
 runtime:
   platform: gpu           # cpu | gpu | cuda | metal
-  cuda_visible_devices: 1  # or "0,1"
+  cuda_visible_devices: 0  # or "0,1"
   threads: 1

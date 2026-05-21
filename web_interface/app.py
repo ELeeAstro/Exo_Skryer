@@ -163,13 +163,25 @@ OPAC_CIA_OPTIONS = ["ck", "os", "None"]
 # Cloud opacity models
 # See: kernel_registry.OPAC_CLOUD
 # - None: No cloud opacity
-# - grey: Grey (wavelength-independent) cloud opacity
+# - grey_const: Grey opacity in every layer
+# - grey_profile: Grey opacity masked by selected vertical cloud profile
 # - deck_and_powerlaw: Cloud deck with power-law wavelength dependence
-# - F18: Fresnel 2018 parameterization
-# - direct_nk: Use refractive index (n,k) data directly with Mie theory
-# - madt_rayleigh: MADT Rayleigh approximation for Mie scattering
-# - lxmie: Full Mie calculation (LX-MIE)
-OPAC_CLOUD_OPTIONS = ["None", "grey", "powerlaw", "f18", "direct_nk", "madt_rayleigh", "lxmie"]
+# - f18: Fisher & Heng (2018) analytical continuum (Q0, Q1, a, r, rho)
+# - f18_skew: F18 continuum + skew-normal spectral feature + Rayleigh size window
+# - direct_nk: Retrieved refractive index (n,k nodes) with MADT Mie scattering
+# - nk_f18_blend: direct_nk + F18 additive combination (shared vertical profile)
+# - madt_rayleigh: MADT Rayleigh approximation using cached n,k file
+# - lxmie: Full Mie calculation (LX-MIE) using cached n,k file
+OPAC_CLOUD_OPTIONS = [
+    "None", "grey_const", "grey_profile", "powerlaw",
+    "f18", "f18_skew",
+    "direct_nk", "nk_f18_blend",
+    "madt_rayleigh", "lxmie",
+]
+
+# Schemes that retrieve n,k as free parameters — no cached n,k file needed
+_OPAC_CLOUD_NO_FILE = {"direct_nk", "nk_f18_blend", "f18", "f18_skew",
+                        "grey_const", "grey_profile", "powerlaw", "None", "none"}
 
 # Special opacity sources (like H- bound-free, free-free)
 # See: build_model.py _select_kernels() (opac_special block)
@@ -910,8 +922,9 @@ def render_opac_section():
         with col_ff:
             st.checkbox("H- free-free (ff)", value=st.session_state.get("special_hminus_ff", True), key="special_hminus_ff")
 
-    # Cloud opacity path (only show if cloud opacity is enabled)
-    if st.session_state.get('opac_cloud') and st.session_state.opac_cloud != 'None':
+    # Cloud opacity path — only needed for schemes that use a cached n,k file
+    opac_cloud_sel = st.session_state.get('opac_cloud', 'None')
+    if opac_cloud_sel and opac_cloud_sel not in _OPAC_CLOUD_NO_FILE:
         st.subheader("Cloud Opacity")
         st.text_input("Cloud opacity data path", key="cloud_opac_path",
                       placeholder="e.g., ../../opac_data/nk/silicate_nk.txt")
@@ -1098,6 +1111,75 @@ def render_params_section():
                     add_parameter("Kzz", "uniform", low=1e6, high=1e10, transform="logit", init=1e8)
                 if "log_10_g" not in existing:
                     add_parameter("log_10_g", "uniform", low=2.0, high=5.5, transform="logit", init=3.5)
+                st.rerun()
+
+    # -------------------------------------------------------------------------
+    # Cloud parameter quick-add helpers
+    # -------------------------------------------------------------------------
+    opac_cloud_sel = st.session_state.get("opac_cloud", "None")
+    if opac_cloud_sel in ("f18_skew", "f18"):
+        st.markdown("**Cloud helper — F18 continuum**")
+        if st.button("Add F18 continuum params", key="add_f18_params"):
+            existing = {p.get("name") for p in st.session_state.params}
+            def _add(name, dist, **kw):
+                if name not in existing:
+                    add_parameter(name, dist, **kw)
+            _add("log_10_q_c",        "uniform", low=-12, high=0,    transform="logit", init=0)
+            _add("log_10_p_base",     "uniform", low=-8,  high=3,    transform="logit", init=0)
+            _add("log_10_alpha_cld",  "uniform", low=-2,  high=2,    transform="logit", init=0)
+            _add("log_10_cld_r",      "uniform", low=-3,  high=2,    transform="logit", init=0)
+            _add("cld_rho",           "delta",   value=2.5, transform="identity")
+            _add("cld_Q0",            "uniform", low=1.0,  high=65.0, transform="logit", init=20.0)
+            _add("cld_Q1",            "delta",   value=1.0, transform="identity")
+            _add("cld_a",             "uniform", low=3.0,  high=5.0,  transform="logit", init=4.0)
+            st.rerun()
+
+    if opac_cloud_sel == "f18_skew":
+        st.markdown("**Cloud helper — skew-normal feature**")
+        if st.button("Add skew-normal feature params", key="add_f18_skew_params"):
+            existing = {p.get("name") for p in st.session_state.params}
+            def _add(name, dist, **kw):
+                if name not in existing:
+                    add_parameter(name, dist, **kw)
+            _add("cld_amp",   "uniform", low=0.0,  high=3.0,  transform="logit", init=0.5)
+            _add("cld_lam0",  "uniform", low=8.0,  high=13.0, transform="logit", init=10.0)
+            _add("cld_omega", "uniform", low=0.2,  high=3.0,  transform="logit", init=1.0)
+            _add("cld_xi",    "uniform", low=0.0,  high=8.0,  transform="logit", init=0.0)
+            _add("cld_x0",    "delta",   value=0.5, transform="identity")
+            st.rerun()
+
+    if opac_cloud_sel in ("direct_nk", "nk_f18_blend"):
+        st.markdown("**Cloud helper — direct n,k nodes**")
+        col_nk1, col_nk2 = st.columns(2)
+        with col_nk1:
+            if st.button("Add direct_nk params (13 nodes)", key="add_direct_nk_params"):
+                existing = {p.get("name") for p in st.session_state.params}
+                def _add(name, dist, **kw):
+                    if name not in existing:
+                        add_parameter(name, dist, **kw)
+                _add("log_10_q_c",       "uniform", low=-12, high=0,   transform="logit", init=0)
+                _add("log_10_p_base",    "uniform", low=-8,  high=3,   transform="logit", init=0)
+                _add("log_10_alpha_cld", "uniform", low=-2,  high=2,   transform="logit", init=0)
+                _add("log_10_cld_r",     "uniform", low=-3,  high=2,   transform="logit", init=0)
+                _add("cld_rho",          "delta",   value=2.5, transform="identity")
+                wl_nodes = [7.0, 7.5, 8.0, 8.25, 8.5, 8.75, 9.0, 9.25, 9.5, 10.0, 10.5, 11.0, 11.5]
+                for i, wl in enumerate(wl_nodes):
+                    _add(f"wl_node_{i}", "delta", value=wl, transform="identity")
+                for i in range(13):
+                    _add(f"n_{i}",         "uniform", low=0.3, high=4.0, transform="logit", init=0)
+                    _add(f"log_10_k_{i}",  "uniform", low=-6,  high=1,   transform="logit", init=0)
+                st.rerun()
+        with col_nk2:
+            if opac_cloud_sel == "nk_f18_blend" and st.button("Add F18 blend params", key="add_nk_f18_blend_params"):
+                existing = {p.get("name") for p in st.session_state.params}
+                def _add(name, dist, **kw):
+                    if name not in existing:
+                        add_parameter(name, dist, **kw)
+                _add("log_10_cld_r_f18", "uniform", low=-3,  high=2,    transform="logit", init=0)
+                _add("cld_rho_f18",      "delta",   value=2.5, transform="identity")
+                _add("cld_Q0",           "uniform", low=0.1,  high=50.0, transform="logit", init=1.0)
+                _add("cld_Q1",           "uniform", low=0.0,  high=5.0,  transform="logit", init=1.0)
+                _add("cld_a",            "uniform", low=0.0,  high=4.0,  transform="logit", init=1.0)
                 st.rerun()
 
     # Quick-add helpers for common parameter bundles

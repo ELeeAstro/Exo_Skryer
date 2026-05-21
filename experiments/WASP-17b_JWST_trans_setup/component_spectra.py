@@ -718,11 +718,12 @@ def compute_component_spectra(
     if cloud_scheme not in ("none", "null", "off"):
         try:
             from exo_skryer.opacity_cloud import (
-                compute_cloud_opacity, grey_cloud, deck_and_powerlaw, direct_nk
+                compute_cloud_opacity, grey_const_cloud, grey_profile_cloud, deck_and_powerlaw, direct_nk
             )
             cloud_schemes = {
-                "grey": grey_cloud,
-                "grey_cloud": grey_cloud,
+                "grey_const": grey_const_cloud,
+                "grey_profile": grey_profile_cloud,
+                "grey_slab": grey_profile_cloud,
                 "deck_and_powerlaw": deck_and_powerlaw,
                 "f18": lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="f18"),
                 "f18_cloud": lambda state, params: compute_cloud_opacity(state, params, opacity_scheme="f18"),

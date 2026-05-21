@@ -143,7 +143,8 @@ def compute_emission_spectrum_1d_os(
         lw_up = lw_up_cloud
         layer_contrib_flux = layer_contrib_cloud
 
-    top_flux = lw_up[0]
+    s_dilute = jnp.asarray(params.get("s_dilute", 1.0))
+    top_flux = s_dilute * lw_up[0]
     if state.get("is_brown_dwarf", False):
         R0 = jnp.asarray(state["R0"], dtype=top_flux.dtype)
         D = params["D"]
@@ -152,13 +153,10 @@ def compute_emission_spectrum_1d_os(
     else:
         final_spectrum = _scale_flux_ratio(top_flux, state, params)
 
-    s_dilute = jnp.asarray(params.get("s_dilute", 1.0), dtype=final_spectrum.dtype)
-    final_spectrum = final_spectrum * s_dilute
-
     if contri_func:
         layer_contrib = jnp.clip(layer_contrib_flux, 0.0)
         contrib_func_norm = layer_contrib / jnp.maximum(layer_contrib.sum(axis=0, keepdims=True), 1e-30)
     else:
-        contrib_func_norm = jnp.zeros((state["dz"].shape[0], final_spectrum.shape[0]), dtype=final_spectrum.dtype)
+        contrib_func_norm = jnp.zeros((state["dz"].shape[0], final_spectrum.shape[0]))
 
     return final_spectrum, contrib_func_norm

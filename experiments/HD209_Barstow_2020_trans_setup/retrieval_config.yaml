@@ -31,7 +31,7 @@ physics:
   #                     rate_ce (rate-based equil.) | quench_approx |
   #                     atmodeller (atmodeller equil.; requires atmodeller.species_network below) |
   #                     easychem_jax (requires easychem_jax block below)
-  vert_chem: constant_vmr
+  vert_chem: constant_vmr_clr
 
   # Mean molecular weight. Options: dynamic (computed from VMR) | constant (uses 'mu' param) | auto
   vert_mu: dynamic

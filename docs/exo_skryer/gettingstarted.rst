@@ -51,7 +51,10 @@ Some input correlated-k tables, opacity sampled tables and CIA tables can be fou
 
 Where I have prepared ``.zarr.zip`` archives for each opacity source.
 Zarr is the standard format for Exo Skryer: it is fast, supports parallel reads, and scales well.
-Always use the ``.zarr.zip`` form in YAML configs — it is a single portable file and works on all platforms without needing an unpacked directory store.
+
+.. note::
+    Always use the ``.zarr.zip`` form in YAML configs — it is a single portable file and works on all platforms without needing an unpacked directory store.
+    You do NOT need to unpack the zip files! 
 
 Exo Skryer can also use the TauREX (opacity sampling mode) and petitRADTRANS (correlated-k mode) tables available from the `ExoMol website <https://www.exomol.com/>`__
 
