@@ -85,8 +85,12 @@ def _convolve_spectrum_core(
     )
 
     numerator = jnp.trapezoid(spec_pad * w_pad * lambda_weight, x=wl_pad, axis=1)  # (nbin,)
+    integrated = numerator / jnp.maximum(norms, 1e-99)
 
-    return numerator / jnp.maximum(norms, 1e-99)
+    # A bin represented by one model wavelength has no interval to integrate
+    # over.  In that case the observational comparison is the model value at
+    # that wavelength, not the zero returned by trapezoidal integration.
+    return jnp.where(valid_lens <= 1, spec_pad[:, 0], integrated)
 
 
 def get_bandpass_cache() -> dict[str, jnp.ndarray]:

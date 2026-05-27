@@ -34,7 +34,7 @@ physics:
 
 
   # Radiative transfer
-  rt_scheme: emission_1d   # transit_1d | transit_1_5d | emission_1d
+  rt_scheme: emission_1d   # transit_1d | transit_2d | emission_1d
   em_scheme: eaa
   emission_mode: planet
   contri_func: false
@@ -45,7 +45,7 @@ physics:
 # ----------------------------------------------------------------------------------
 opac:
   wl_master: ../../opac_data/os/wl_R20000.txt
-  full_grid: true
+  full_grid: false
   ck: false
   ck_mix: RORR
 
@@ -86,7 +86,6 @@ params:
   # Planetary parameters
   - {name: log_10_g, dist: uniform, low: 2.7, high: 3.3, transform: logit, init: 3.0}
   - {name: R_p, dist: uniform, low: 1.0, high: 1.2, transform: logit, init: 1.119}
-  - {name: s_dilute, dist: delta, value: 1.0, transform: identity, init: 1.0}
 
   # T-p profile parameters
   - {name: T_eq, dist: uniform, low: 500.0, high: 2000.0, transform: logit, init: 800.0}
@@ -95,13 +94,16 @@ params:
   - {name: log_10_gam_v, dist: uniform, low: -3, high: 2, transform: logit, init: -1.0}
   - {name: q_irr_0, dist: uniform, low: 0.01, high: 0.66, transform: logit, init: 0.3}
   - {name: log_10_p_t, dist: uniform, low: -7, high: 1, transform: logit, init: -2}
-  - {name: beta, dist: uniform, low: 0.1, high: 1.0, transform: logit, init: 0.5}
+  - {name: beta, dist: uniform, low: 0.01, high: 1.0, transform: logit, init: 0.5}
+
+  # Emission parameters
+  - {name: s_dilute, dist: uniform, low: 0.0, high: 1.0, transform: logit, init: 1.0}
 
   # Chemistry parameters
-  - {name: log_10_f_H2O, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CO, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CO2, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
-  - {name: log_10_f_CH4, dist: uniform, low: -9, high: -1, transform: logit, init: -5}
+  - {name: log_10_f_H2O, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
+  - {name: log_10_f_CO, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
+  - {name: log_10_f_CO2, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
+  - {name: log_10_f_CH4, dist: uniform, low: -12, high: -2, transform: logit, init: -5}
 
   # Cloud parameters
   - {name: log_10_q_c, dist: uniform, low: -12, high: 1, transform: logit, init: 0}
@@ -110,12 +112,13 @@ params:
   - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
   - {name: cld_rho, dist: delta, value: 2.5, transform: identity, init: 2.5}
 
-  - {name: log_10_cld_r_f18, dist: uniform, low: -3, high: 2,   transform: logit, init: 0}
-  - {name: cld_rho_f18, dist: delta,   value: 2.5, transform: identity, init: 2.5}
-  - {name: cld_Q0, dist: uniform, low: 0.1, high: 50.0, transform: logit, init: 1.0}
-  - {name: cld_Q1, dist: delta, value: 4.21, transform: identity, init: 4.21}
-  - {name: cld_a, dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 1.0}
+    #- {name: log_10_cld_r_f18, dist: uniform, low: -3, high: 2,   transform: logit, init: 0}
+    #- {name: cld_rho_f18, dist: delta,   value: 2.5, transform: identity, init: 2.5}
+    #- {name: cld_Q0, dist: uniform, low: 0.1, high: 65.0, transform: logit, init: 1.0}
+    #- {name: cld_Q1, dist: delta, value: 4.21, transform: identity, init: 4.21}
+    #- {name: cld_a, dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 1.0}
 
+  # Direct n,k retrieval
   - { name: wl_node_0, dist: delta, value: 7.0, transform: identity, init: 7.0}
   - { name: wl_node_1, dist: delta, value: 7.5, transform: identity, init: 7.5}
   - { name: wl_node_2, dist: delta, value: 8.0, transform: identity, init: 8.0}
@@ -237,5 +240,5 @@ sampling:
 # ----------------------------------------------------------------------------------
 runtime:
   platform: gpu
-  cuda_visible_devices: 0
+  cuda_visible_devices: 1
   threads: 1

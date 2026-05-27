@@ -1,19 +1,23 @@
 
 
-log_10_p_t: {label: "$q_{t}$", order: 1}
-q_irr_0: {label: "$q_{irr}$", order: 1}
-beta: {label: "$\\beta$", order: 1}
-log_10_k_ir: {label: "$\\kappa_{ir}$", order: 1}
-log_10_gam_v: {label: "$\\gamma_{\\mathrm{v}}$", order: 1}
-log_10_g: {label: "$\\log_{10} g$ [cm s$^{-2}$]", order: 2}
 R_p: {label: "$R_{\\rm p}$ [$R_{\\mathrm{Jup}}$]", order: 1}
+log_10_g: {label: "$\\log_{10} g$ [cm s$^{-2}$]", order: 2}
 T_eq: {label: "$T_{\\mathrm{eq}}$ [K]", order: 3}
 T_int: {label: "$T_{\\mathrm{int}}$ [K]", order: 4}
-log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 6}
-log_10_f_CO2: {label: "$\\log_{10} {\\mathrm{CO_2}}$", order: 7}
-log_10_f_CO: {label: "$\\log_{10} {\\mathrm{CO}}$", order: 8}
-log_10_f_CH4: {label: "$\\log_{10} {\\mathrm{CH_4}}$", order: 9}
-log_10_q_c: {label: "$\\log_{10} q_{\\rm c, base}$ [g g$^{-1}$]", order: 10}
-log_10_p_base: {label: "$\\log_{10} p_{\\rm c, base}$ [bar]" , order: 11}
-log_10_alpha_cld: {label: "$\\log_{10} \\alpha_{\\rm c}$ [-]", order: 12}
-log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{g}}$ [$\\mu$m]", order: 13}
+s_dilute: {label: "$s$", order: 5}
+
+#log_10_k_ir: {label: "$\\kappa_{ir}$", order: 6}
+#log_10_gam_v: {label: "$\\gamma_{\\mathrm{v}}$", order: 7}
+#log_10_p_t: {label: "$q_{t}$", order: 8}
+#q_irr_0: {label: "$q_{irr}$", order: 9}
+#beta: {label: "$\\beta$", order: 10}
+
+
+log_10_f_H2O: {label: "$\\log_{10} {\\mathrm{H_2O}}$", order: 11}
+log_10_f_CO2: {label: "$\\log_{10} {\\mathrm{CO_2}}$", order: 12}
+log_10_f_CO: {label: "$\\log_{10} {\\mathrm{CO}}$", order: 13}
+log_10_f_CH4: {label: "$\\log_{10} {\\mathrm{CH_4}}$", order: 14}
+log_10_q_c: {label: "$\\log_{10} q_{\\rm c, base}$ [g g$^{-1}$]", order: 15}
+log_10_p_base: {label: "$\\log_{10} p_{\\rm c, base}$ [bar]" , order: 16}
+log_10_alpha_cld: {label: "$\\log_{10} \\alpha_{\\rm c}$ [-]", order: 17}
+log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{g}}$ [$\\mu$m]", order: 18}

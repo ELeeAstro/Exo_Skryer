@@ -13,4 +13,5 @@ log_10_ne_over_ntot: {label: "$\\log_{10} (n_e/n_{\\mathrm{tot}})$", order: 13}
 log_10_q_c: {label: "$\\log_{10} q_{\\rm c}$ [g g$^{-1}$]", order: 14}
 log_10_p_top_slab: {label: "$\\log_{10} p_{\\rm c, top}$ [bar]" , order: 15}
 log_10_dp_slab: {label: "$\\log_{10} p_{\\rm c, dp}$ [bar]" , order: 16}
-log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{g}}$ [$\\mu$m]", order: 17}
+log_10_cld_r: {label: "$\\log_{10} r ({\\rm feat.})$ [$\\mu$m]", order: 17}
+log_10_cld_r_f18: {label: "$\\log_{10} r ({\\rm cont.})$ [$\\mu$m]", order: 18}
