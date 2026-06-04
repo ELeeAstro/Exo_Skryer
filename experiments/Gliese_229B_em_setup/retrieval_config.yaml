@@ -62,10 +62,10 @@ params:
   - { name: log_10_p_ref, dist: delta,   value: 1.0, transform: identity, init: 1.0}
   - { name: R_p, dist: delta, value: 1.0,  transform: identity, init: 1.0}
 
-    #- { name: log_10_g,  dist: uniform, low: 4.0,   high: 6.0,  transform: logit, init: 5.0}
-  - { name: f_p, dist: uniform, low: 0.1,   high: 5.0,  transform: logit, init: 1.0}
+  - { name: log_10_g,  dist: uniform, low: 4.0,   high: 6.0,  transform: logit, init: 5.0}
+  - { name: log_10_f_p, dist: uniform, low: -2.0,  high: 1,  transform: logit, init: 0.0}
   - { name: M_p, dist: uniform, low: 1.0,   high: 80.0,  transform: logit, init: 1.0}
-  - { name: c, dist: uniform, low: -15.63,   high: -6.66,  transform: logit, init: 1.0}
+  - { name: c, dist: uniform, low: -15.63,   high: -6.66,  transform: logit, init: -11.0}
 
   - { name: T_ratio, dist: uniform, low: 0.01,   high: 1.0, transform: logit, init: 0.5 }
   - { name: T_int, dist: uniform, low: 500.0,   high: 1500.0, transform: logit, init: 1000.0 }

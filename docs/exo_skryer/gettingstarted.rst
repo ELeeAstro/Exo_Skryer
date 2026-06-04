@@ -228,7 +228,7 @@ Download CE grids from:
 `Exo Skryer CE grid collection <https://drive.google.com/drive/folders/1qmTAwizPOZATYvrOeXSDHTKKhxpi-LKA?usp=drive_link>`__
 
 Then place the downloaded grid file in your project (for example
-``FastChem/fastchem_grid_5d_log10.zarr``) and update the retrieval YAML:
+``FastChem/fastchem_grid_5d_log10.npz``) and update the retrieval YAML:
 
 .. code-block:: yaml
 
@@ -241,7 +241,7 @@ Then place the downloaded grid file in your project (for example
     - {name: C_to_O, dist: uniform, low: 0.1, high: 2.0, transform: logit, init: 0.55}
 
   fastchem_grid_jax:
-    grid_path: ../../FastChem/fastchem_grid_5d_log10.zarr
+    grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
     solver:
       mode: vmap  # vmap | scan
     bounds:

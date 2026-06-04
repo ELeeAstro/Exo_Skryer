@@ -134,19 +134,19 @@ params:
   - { name: wl_node_12, dist: delta, value: 11.5, transform: identity, init: 11.5}
 
 
-  - { name: n_0, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_1, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_2, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_3, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_4, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_5, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_6, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_7, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_8, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_9, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_10, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_11, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
-  - { name: n_12, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 0}
+  - { name: n_0, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_1, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_2, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_3, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_4, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_5, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_6, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_7, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_8, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_9, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_10, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_11, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
+  - { name: n_12, dist: uniform, low: 0.3,   high: 4.0,  transform: logit, init: 1.0}
 
   - { name: log_10_k_0, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}
   - { name: log_10_k_1, dist: uniform, low: -6,   high: 1,  transform: logit, init: 0}

@@ -579,16 +579,15 @@ def build_forward_model(
         # Dimension constants
         nwl = wl.shape[0]
 
-        # Planet and star radii (R0 is the radius anchor used by the altitude kernel)
-        R0 = full_params["R_p"] * R_jup
-        R_s = full_params["R_s"] * R_sun
-
         # Calculate log_10_g from mass and radius if M_p is provided
         if "M_p" in full_params:
             M_p = full_params["M_p"] * M_jup  # Convert to g
-            R_p = full_params["R_p"] * R_jup  # Convert to cm
-            g = G * M_p / (R_p ** 2)  # Surface gravity in cm/s^2
-            full_params["log_10_g"] = jnp.log10(g)
+            g = (10.0 ** full_params["log_10_g"]) # cm/s^2
+            R0 = jnp.sqrt((G * M_p) / g)  # Radius in cm
+        else:
+            R0 = full_params["R_p"] * R_jup
+
+        R_s = full_params["R_s"] * R_sun
 
         # Atmospheric pressure grid
         p_bot = full_params["p_bot"] * bar

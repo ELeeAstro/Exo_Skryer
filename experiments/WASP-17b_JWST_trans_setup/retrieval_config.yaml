@@ -80,7 +80,7 @@ params:
 
   # --- Free planetary parameters ---
   - { name: log_10_g, dist: uniform, low: 2.2,    high: 3.3,    transform: logit, init: 3.0  }  # surface gravity [log10 cm/s^2]
-  - { name: R_p,      dist: uniform, low: 1.5895, high: 2.1505, transform: logit, init: 1.4  }  # planet radius [R_jup]
+  - { name: R_p,      dist: uniform, low: 1.5895, high: 2.1505, transform: logit, init: 1.8  }  # planet radius [R_jup]
   - { name: T_iso,    dist: uniform, low: 400.0,  high: 2300.0, transform: logit, init: 1500.0}  # isothermal temperature [K]
 
   # --- Chemistry (CLR abundances, log10 VMR) ---
@@ -94,7 +94,7 @@ params:
 
   # --- Cloud (slab profile + nk_f18_blend opacity) ---
   - { name: log_10_q_c,        dist: uniform, low: -12, high:  0, transform: logit, init: 0 }   # cloud mass mixing ratio [log10]
-  - { name: log_10_cld_r,      dist: uniform, low:  -3, high: -1, transform: logit, init: 0 }   # direct_nk particle radius [log10 micron]
+  - { name: log_10_cld_r,      dist: uniform, low:  -3, high: -1, transform: logit, init: -2 }   # direct_nk particle radius [log10 micron]
   - { name: log_10_p_top_slab, dist: uniform, low:  -8, high:  2, transform: logit, init: 0 }   # slab top pressure [log10 bar]
   - { name: log_10_dp_slab,    dist: uniform, low:  -8, high: 2, transform: logit, init: 0 }   # slab thickness [log10 bar]
 
@@ -105,7 +105,7 @@ params:
   - { name: cld_rho_f18,      dist: delta,   value: 2.5,         transform: identity, init: 2.5 }  # F18 particle density [g/cm^3]
   - { name: cld_Q0,           dist: uniform, low: 0.1, high: 50.0, transform: logit, init: 1.0 }  # F18 Q0 (opacity scale)
   - {name: cld_Q1, dist: delta, value: 4.21, transform: identity, init: 4.21}  # F18 Q1 (opacity scale)
-  - { name: cld_a,            dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 1.0 }  # F18 power-law index
+  - { name: cld_a,            dist: uniform, low: 3.0, high: 7.0, transform: logit, init: 4.0 }  # F18 power-law index
 
   # --- Wavelength nodes for n,k interpolation [micron] ---
   - { name: wl_node_0,  dist: delta, value: 7.0,  transform: identity, init: 7.0  }
@@ -123,19 +123,19 @@ params:
   - { name: wl_node_12, dist: delta, value: 11.5, transform: identity, init: 11.5 }
 
   # --- n(λ) and k(λ) at each wavelength node ---
-  - { name: n_0,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_1,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_2,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_3,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_4,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_5,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_6,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_7,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_8,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_9,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_10, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_11, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
-  - { name: n_12, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 0 }
+  - { name: n_0,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_1,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_2,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_3,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_4,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_5,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_6,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_7,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_8,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_9,  dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_10, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_11, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
+  - { name: n_12, dist: uniform, low: 0.3, high: 4.0, transform: logit, init: 1.0 }
 
   - { name: log_10_k_0,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }
   - { name: log_10_k_1,  dist: uniform, low: -6, high: 1, transform: logit, init: 0 }

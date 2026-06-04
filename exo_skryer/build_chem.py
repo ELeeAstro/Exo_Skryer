@@ -625,11 +625,12 @@ def init_fastchem_grid_if_needed(cfg: Any, exp_dir: Path) -> None:
     if bounds_mode != "clip":
         raise ValueError("fastchem_grid_jax.bounds.mode currently supports only: clip")
 
-    param_names = {p.name for p in getattr(cfg, "params", [])}
+    param_names = _cfg_param_base_names(cfg)
     for required in ("M_to_H", "C_to_O"):
         if required not in param_names:
             raise ValueError(
-                f"fastchem_grid_jax requires parameter '{required}' in cfg.params."
+                f"fastchem_grid_jax requires parameter '{required}' in cfg.params "
+                "or an explicit transit_1_5d variant with _joint, _east, or _west suffix."
             )
 
     species_out = infer_active_opacity_species(cfg)

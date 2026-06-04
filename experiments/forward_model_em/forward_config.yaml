@@ -63,7 +63,7 @@ params:
   - { name: s_dilute,     dist: delta, value: 1.0,    transform: identity, init: 1.0 }
 
   # Brown dwarf physical parameters
-  - { name: f_p,  dist: delta, value: 1.0,    transform: identity, init: 1.0 }
+  - { name: log_10_f_p,  dist: delta, value: 0.0,    transform: identity, init: 0.0 }
   - { name: M_p,  dist: delta, value: 30.0,   transform: identity, init: 30.0 }
 
   # Modified Milne T-P profile parameters

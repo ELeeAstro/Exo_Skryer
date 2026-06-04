@@ -72,7 +72,7 @@ CustomDumper.add_representer(type(None), represent_none)
 
 # Radiative transfer schemes: emission (thermal) vs transit (transmission)
 # See: build_model.py _build_rt_kernel()
-RT_SCHEMES = ["emission_1d", "transit_1d"]
+RT_SCHEMES = ["emission_1d", "transit_1d", "transit_1_5d"]
 
 # Emission calculation schemes (only used when rt_scheme is emission_1d)
 # Passed to get_emission_solver() in RT_em_schemes.py
@@ -371,6 +371,16 @@ def _parse_mapping_lines(raw: str) -> dict[str, str]:
     return mappings
 
 
+def _param_name_for_rt(base_name: str) -> str:
+    """Return a valid parameter name for the selected RT scheme."""
+    name = str(base_name)
+    if st.session_state.get("rt_scheme") == "transit_1_5d":
+        if name.endswith(("_joint", "_east", "_west")):
+            return name
+        return f"{name}_joint"
+    return name
+
+
 def _none_if_disabled(value):
     if value in (None, "None", "none", "off", "false", "0", ""):
         return None
@@ -398,6 +408,10 @@ def build_config() -> dict:
     # Only include paths that the user has actually filled in
     if st.session_state.get('obs_path'):
         config['data']['obs'] = st.session_state.obs_path
+    if st.session_state.get('obs_east_path'):
+        config['data']['obs_east'] = st.session_state.obs_east_path
+    if st.session_state.get('obs_west_path'):
+        config['data']['obs_west'] = st.session_state.obs_west_path
     if st.session_state.get('stellar_path'):
         config['data']['stellar'] = st.session_state.stellar_path
     if st.session_state.get('nasa9_path'):
@@ -775,6 +789,10 @@ def render_data_section():
         # key="obs_path" means the value is stored in st.session_state['obs_path']
         st.text_input("Observation file path", key="obs_path",
                       placeholder="e.g., ../data/spectrum.txt")
+        st.text_input("East limb observation path", key="obs_east_path",
+                      placeholder="Required for transit_1_5d")
+        st.text_input("West limb observation path", key="obs_west_path",
+                      placeholder="Required for transit_1_5d")
     with col2:
         st.text_input("Stellar spectrum path", key="stellar_path",
                       placeholder="e.g., ../data/stellar.txt")
@@ -801,6 +819,8 @@ def render_physics_section():
         st.subheader("Radiative Transfer")
         # st.selectbox creates a dropdown menu
         st.selectbox("RT Scheme", RT_SCHEMES, key="rt_scheme")
+        if st.session_state.rt_scheme == "transit_1_5d":
+            st.info("1.5D YAML parameters must end in `_joint`, `_east`, or `_west`. Quick-add helpers use `_joint` by default.")
 
         # Conditional UI: only show emission options if emission scheme selected
         # This demonstrates how to make the form dynamic
@@ -993,7 +1013,7 @@ def render_chemistry_backend_section():
         st.info("RateJAX equilibrium backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H` and `C_to_O`.")
 
     elif vert_chem == "quench_approx":
-        st.info("Quenched-chemistry backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H`, `C_to_O`, `log_10_Kzz`, and `log_10_g` (or `M_p` + `R_p`).")
+        st.info("Quenched-chemistry backend. Requires `data.nasa9`, plus retrieval parameters `M_to_H`, `C_to_O`, `log_10_Kzz`, and `log_10_g`.")
         st.subheader("quench_approx")
         st.text_area(
             "Quench species",
@@ -1059,7 +1079,7 @@ def render_params_section():
         st.write("")  # Spacer for alignment
         if st.button("Add Fixed", key="add_delta_btn"):
             if delta_name:
-                add_parameter(delta_name, "delta", value=delta_value, transform="identity")
+                add_parameter(_param_name_for_rt(delta_name), "delta", value=delta_value, transform="identity")
                 st.rerun()
 
     # Display current fixed parameters
@@ -1095,22 +1115,24 @@ def render_params_section():
         with col_a:
             if st.button("Add M_to_H and C_to_O", key="add_bulk_chem_params"):
                 existing = {p.get("name") for p in st.session_state.params}
-                if "M_to_H" not in existing:
-                    add_parameter("M_to_H", "uniform", low=-2.0, high=3.0, transform="logit", init=0.0)
-                if "C_to_O" not in existing:
-                    add_parameter("C_to_O", "uniform", low=0.1, high=2.0, transform="logit", init=0.55)
+                mh_name = _param_name_for_rt("M_to_H")
+                co_name = _param_name_for_rt("C_to_O")
+                if mh_name not in existing:
+                    add_parameter(mh_name, "uniform", low=-2.0, high=3.0, transform="logit", init=0.0)
+                if co_name not in existing:
+                    add_parameter(co_name, "uniform", low=0.1, high=2.0, transform="logit", init=0.55)
                 st.rerun()
         with col_b:
             if chem_backend == "quench_approx" and st.button("Add quench params", key="add_quench_param_bundle"):
                 existing = {p.get("name") for p in st.session_state.params}
-                if "M_to_H" not in existing:
-                    add_parameter("M_to_H", "uniform", low=-2.0, high=3.0, transform="logit", init=0.0)
-                if "C_to_O" not in existing:
-                    add_parameter("C_to_O", "uniform", low=0.1, high=2.0, transform="logit", init=0.55)
-                if "Kzz" not in existing:
-                    add_parameter("Kzz", "uniform", low=1e6, high=1e10, transform="logit", init=1e8)
-                if "log_10_g" not in existing:
-                    add_parameter("log_10_g", "uniform", low=2.0, high=5.5, transform="logit", init=3.5)
+                for name, kwargs in {
+                    _param_name_for_rt("M_to_H"): dict(low=-2.0, high=3.0, init=0.0),
+                    _param_name_for_rt("C_to_O"): dict(low=0.1, high=2.0, init=0.55),
+                    _param_name_for_rt("log_10_Kzz"): dict(low=5.0, high=11.0, init=8.0),
+                    _param_name_for_rt("log_10_g"): dict(low=2.0, high=5.5, init=3.5),
+                }.items():
+                    if name not in existing:
+                        add_parameter(name, "uniform", transform="logit", **kwargs)
                 st.rerun()
 
     # -------------------------------------------------------------------------
@@ -1122,16 +1144,17 @@ def render_params_section():
         if st.button("Add F18 continuum params", key="add_f18_params"):
             existing = {p.get("name") for p in st.session_state.params}
             def _add(name, dist, **kw):
-                if name not in existing:
-                    add_parameter(name, dist, **kw)
+                param_name = _param_name_for_rt(name)
+                if param_name not in existing:
+                    add_parameter(param_name, dist, **kw)
             _add("log_10_q_c",        "uniform", low=-12, high=0,    transform="logit", init=0)
             _add("log_10_p_base",     "uniform", low=-8,  high=3,    transform="logit", init=0)
             _add("log_10_alpha_cld",  "uniform", low=-2,  high=2,    transform="logit", init=0)
             _add("log_10_cld_r",      "uniform", low=-3,  high=2,    transform="logit", init=0)
             _add("cld_rho",           "delta",   value=2.5, transform="identity")
-            _add("cld_Q0",            "uniform", low=1.0,  high=65.0, transform="logit", init=20.0)
-            _add("cld_Q1",            "delta",   value=1.0, transform="identity")
-            _add("cld_a",             "uniform", low=3.0,  high=5.0,  transform="logit", init=4.0)
+            _add("cld_Q0",            "uniform", low=0.1,  high=65.0, transform="logit", init=1.0)
+            _add("cld_Q1",            "delta",   value=4.21, transform="identity")
+            _add("cld_a",             "uniform", low=3.0,  high=7.0,  transform="logit", init=4.0)
             st.rerun()
 
     if opac_cloud_sel == "f18_skew":
@@ -1139,8 +1162,9 @@ def render_params_section():
         if st.button("Add skew-normal feature params", key="add_f18_skew_params"):
             existing = {p.get("name") for p in st.session_state.params}
             def _add(name, dist, **kw):
-                if name not in existing:
-                    add_parameter(name, dist, **kw)
+                param_name = _param_name_for_rt(name)
+                if param_name not in existing:
+                    add_parameter(param_name, dist, **kw)
             _add("cld_amp",   "uniform", low=0.0,  high=3.0,  transform="logit", init=0.5)
             _add("cld_lam0",  "uniform", low=8.0,  high=13.0, transform="logit", init=10.0)
             _add("cld_omega", "uniform", low=0.2,  high=3.0,  transform="logit", init=1.0)
@@ -1155,8 +1179,9 @@ def render_params_section():
             if st.button("Add direct_nk params (13 nodes)", key="add_direct_nk_params"):
                 existing = {p.get("name") for p in st.session_state.params}
                 def _add(name, dist, **kw):
-                    if name not in existing:
-                        add_parameter(name, dist, **kw)
+                    param_name = _param_name_for_rt(name)
+                    if param_name not in existing:
+                        add_parameter(param_name, dist, **kw)
                 _add("log_10_q_c",       "uniform", low=-12, high=0,   transform="logit", init=0)
                 _add("log_10_p_base",    "uniform", low=-8,  high=3,   transform="logit", init=0)
                 _add("log_10_alpha_cld", "uniform", low=-2,  high=2,   transform="logit", init=0)
@@ -1166,20 +1191,21 @@ def render_params_section():
                 for i, wl in enumerate(wl_nodes):
                     _add(f"wl_node_{i}", "delta", value=wl, transform="identity")
                 for i in range(13):
-                    _add(f"n_{i}",         "uniform", low=0.3, high=4.0, transform="logit", init=0)
+                    _add(f"n_{i}",         "uniform", low=0.3, high=4.0, transform="logit", init=1.0)
                     _add(f"log_10_k_{i}",  "uniform", low=-6,  high=1,   transform="logit", init=0)
                 st.rerun()
         with col_nk2:
             if opac_cloud_sel == "nk_f18_blend" and st.button("Add F18 blend params", key="add_nk_f18_blend_params"):
                 existing = {p.get("name") for p in st.session_state.params}
                 def _add(name, dist, **kw):
-                    if name not in existing:
-                        add_parameter(name, dist, **kw)
+                    param_name = _param_name_for_rt(name)
+                    if param_name not in existing:
+                        add_parameter(param_name, dist, **kw)
                 _add("log_10_cld_r_f18", "uniform", low=-3,  high=2,    transform="logit", init=0)
                 _add("cld_rho_f18",      "delta",   value=2.5, transform="identity")
                 _add("cld_Q0",           "uniform", low=0.1,  high=50.0, transform="logit", init=1.0)
-                _add("cld_Q1",           "uniform", low=0.0,  high=5.0,  transform="logit", init=1.0)
-                _add("cld_a",            "uniform", low=0.0,  high=4.0,  transform="logit", init=1.0)
+                _add("cld_Q1",           "delta",   value=4.21, transform="identity")
+                _add("cld_a",            "uniform", low=3.0,  high=7.0,  transform="logit", init=4.0)
                 st.rerun()
 
     # Quick-add helpers for common parameter bundles
@@ -1189,10 +1215,11 @@ def render_params_section():
             existing = {p.get("name") for p in st.session_state.params}
 
             def ensure_uniform(name, low, high, init):
-                if name in existing:
+                param_name = _param_name_for_rt(name)
+                if param_name in existing:
                     return
-                add_parameter(name, "uniform", low=low, high=high, transform="logit", init=init)
-                existing.add(name)
+                add_parameter(param_name, "uniform", low=low, high=high, transform="logit", init=init)
+                existing.add(param_name)
 
             ensure_uniform("log_10_f_H-", low=-12, high=-2, init=-6)
             if st.session_state.get("special_hminus_ff", True):
@@ -1204,7 +1231,7 @@ def render_params_section():
     col1, col2, col3, col4, col5 = st.columns([2, 1.5, 1.5, 1.5, 1])
     with col1:
         uniform_name = st.text_input("Parameter name", key="new_uniform_name",
-                                      placeholder="e.g., log_10_f_H2O")
+                                      placeholder="e.g., log_10_f_H2O or log_10_f_H2O_east")
     with col2:
         uniform_low = st.number_input("Lower", key="new_uniform_low", value=0.0, format="%g")
     with col3:
@@ -1217,7 +1244,7 @@ def render_params_section():
         if st.button("Add Sampled", key="add_uniform_btn"):
             if uniform_name:
                 init_val = uniform_init if uniform_init != 0 else None
-                add_parameter(uniform_name, "uniform", low=uniform_low, high=uniform_high,
+                add_parameter(_param_name_for_rt(uniform_name), "uniform", low=uniform_low, high=uniform_high,
                             transform="logit", init=init_val)
                 st.rerun()
 

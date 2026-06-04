@@ -1,9 +1,9 @@
 
 #log_10_g: {label: "$\\log_{10} g$ [cm\\,s$^{-2}$]", order: 4}
 #R_p: {label: "$R_{\\rm bd}$ [$R_{\\mathrm{Jup}}$]", order: 1}
-sqrt_f_p: {label: "$R_{\\rm bd}$  [$R_{\\mathrm{Jup}}$]", order: 1}
+log_10_f_p: {label: "$\\log_{10} f_p$", order: 1}
 M_p: {label: "$M_{\\rm bd}$ [$M_{\\mathrm{Jup}}$]", order: 2}
-T_ratio: {label: "$T_{\\mathrm{ratio}}$ [K]", order: 3}
+T_ratio: {label: "$T_{\\mathrm{ratio}}$", order: 3}
 T_int: {label: "$T_{\\mathrm{int}}$ [K]", order: 4}
 log_10_tau_ref: {label: "$\\log_{10} {\\tau_\\mathrm{ref}}$", order: 5}
 log_10_p_t: {label: "$\\log_{10} {p_\\mathrm{t}}$", order: 6}

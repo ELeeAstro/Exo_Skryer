@@ -14,12 +14,14 @@ High-level structure
 
 The configuration has these top-level blocks:
 
-* ``data``: input paths (obs, stellar, NASA9)
+* ``data``: input paths (obs, obs_east/obs_west, stellar, NASA9)
 * ``physics``: model scheme selectors (T-P, chemistry, RT, opac toggles)
 * ``opac``: opacity registries and wavelength grid controls
 * ``params``: retrieval parameter list (priors + fixed values)
 * ``easychem_jax``: explicit species/elements/solver config for EasyChem chemistry (optional)
 * ``fastchem_grid_jax``: FastChem 5D grid interpolation config (optional)
+* ``atmodeller``: explicit species-network/solver config for Atmodeller chemistry (optional)
+* ``quench_approx``: quenched-chemistry species config (optional)
 * ``sampling``: sampler engine selection and hyperparameters
 * ``runtime``: platform selection (cpu/gpu) and basic runtime knobs
 
@@ -30,6 +32,8 @@ Minimal skeleton
 
    data:
      obs: path/to/obs.txt
+     obs_east: null
+     obs_west: null
      stellar: null
      nasa9: null
 
@@ -96,6 +100,14 @@ data
     name).
   * Next column: offset group label; if present, define ``offset_<group>`` in
     ``params`` (in **ppm**) to fit per-instrument/group offsets.
+
+``data.obs_east`` / ``data.obs_west``
+  Separate east/west limb observation files for ``physics.rt_scheme: transit_1_5d``.
+  Both must be set for 1.5D transit retrievals.
+
+  *Type*: string path or ``null``.
+
+  *Format*: same as ``data.obs``.
 
 ``data.stellar``
   Optional stellar spectrum file used for planet emission contrast (only needed
@@ -169,11 +181,12 @@ determines which retrieval parameters (in ``params``) you must provide.
 
   * ``constant_vmr`` (aliases: ``constant``)
   * ``constant_vmr_clr`` (aliases: ``constant_clr``, ``clr``)
+  * ``ce`` (aliases: ``chemical_equilibrium``, ``ce_fastchem_jax``, ``fastchem_jax``)
   * ``fastchem_grid_jax`` (aliases: ``ce_fastchem_grid``, ``fastchem_ce_grid``)
-  * ``CE_fastchem_jax`` (aliases: ``ce``, ``chemical_equilibrium``, ``fastchem_jax``) *(legacy alias for ``fastchem_grid_jax``)*
-  * ``CE_rate_jax`` (aliases: ``rate_ce``, ``rate_jax``, ``ce_rate_jax``)
-  * ``CE_easychem_jax`` (aliases: ``easychem_jax``, ``easychem``)
+  * ``rate_ce`` (aliases: ``rate_jax``, ``ce_rate_jax``)
+  * ``easychem_jax`` (alias: ``easychem``)
   * ``quench_approx`` (aliases: ``quench``)
+  * ``atmodeller``
 
   Notes:
 
@@ -185,13 +198,18 @@ determines which retrieval parameters (in ``params``) you must provide.
     H⁻ free-free is enabled, atomic hydrogen is required and you must include
     ``log_10_H_over_H2`` in ``params`` (constant-VMR modes derive ``H`` from the
     H2+He filler).
-  * ``CE_rate_jax`` requires ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
+  * ``ce`` and ``rate_ce`` require ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
   * ``fastchem_grid_jax`` requires parameters ``M_to_H`` and ``C_to_O`` and a top-level
-    ``fastchem_grid_jax`` block with required ``grid_path``.
-  * ``CE_easychem_jax`` requires ``data.nasa9``, parameters ``M_to_H`` and ``C_to_O``,
+    ``fastchem_grid_jax`` block with required NPZ ``grid_path``.
+  * ``easychem_jax`` requires ``data.nasa9``, parameters ``M_to_H`` and ``C_to_O``,
     and a top-level ``easychem_jax`` config block with explicit species list.
+  * ``atmodeller`` requires parameters ``M_to_H`` and ``C_to_O`` and a top-level
+    ``atmodeller`` config block.
   * ``quench_approx`` uses RateJAX equilibrium plus quenching; requires at least
-    ``M_to_H, C_to_O, Kzz, log_10_g``.
+    ``M_to_H, C_to_O, log_10_Kzz, log_10_g``.
+  * For ``physics.rt_scheme: transit_1_5d``, these required names may be supplied
+    as explicit 1.5D variants such as ``M_to_H_joint`` or paired
+    ``M_to_H_east``/``M_to_H_west``.
 
 ``physics.vert_mu`` (mean molecular weight)
   *Supported values*:
@@ -240,6 +258,8 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``deck_and_powerlaw`` (alias: ``powerlaw``)
   * ``F18``
   * ``direct_nk`` (alias: ``nk``)
+  * ``nk_f18_blend`` (alias: ``nk_f18``)
+  * ``f18_skew`` (alias: ``f18_skewnormal``)
   * ``madt_rayleigh`` (aliases: ``madt-rayleigh``, ``mie_madt``)
   * ``lxmie`` (aliases: ``mie_full``, ``full_mie``)
 
@@ -255,7 +275,17 @@ determines which retrieval parameters (in ``params``) you must provide.
 ``physics.rt_scheme``
   Radiative transfer mode.
 
-  *Supported values*: ``transit_1d`` or ``emission_1d``.
+  *Supported values*: ``transit_1d``, ``transit_1_5d``, or ``emission_1d``.
+
+  Notes for ``transit_1_5d``:
+
+  * Requires ``data.obs_east`` and ``data.obs_west``.
+  * Every YAML parameter name must end in ``_joint``, ``_east``, or ``_west``.
+  * Use ``_joint`` for shared quantities; use paired ``_east``/``_west`` entries
+    for limb-specific quantities.
+  * ``M_p``-based radius/gravity inference is not supported; provide explicit
+    ``log_10_g_east``/``log_10_g_west`` or a shared ``log_10_g_joint``.
+  * ``physics.contri_func: true`` is not supported.
 
 ``physics.emission_mode``
   Only relevant for ``physics.rt_scheme: emission_1d``.
@@ -329,7 +359,10 @@ loaded into registries.
 
   Notes:
 
-  * ``TRANS`` is only supported for ``physics.rt_scheme: transit_1d``.
+  * ``TRANS`` is only supported for transit radiative transfer
+    (``transit_1d`` and ``transit_1_5d``).
+  * ``transit_1_5d`` supports ``RORR`` and ``TRANS`` when using CK opacity, but
+    does not currently support ``PRAS``.
 
 ``opac.line``
   List of line opacity entries. Each entry is a mapping (flow-style shown)::
