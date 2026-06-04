@@ -403,10 +403,6 @@ def compute_cloud_opacity(
     r_um = 10.0 ** params["log_10_cld_r"]
     r_cm = r_um * 1e-4
 
-    # If there is no cloud mass anywhere, skip all microphysics/Mie work.
-    # This avoids expensive lxmie/madt computations in cloud-free atmospheres.
-    has_cloud_any = jnp.any(q_c > 0)
-
     def _poly_case(_):
         # lax.cond traces both branches; use .get default so monodisperse configs
         # don't require lognormal params to be present.
@@ -490,14 +486,7 @@ def compute_cloud_opacity(
         g = jnp.where(q_mask, g, 0.0)
         return k_ext, ssa, g
 
-    def _do_cloud(_):
-        return jax.lax.cond(cloud_dist_code == 2, _poly_case, _mono_case, operand=None)
-
-    def _skip_cloud(_):
-        zeros = jnp.zeros((state["nlay"], state["nwl"]), dtype=wl.dtype)
-        return zeros, zeros, zeros
-
-    return jax.lax.cond(has_cloud_any, _do_cloud, _skip_cloud, operand=None)
+    return jax.lax.cond(cloud_dist_code == 2, _poly_case, _mono_case, operand=None)
 
 
 def _cached_nk_mie_cloud(
@@ -585,7 +574,7 @@ def _cached_nk_mie_cloud(
         return jax.lax.cond(cloud_dist_code == 2, _poly_case, _mono_case, operand=None)
 
     def _skip_cloud(_):
-        zeros = jnp.zeros((state["nlay"], state["nwl"]), dtype=wl.dtype)
+        zeros = jnp.zeros((q_c.shape[0], wl.shape[0]), dtype=wl.dtype)
         return zeros, zeros, zeros
 
     return jax.lax.cond(has_cloud_any, _do_cloud, _skip_cloud, operand=None)
@@ -881,7 +870,7 @@ def direct_nk(
         return k_cld, ssa, g
 
     def _skip_cloud(_):
-        zeros = jnp.zeros((state["nlay"], state["nwl"]), dtype=wl.dtype)
+        zeros = jnp.zeros((q_c_lay.shape[0], wl.shape[0]), dtype=wl.dtype)
         return zeros, zeros, zeros
 
     return jax.lax.cond(has_cloud_any, _do_cloud, _skip_cloud, operand=None)
@@ -1022,7 +1011,6 @@ def f18_skew_cloud(
     wl = state["wl"]                  # (nwl,) μm
     q_c_lay = state["q_c_lay"]        # (nlay,)
     q_c_lay = jnp.where(q_c_lay > _QC_EPS, q_c_lay, 0.0)
-    has_cloud_any = jnp.any(q_c_lay > 0)
 
     r_um  = 10.0 ** params["log_10_cld_r"]
     r_cm  = r_um * 1e-4
@@ -1042,27 +1030,18 @@ def f18_skew_cloud(
     # F18 continuum
     Q_cont = Q1 / (Q0 * x ** (-a) + x ** 0.2)
 
-    # Skew-normal feature: 2 A exp(-z²/2) Φ(ξz)
+    # Skew-normal feature: 2 A exp(-z^2/2) Phi(xi z)
     z = (wl - lam0) / jnp.maximum(omega, _DIV_EPS)
     Phi_xi_z = 0.5 * (1.0 + jax.scipy.special.erf(xi * z / jnp.sqrt(2.0)))
     Q_feat = 2.0 * amp * jnp.exp(-0.5 * z ** 2) * Phi_xi_z
 
-    # Rayleigh size window — suppresses feature for large particles
+    # Rayleigh size window: suppresses feature for large particles.
     W = jnp.exp(-x / jnp.maximum(x0, _DIV_EPS))
 
-    # Combined, clipped to guard against unphysical values
+    # Combined, clipped to guard against unphysical values.
     Q_ext = jnp.clip(Q_cont + W * Q_feat, 0.0, _Q_EXT_MAX)
 
-    def _do_cloud(_):
-        k_wl  = (3.0 * Q_ext) / (4.0 * rho * r_cm)         # (nwl,)
-        k_cld = q_c_lay[:, None] * k_wl[None, :]            # (nlay, nwl)
-        q_mask = (q_c_lay > 0)[:, None]
-        k_cld = jnp.where(q_mask, k_cld, 0.0)
-        zeros = jnp.zeros_like(k_cld)
-        return k_cld, zeros, zeros
-
-    def _skip_cloud(_):
-        zeros = jnp.zeros((state["nlay"], state["nwl"]), dtype=wl.dtype)
-        return zeros, zeros, zeros
-
-    return jax.lax.cond(has_cloud_any, _do_cloud, _skip_cloud, operand=None)
+    k_wl  = (3.0 * Q_ext) / (4.0 * rho * r_cm)         # (nwl,)
+    k_cld = q_c_lay[:, None] * k_wl[None, :]            # (nlay, nwl)
+    zeros = jnp.zeros_like(k_cld)
+    return k_cld, zeros, zeros

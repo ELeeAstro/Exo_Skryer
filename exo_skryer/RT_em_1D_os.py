@@ -148,8 +148,9 @@ def compute_emission_spectrum_1d_os(
     if state.get("is_brown_dwarf", False):
         R0 = jnp.asarray(state["R0"], dtype=top_flux.dtype)
         D = params["D"]
+        f_p = jnp.asarray(params.get("f_p", 1.0), dtype=top_flux.dtype)
         distance = D * pc
-        final_spectrum = top_flux * (R0 / distance) ** 2
+        final_spectrum = top_flux * f_p * (R0 / distance) ** 2
     else:
         final_spectrum = _scale_flux_ratio(top_flux, state, params)
 

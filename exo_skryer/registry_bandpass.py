@@ -25,6 +25,7 @@ __all__ = [
     "bandpass_wavelengths_padded",
     "bandpass_weights_padded",
     "bandpass_indices_padded",
+    "bandpass_coefficients_padded",
     "bandpass_norms",
     "bandpass_valid_lengths",
     "bandpass_is_boxcar",
@@ -55,6 +56,7 @@ _BAND_ENTRIES: Tuple[BinConvolutionEntry, ...] = ()
 _BAND_WL_PAD_CACHE: jnp.ndarray | None = None
 _BAND_W_PAD_CACHE: jnp.ndarray | None = None
 _BAND_IDX_PAD_CACHE: jnp.ndarray | None = None
+_BAND_COEFF_PAD_CACHE: jnp.ndarray | None = None
 _BAND_NORM_CACHE: jnp.ndarray | None = None
 _BAND_VALID_LENS_CACHE: jnp.ndarray | None = None  # Valid (non-padded) length for each bin
 _BAND_BOXCAR_CACHE: jnp.ndarray | None = None  # Boxcar detection flags for each bin
@@ -77,6 +79,7 @@ def _clear_cache():
     bandpass_wavelengths_padded.cache_clear()
     bandpass_weights_padded.cache_clear()
     bandpass_indices_padded.cache_clear()
+    bandpass_coefficients_padded.cache_clear()
     bandpass_norms.cache_clear()
     bandpass_valid_lengths.cache_clear()
     bandpass_is_boxcar.cache_clear()
@@ -86,11 +89,12 @@ def reset_bandpass_registry():
     """
     Reset all bandpass-related registries and caches.
     """
-    global _BAND_ENTRIES, _BAND_WL_PAD_CACHE, _BAND_W_PAD_CACHE, _BAND_IDX_PAD_CACHE, _BAND_NORM_CACHE, _BAND_VALID_LENS_CACHE, _BAND_BOXCAR_CACHE
+    global _BAND_ENTRIES, _BAND_WL_PAD_CACHE, _BAND_W_PAD_CACHE, _BAND_IDX_PAD_CACHE, _BAND_COEFF_PAD_CACHE, _BAND_NORM_CACHE, _BAND_VALID_LENS_CACHE, _BAND_BOXCAR_CACHE
     _BAND_ENTRIES = ()
     _BAND_WL_PAD_CACHE = None
     _BAND_W_PAD_CACHE = None
     _BAND_IDX_PAD_CACHE = None
+    _BAND_COEFF_PAD_CACHE = None
     _BAND_NORM_CACHE = None
     _BAND_VALID_LENS_CACHE = None
     _BAND_BOXCAR_CACHE = None
@@ -173,7 +177,7 @@ def load_bandpass_registry(
     cut_grid : `~numpy.ndarray`
         Cut high-resolution wavelength grid on which convolution will be performed.
     """
-    global _BAND_ENTRIES, _BAND_WL_PAD_CACHE, _BAND_W_PAD_CACHE, _BAND_IDX_PAD_CACHE, _BAND_NORM_CACHE, _BAND_VALID_LENS_CACHE, _BAND_BOXCAR_CACHE
+    global _BAND_ENTRIES, _BAND_WL_PAD_CACHE, _BAND_W_PAD_CACHE, _BAND_IDX_PAD_CACHE, _BAND_COEFF_PAD_CACHE, _BAND_NORM_CACHE, _BAND_VALID_LENS_CACHE, _BAND_BOXCAR_CACHE
 
     wl_hi = np.asarray(cut_grid, dtype=float)  # high-res grid used for convolution
     wl_obs = np.asarray(obs["wl"], dtype=float)
@@ -279,6 +283,7 @@ def load_bandpass_registry(
     padded_wl = np.zeros((n_bins, max_len), dtype=float)
     padded_w = np.zeros((n_bins, max_len), dtype=float)
     padded_idx = np.zeros((n_bins, max_len), dtype=int)
+    padded_coeff = np.zeros((n_bins, max_len), dtype=float)
     norms_np = np.zeros((n_bins,), dtype=float)
     valid_lens_np = np.zeros((n_bins,), dtype=int)  # Store valid (non-padded) length
     is_boxcar_np = np.zeros((n_bins,), dtype=bool)  # Boxcar detection flags
@@ -295,6 +300,17 @@ def load_bandpass_registry(
         padded_wl[i, :length] = wl
         padded_w[i, :length] = w
         padded_idx[i, :length] = idxs
+        if length == 1:
+            # Match the runtime fallback for single-point bins exactly.
+            padded_coeff[i, 0] = 1.0
+        else:
+            trap_weights = np.empty(length, dtype=float)
+            trap_weights[0] = 0.5 * (wl[1] - wl[0])
+            trap_weights[-1] = 0.5 * (wl[-1] - wl[-2])
+            if length > 2:
+                trap_weights[1:-1] = 0.5 * (wl[2:] - wl[:-2])
+            lambda_weight = 1.0 if e.method.lower() == "boxcar" else wl
+            padded_coeff[i, :length] = trap_weights * w * lambda_weight / max(float(e.norm), 1e-99)
 
         # Pad tail: copy last wavelength, set weights=0, repeat last index
         if length < max_len:
@@ -306,37 +322,34 @@ def load_bandpass_registry(
         valid_lens_np[i] = length  # Store the valid length for this bin
         is_boxcar_np[i] = (e.method.lower() == "boxcar")  # Detect boxcar bins
 
-    # ============================================================================
-    # CRITICAL: Convert NumPy arrays to JAX arrays here (ONE transfer to device)
-    # ============================================================================
-    # All preprocessing is done in NumPy (CPU). Now we send the final data
-    # to the device (GPU/CPU as configured) for use in JIT-compiled forward model.
-    # All arrays kept as float64 for maximum accuracy in bandpass convolution.
-    # ============================================================================
+    # Keep legacy diagnostic arrays as NumPy until their accessors are called.
+    # Only the runtime hot-path arrays are transferred eagerly.
 
-    print(f"[Bandpass] Transferring {n_bins} bins to device...")
+    print(f"[Bandpass] Preparing {n_bins} bins...")
 
-    _BAND_WL_PAD_CACHE = jnp.asarray(padded_wl, dtype=jnp.float64)
-    _BAND_W_PAD_CACHE = jnp.asarray(padded_w, dtype=jnp.float64)
+    _BAND_WL_PAD_CACHE = padded_wl
+    _BAND_W_PAD_CACHE = padded_w
     _BAND_IDX_PAD_CACHE = jnp.asarray(padded_idx, dtype=jnp.int32)
-    _BAND_NORM_CACHE = jnp.asarray(norms_np, dtype=jnp.float64)
-    _BAND_VALID_LENS_CACHE = jnp.asarray(valid_lens_np, dtype=jnp.int32)
-    _BAND_BOXCAR_CACHE = jnp.asarray(is_boxcar_np, dtype=jnp.bool_)
+    _BAND_COEFF_PAD_CACHE = jnp.asarray(padded_coeff, dtype=jnp.float64)
+    _BAND_NORM_CACHE = norms_np
+    _BAND_VALID_LENS_CACHE = valid_lens_np
+    _BAND_BOXCAR_CACHE = is_boxcar_np
 
-    print(f"[Bandpass] Wavelength cache: {_BAND_WL_PAD_CACHE.shape} (dtype: {_BAND_WL_PAD_CACHE.dtype})")
-    print(f"[Bandpass] Weights cache: {_BAND_W_PAD_CACHE.shape} (dtype: {_BAND_W_PAD_CACHE.dtype})")
+    print(f"[Bandpass] Wavelength cache: {_BAND_WL_PAD_CACHE.shape} (host dtype: {_BAND_WL_PAD_CACHE.dtype})")
+    print(f"[Bandpass] Weights cache: {_BAND_W_PAD_CACHE.shape} (host dtype: {_BAND_W_PAD_CACHE.dtype})")
     print(f"[Bandpass] Index cache: {_BAND_IDX_PAD_CACHE.shape} (dtype: {_BAND_IDX_PAD_CACHE.dtype})")
+    print(f"[Bandpass] Coeff cache: {_BAND_COEFF_PAD_CACHE.shape} (dtype: {_BAND_COEFF_PAD_CACHE.dtype})")
     print(f"[Bandpass] Norm cache: {_BAND_NORM_CACHE.shape} (dtype: {_BAND_NORM_CACHE.dtype})")
     print(f"[Bandpass] Valid lengths cache: {_BAND_VALID_LENS_CACHE.shape} (dtype: {_BAND_VALID_LENS_CACHE.dtype})")
 
     # Estimate memory usage
-    wl_mb = _BAND_WL_PAD_CACHE.size * _BAND_WL_PAD_CACHE.itemsize / 1024**2
-    w_mb = _BAND_W_PAD_CACHE.size * _BAND_W_PAD_CACHE.itemsize / 1024**2
+    wl_mb = padded_wl.size * padded_wl.itemsize / 1024**2
+    w_mb = padded_w.size * padded_w.itemsize / 1024**2
     idx_mb = _BAND_IDX_PAD_CACHE.size * _BAND_IDX_PAD_CACHE.itemsize / 1024**2
-    norm_mb = _BAND_NORM_CACHE.size * _BAND_NORM_CACHE.itemsize / 1024**2
-    valid_lens_mb = _BAND_VALID_LENS_CACHE.size * _BAND_VALID_LENS_CACHE.itemsize / 1024**2
-    total_mb = wl_mb + w_mb + idx_mb + norm_mb + valid_lens_mb
-    print(f"[Bandpass] Estimated device memory: {total_mb:.3f} MB (wl: {wl_mb:.3f}, w: {w_mb:.3f}, idx: {idx_mb:.3f}, norm: {norm_mb:.3f}, valid_lens: {valid_lens_mb:.3f})")
+    coeff_mb = _BAND_COEFF_PAD_CACHE.size * _BAND_COEFF_PAD_CACHE.itemsize / 1024**2
+    total_device_mb = idx_mb + coeff_mb
+    total_host_mb = wl_mb + w_mb + norms_np.size * norms_np.itemsize / 1024**2 + valid_lens_np.size * valid_lens_np.itemsize / 1024**2
+    print(f"[Bandpass] Estimated device memory: {total_device_mb:.3f} MB (idx: {idx_mb:.3f}, coeff: {coeff_mb:.3f}); host legacy cache: {total_host_mb:.3f} MB")
 
     _clear_cache()
 
@@ -370,7 +383,7 @@ def bandpass_wavelengths_padded() -> jnp.ndarray:
     """
     if _BAND_WL_PAD_CACHE is None:
         raise RuntimeError("Bandpass padded arrays not built; call load_bandpass_registry() first.")
-    return _BAND_WL_PAD_CACHE
+    return jnp.asarray(_BAND_WL_PAD_CACHE, dtype=jnp.float64)
 
 
 @lru_cache(None)
@@ -380,7 +393,7 @@ def bandpass_weights_padded() -> jnp.ndarray:
     """
     if _BAND_W_PAD_CACHE is None:
         raise RuntimeError("Bandpass padded arrays not built; call load_bandpass_registry() first.")
-    return _BAND_W_PAD_CACHE
+    return jnp.asarray(_BAND_W_PAD_CACHE, dtype=jnp.float64)
 
 
 @lru_cache(None)
@@ -394,13 +407,27 @@ def bandpass_indices_padded() -> jnp.ndarray:
 
 
 @lru_cache(None)
+def bandpass_coefficients_padded() -> jnp.ndarray:
+    """
+    Padded linear convolution coefficients, shape (n_bins, max_len).
+
+    Multiplying these coefficients by the gathered high-resolution spectrum and
+    summing over axis=1 reproduces the runtime trapezoidal integration used by
+    the original convolution core.
+    """
+    if _BAND_COEFF_PAD_CACHE is None:
+        raise RuntimeError("Bandpass coefficient arrays not built; call load_bandpass_registry() first.")
+    return _BAND_COEFF_PAD_CACHE
+
+
+@lru_cache(None)
 def bandpass_norms() -> jnp.ndarray:
     """
     Normalisation constants for each bin, shape (n_bins,).
     """
     if _BAND_NORM_CACHE is None:
         raise RuntimeError("Bandpass norms not built; call load_bandpass_registry() first.")
-    return _BAND_NORM_CACHE
+    return jnp.asarray(_BAND_NORM_CACHE, dtype=jnp.float64)
 
 
 @lru_cache(None)
@@ -410,7 +437,7 @@ def bandpass_valid_lengths() -> jnp.ndarray:
     """
     if _BAND_VALID_LENS_CACHE is None:
         raise RuntimeError("Bandpass valid lengths not built; call load_bandpass_registry() first.")
-    return _BAND_VALID_LENS_CACHE
+    return jnp.asarray(_BAND_VALID_LENS_CACHE, dtype=jnp.int32)
 
 
 @lru_cache(None)
@@ -431,4 +458,4 @@ def bandpass_is_boxcar() -> jnp.ndarray:
     """
     if _BAND_BOXCAR_CACHE is None:
         raise RuntimeError("Bandpass boxcar flags not built; call load_bandpass_registry() first.")
-    return _BAND_BOXCAR_CACHE
+    return jnp.asarray(_BAND_BOXCAR_CACHE, dtype=jnp.bool_)

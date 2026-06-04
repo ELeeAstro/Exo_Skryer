@@ -9,12 +9,8 @@ import jax.numpy as jnp
 
 from .registry_bandpass import (
     bandpass_num_bins,
-    bandpass_wavelengths_padded,
-    bandpass_weights_padded,
     bandpass_indices_padded,
-    bandpass_norms,
-    bandpass_valid_lengths,
-    bandpass_is_boxcar,
+    bandpass_coefficients_padded,
 )
 
 __all__ = [
@@ -26,46 +22,25 @@ __all__ = [
 
 def _convolve_spectrum_core(
     spec: jnp.ndarray,
-    wl_pad: jnp.ndarray,
-    w_pad: jnp.ndarray,
     idx_pad: jnp.ndarray,
-    norms: jnp.ndarray,
-    valid_lens: jnp.ndarray,
-    is_boxcar: jnp.ndarray,
+    coeff_pad: jnp.ndarray,
 ) -> jnp.ndarray:
-    """Convolve high-resolution spectrum into observational bins (JIT core).
+    """Convolve high-resolution spectrum into observational bins.
 
-    This function performs the actual convolution calculation using pre-computed
-    padded arrays from the bandpass registry. It uses trapezoidal integration to
-    compute the weighted average of the spectrum within each bin.
-
-    For boxcar bins (uniform response), the integration is:
-        bin_i = ∫ F(λ) dλ / ∫ dλ
-
-    For non-boxcar bins (filter throughput curves), the integration is photon-weighted:
-        bin_i = ∫ F(λ) T(λ) λ dλ / ∫ T(λ) λ dλ
+    The bandpass registry precomputes the trapezoidal quadrature coefficients,
+    including response weights, optional wavelength weighting, normalization,
+    and the single-point-bin fallback. The hot path is therefore a gather and a
+    weighted sum.
 
     Parameters
     ----------
     spec : `~jax.numpy.ndarray`, shape (nwl_hi,)
         High-resolution spectrum evaluated on the master wavelength grid.
-    wl_pad : `~jax.numpy.ndarray`, shape (nbin, max_len)
-        Padded wavelength samples for each bin. Each row contains the wavelength
-        points where the response function is sampled, padded to max_len.
-    w_pad : `~jax.numpy.ndarray`, shape (nbin, max_len)
-        Padded response weights/throughputs for each bin. Each row contains the
-        instrument response at the corresponding wavelengths, padded.
     idx_pad : `~jax.numpy.ndarray`, shape (nbin, max_len)
         Padded indices into the high-resolution spectrum array. Maps each
         wavelength sample to its position in `spec`.
-    norms : `~jax.numpy.ndarray`, shape (nbin,)
-        Normalization factors for each bin:
-        - Boxcar: ∫ dλ
-        - Non-boxcar: ∫ T(λ) λ dλ
-    valid_lens : `~jax.numpy.ndarray`, shape (nbin,)
-        Number of valid (non-padded) points for each bin.
-    is_boxcar : `~jax.numpy.ndarray`, shape (nbin,)
-        Boolean flags indicating which bins are boxcar (True) vs filter curves (False).
+    coeff_pad : `~jax.numpy.ndarray`, shape (nbin, max_len)
+        Padded linear coefficients for each bin.
 
     Returns
     -------
@@ -73,24 +48,7 @@ def _convolve_spectrum_core(
         Convolved spectrum in observational bins.
     """
     spec_pad = jnp.take(spec, idx_pad, axis=0)  # (nbin, max_len)
-
-    # Compute numerator with conditional λ-weighting:
-    # - Boxcar: ∫ F(λ) w(λ) dλ = ∫ F(λ) dλ  (since w=1)
-    # - Non-boxcar: ∫ F(λ) T(λ) λ dλ
-    # Use where() to apply λ-weighting only to non-boxcar bins
-    lambda_weight = jnp.where(
-        is_boxcar[:, None],  # Broadcast to (nbin, 1) then (nbin, max_len)
-        1.0,                  # Boxcar: no λ weighting
-        wl_pad                # Non-boxcar: multiply by λ
-    )
-
-    numerator = jnp.trapezoid(spec_pad * w_pad * lambda_weight, x=wl_pad, axis=1)  # (nbin,)
-    integrated = numerator / jnp.maximum(norms, 1e-99)
-
-    # A bin represented by one model wavelength has no interval to integrate
-    # over.  In that case the observational comparison is the model value at
-    # that wavelength, not the zero returned by trapezoidal integration.
-    return jnp.where(valid_lens <= 1, spec_pad[:, 0], integrated)
+    return jnp.sum(spec_pad * coeff_pad, axis=1)
 
 
 def get_bandpass_cache() -> dict[str, jnp.ndarray]:
@@ -99,42 +57,27 @@ def get_bandpass_cache() -> dict[str, jnp.ndarray]:
     if n_bins == 0:
         empty_f = jnp.zeros((0, 0), dtype=jnp.float64)
         empty_i = jnp.zeros((0, 0), dtype=jnp.int32)
-        empty_1 = jnp.zeros((0,), dtype=jnp.float64)
-        empty_1i = jnp.zeros((0,), dtype=jnp.int32)
-        empty_b = jnp.zeros((0,), dtype=bool)
         return {
-            "wl_pad": empty_f,
-            "w_pad": empty_f,
             "idx_pad": empty_i,
-            "norms": empty_1,
-            "valid_lens": empty_1i,
-            "is_boxcar": empty_b,
+            "coeff_pad": empty_f,
         }
 
     return {
-        "wl_pad": bandpass_wavelengths_padded(),
-        "w_pad": bandpass_weights_padded(),
         "idx_pad": bandpass_indices_padded(),
-        "norms": bandpass_norms(),
-        "valid_lens": bandpass_valid_lengths(),
-        "is_boxcar": bandpass_is_boxcar(),
+        "coeff_pad": bandpass_coefficients_padded(),
     }
 
 
 def apply_response_functions_cached(spectrum: jnp.ndarray, cache: dict[str, jnp.ndarray]) -> jnp.ndarray:
     """Convolve spectrum using a provided bandpass cache (jit-friendly)."""
-    norms = cache["norms"]
-    if norms.size == 0:
+    coeff_pad = cache["coeff_pad"]
+    if coeff_pad.size == 0:
         return jnp.zeros((0,), dtype=spectrum.dtype)
 
     return _convolve_spectrum_core(
         spec=spectrum,
-        wl_pad=cache["wl_pad"],
-        w_pad=cache["w_pad"],
         idx_pad=cache["idx_pad"],
-        norms=cache["norms"],
-        valid_lens=cache["valid_lens"],
-        is_boxcar=cache["is_boxcar"],
+        coeff_pad=coeff_pad,
     )
 
 
