@@ -28,6 +28,7 @@ from .vert_chem import constant_vmr, constant_vmr_clr
 from .vert_mu import build_compute_mu, constant_mu
 from .build_chem import (
     prepare_chemistry_kernel,
+    load_nasa9_if_needed,
     init_fastchem_grid_if_needed,
     init_element_potentials_if_needed,
     init_atmodeller_if_needed,
@@ -269,6 +270,7 @@ def build_forward_model_1_5d(
     wl_hi = jnp.asarray(wl_hi_array)
     bandpass_cache = get_bandpass_cache()
 
+    load_nasa9_if_needed(cfg, None)
     init_fastchem_grid_if_needed(cfg, None)
     init_element_potentials_if_needed(cfg, None)
     init_atmodeller_if_needed(cfg, None)
@@ -441,16 +443,18 @@ def build_forward_model_1_5d(
                 axis=0,
             )
         else:
-            binned_likelihood = jnp.concatenate([binned_east_scaled, binned_west_scaled], axis=0)
+            binned_likelihood = binned_east_scaled + binned_west_scaled
 
         if return_highres:
             result = {
                 "hires_east": rt_out["hires_east"],
                 "hires_west": rt_out["hires_west"],
+                "hires_combined": hires_east_scaled + hires_west_scaled,
                 "hires_east_scaled": hires_east_scaled,
                 "hires_west_scaled": hires_west_scaled,
                 "binned_east": binned_east,
                 "binned_west": binned_west,
+                "binned_combined": binned_east_scaled + binned_west_scaled,
                 "binned_east_scaled": binned_east_scaled,
                 "binned_west_scaled": binned_west_scaled,
                 "binned_likelihood": binned_likelihood,

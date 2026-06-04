@@ -23,6 +23,7 @@ from .opacity_cloud import zero_cloud_opacity
 from . import build_opacities as XS
 from .build_chem import (
     prepare_chemistry_kernel,
+    load_nasa9_if_needed,
     init_fastchem_grid_if_needed,
     init_element_potentials_if_needed,
     init_atmodeller_if_needed,
@@ -507,6 +508,7 @@ def build_forward_model(
 
     # Ensure chemistry backends that require pre-built caches are initialized
     # when build_forward_model is used directly by analysis scripts.
+    load_nasa9_if_needed(cfg, None)
     init_fastchem_grid_if_needed(cfg, None)
     init_element_potentials_if_needed(cfg, None)
     init_atmodeller_if_needed(cfg, None)

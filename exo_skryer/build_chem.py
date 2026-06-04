@@ -913,15 +913,17 @@ def init_quench_approx_if_needed(cfg: Any, exp_dir: Path) -> None:
             "Example:\n  quench_approx:\n    quench_species:\n      - CO\n      - CH4"
         )
 
-    param_names = {p.name for p in getattr(cfg, "params", [])}
+    param_names = _cfg_param_base_names(cfg)
     if "log_10_Kzz" not in param_names:
         raise ValueError(
-            "quench_approx requires parameter 'log_10_Kzz' in cfg.params."
+            "quench_approx requires parameter 'log_10_Kzz' in cfg.params "
+            "or an explicit transit_1_5d variant with _joint, _east, or _west suffix."
         )
     if "log_10_g" not in param_names and "M_p" not in param_names:
         raise ValueError(
             "quench_approx requires either 'log_10_g' or 'M_p' (+ 'R_p') in cfg.params "
-            "so that surface gravity is available for the mixing timescale."
+            "so that surface gravity is available for the mixing timescale. For transit_1_5d, "
+            "use explicit _joint, _east, or _west variants."
         )
 
     load_quench_approx_cache(quench_species)

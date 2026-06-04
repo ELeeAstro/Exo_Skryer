@@ -198,15 +198,19 @@ determines which retrieval parameters (in ``params``) you must provide.
     H⁻ free-free is enabled, atomic hydrogen is required and you must include
     ``log_10_H_over_H2`` in ``params`` (constant-VMR modes derive ``H`` from the
     H2+He filler).
-  * ``ce`` and ``rate_ce`` require ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
+  * ``ce`` uses the FastChem-grid backend and requires parameters ``M_to_H`` and
+    ``C_to_O`` plus a top-level ``fastchem_grid_jax`` block with required NPZ
+    ``grid_path``.
   * ``fastchem_grid_jax`` requires parameters ``M_to_H`` and ``C_to_O`` and a top-level
     ``fastchem_grid_jax`` block with required NPZ ``grid_path``.
+  * ``rate_ce`` requires ``data.nasa9`` and parameters ``M_to_H`` and ``C_to_O``.
   * ``easychem_jax`` requires ``data.nasa9``, parameters ``M_to_H`` and ``C_to_O``,
     and a top-level ``easychem_jax`` config block with explicit species list.
   * ``atmodeller`` requires parameters ``M_to_H`` and ``C_to_O`` and a top-level
     ``atmodeller`` config block.
-  * ``quench_approx`` uses RateJAX equilibrium plus quenching; requires at least
-    ``M_to_H, C_to_O, log_10_Kzz, log_10_g``.
+  * ``quench_approx`` uses the FastChem-grid backend plus quenching; requires at
+    least ``M_to_H, C_to_O, log_10_Kzz, log_10_g`` plus the
+    ``fastchem_grid_jax`` and ``quench_approx`` config blocks.
   * For ``physics.rt_scheme: transit_1_5d``, these required names may be supplied
     as explicit 1.5D variants such as ``M_to_H_joint`` or paired
     ``M_to_H_east``/``M_to_H_west``.
@@ -279,7 +283,9 @@ determines which retrieval parameters (in ``params``) you must provide.
 
   Notes for ``transit_1_5d``:
 
-  * Requires ``data.obs_east`` and ``data.obs_west``.
+  * Use ``data.obs_east`` and ``data.obs_west`` to fit separate limb spectra.
+    If only ``data.obs`` is supplied, the model compares the hemispheric mean
+    ``0.5 * east + 0.5 * west`` to the combined observation.
   * Every YAML parameter name must end in ``_joint``, ``_east``, or ``_west``.
   * Use ``_joint`` for shared quantities; use paired ``_east``/``_west`` entries
     for limb-specific quantities.
