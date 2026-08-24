@@ -29,7 +29,21 @@ _LXMIE_CF_MAX_TERMS = 2000
 _LXMIE_CF_EPS = 1e-10
 _DIV_EPS = 1e-30
 _QC_EPS = 1e-30
-_Q_EXT_MAX = 4.0
+_Q_EXT_MAX = 2.0
+_LOGNORMAL_RADIUS_GRID_SIZE = 20
+_LOGNORMAL_RADIUS_MIN_UM = 1.0e-3
+_LOGNORMAL_RADIUS_MAX_UM = 10.0
+
+
+def _fixed_lognormal_radius_grid_cm(dtype) -> jnp.ndarray:
+    """Return the fixed 0.001--10 micron integration grid in centimetres."""
+    radius_um = jnp.logspace(
+        jnp.log10(jnp.asarray(_LOGNORMAL_RADIUS_MIN_UM, dtype=dtype)),
+        jnp.log10(jnp.asarray(_LOGNORMAL_RADIUS_MAX_UM, dtype=dtype)),
+        _LOGNORMAL_RADIUS_GRID_SIZE,
+        dtype=dtype,
+    )
+    return radius_um * jnp.asarray(1.0e-4, dtype=dtype)
 
 
 def _safe_div(num: jnp.ndarray, den: jnp.ndarray) -> jnp.ndarray:
@@ -411,11 +425,7 @@ def compute_cloud_opacity(
         # Total number density implied by q_c for a lognormal (geometric-mean) radius.
         N0 = (3.0 * rho_a * q_c) / (4.0 * jnp.pi * rho_d * r_cm**3) * jnp.exp(-4.5 * lnsig2)  # (nlay,)
 
-        # Radius grid bounds are provided in microns.
-        log_10_r_min = jnp.log10(1e-3 * 1e-4) #jnp.log10(params["r_min"])
-        log_10_r_max = jnp.log10(10.0 * 1e-4)#jnp.log10(params["r_max"])
-        nr = 20 #params["nr"]
-        r_grid_cm = jnp.logspace(log_10_r_min, log_10_r_max, nr) * 1e-4  # (nr,) cm
+        r_grid_cm = _fixed_lognormal_radius_grid_cm(r_cm.dtype)
 
         # Spectral number density n(r) [cm^-3 cm^-1], evaluated on-the-fly in scan.
         ln_sigma = jnp.log(sig_g)
@@ -532,11 +542,7 @@ def _cached_nk_mie_cloud(
         lnsig2 = jnp.log(sig_g) ** 2
         N0 = (3.0 * rho_a * q_c) / (4.0 * jnp.pi * rho_d * r_cm**3) * jnp.exp(-4.5 * lnsig2)  # (nlay,)
 
-        # NOTE: r_grid is currently hard-baked/static elsewhere in your setup.
-        log_10_r_min = 1e-3 * 1e-4
-        log_10_r_max = 10.0 * 1e-4
-        nr = 20
-        r_grid_cm = jnp.logspace(log_10_r_min, log_10_r_max, nr) * 1e-4  # (nr,) cm
+        r_grid_cm = _fixed_lognormal_radius_grid_cm(r_cm.dtype)
 
         ln_sigma = jnp.log(sig_g)
         prefac = N0 / (jnp.sqrt(2.0 * jnp.pi) * ln_sigma)  # (nlay,)

@@ -694,7 +694,13 @@ def CE_easychem_jax(
     params: Dict[str, jnp.ndarray],
     nlay: int,
 ) -> Dict[str, jnp.ndarray]:
-    """Compute equilibrium profiles using the production CE JAX backend."""
+    """Compute equilibrium profiles using the production CE JAX backend.
+
+    Non-converged layers are returned as NaN profiles when ``throw=False`` so
+    downstream likelihood code can reject the model.  When ``throw=True``, the
+    convergence check is staged with :func:`equinox.error_if`, which remains
+    valid when this kernel is called from a JIT-compiled forward model.
+    """
     del nlay  # Kept for API compatibility.
     if _EP_MODEL is None:
         raise RuntimeError(
@@ -722,13 +728,14 @@ def CE_easychem_jax(
         )
 
     failed = result_prof != 0
-    if bool(jnp.any(failed)):
-        n_failed = int(jnp.sum(failed))
-        if throw:
-            raise RuntimeError(
-                "EasyChem SHORT CE solve failed to converge for "
-                f"{n_failed}/{int(result_prof.shape[0])} layers."
-            )
+    if throw:
+        y_prof = eqx.error_if(
+            y_prof,
+            jnp.any(failed),
+            "EasyChem SHORT CE solve failed to converge in at least one layer. "
+            "Increase solver.max_steps, relax solver.tol, or set solver.throw=false "
+            "to return NaNs for failed layers.",
+        )
 
     y_prof = jnp.clip(y_prof, 0.0, jnp.inf)
     y_sum = jnp.sum(y_prof, axis=1, keepdims=True)
