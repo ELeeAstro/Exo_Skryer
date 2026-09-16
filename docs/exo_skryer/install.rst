@@ -158,17 +158,17 @@ lists current validated images and matching package versions.
 
 **Option 2 — bare metal**
 
-Install ROCm for the exact APU and Linux release, then install the matching
-``jax``, ``jaxlib``, ``jax-rocm*-pjrt``, and ``jax-rocm*-plugin`` versions from
-AMD's guide. Those packages must be kept at matching versions. Install Exo
-Skryer after the ROCm JAX stack is working:
+Install ROCm for the exact APU and Linux release, then install Exo Skryer with
+the ``rocm`` extra. This uses JAX's ``rocm7-local`` dependency group, which
+selects compatible JAX, jaxlib, ROCm plugin, and PJRT packages while using the
+system ROCm installation:
 
 .. code-block:: bash
 
    rocminfo | grep -m1 gfx
    export LLVM_PATH=/opt/rocm/llvm
+   python -m pip install -e ".[rocm]"
    python -c "import jax; print(jax.devices())"
-   python -m pip install -e .
 
 The JAX check should show a ``RocmDevice``. If device access is denied, ensure
 the user belongs to the system's ``render`` and ``video`` groups, then log out

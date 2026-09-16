@@ -39,6 +39,11 @@ exo-skryer = "exo_skryer.run_retrieval:main"
 gpu = [
     "jax[cuda13]",
 ]
+rocm = [
+    # Use the system ROCm installation. JAX constrains jaxlib, the ROCm plugin,
+    # and PJRT to mutually compatible versions through this extra.
+    "jax[rocm7-local]",
+]
 atmodeller = [
     "atmodeller",
 ]
