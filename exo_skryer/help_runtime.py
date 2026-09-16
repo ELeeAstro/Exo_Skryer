@@ -1,109 +1,137 @@
-"""
-help_runtime.py
-===============
+"""Runtime environment configuration.
+
+This module intentionally does not import JAX. The environment must be set
+before JAX (and therefore NumPyro) is imported so that the requested backend
+and devices are discovered correctly.
 """
 
 import os
 
-__all__ = ['apply_runtime_env']
+__all__ = ["apply_runtime_env", "normalize_runtime_platform"]
+
+
+_PLATFORM_ALIASES = {
+    "gpu": "cuda",  # Backwards compatibility with existing configurations.
+    "amd": "rocm",
+    "hip": "rocm",
+}
+_SUPPORTED_PLATFORMS = frozenset(("cpu", "cuda", "rocm", "metal"))
+
+
+def normalize_runtime_platform(platform):
+    """Return the JAX backend name for a configured runtime platform."""
+    normalized = str(platform or "cpu").strip().lower()
+    normalized = _PLATFORM_ALIASES.get(normalized, normalized)
+    if normalized not in _SUPPORTED_PLATFORMS:
+        choices = "cpu, cuda, rocm, metal (or the legacy gpu alias)"
+        raise ValueError(
+            f"Unsupported runtime.platform {platform!r}; choose one of: {choices}"
+        )
+    return normalized
+
+
+def _append_env_flags(name, flags):
+    """Append flags without discarding flags supplied by the user."""
+    current = os.environ.get(name, "").strip()
+    os.environ[name] = " ".join(part for part in (current, flags) if part)
 
 
 def apply_runtime_env(rc):
-    """
-    Apply optional rc.runtime settings *before* importing JAX / NumPyro.
+    """Apply runtime settings before importing JAX or NumPyro.
 
-    Expected (all optional):
+    ``rc`` may be the complete configuration object (with a ``runtime``
+    attribute) or the runtime namespace itself. Supported settings are::
 
       runtime:
-        platform: cpu | gpu | cuda | metal
+        platform: cpu | gpu | cuda | rocm | metal
         cuda_visible_devices: "0" or "0,1"
+        rocm_visible_devices: "0" or "0,1"
         preallocate: true/false
-        mem_fraction: 0.8
+        mem_fraction: 0.75
+        threads: 4
         jax_threads: 4
         blackjax_threads: 4
         numpyro_threads: 4
-        numpyro_platform: cpu | gpu   # optional override for NumPyro/JAX device
-        jax_x64: true/false
+        numpyro_platform: cpu | gpu
+
+    ``gpu`` remains an alias for ``cuda`` for backwards compatibility. AMD
+    GPUs and APUs must explicitly select ``rocm``.
 
     Returns
     -------
-    numpyro_threads : int | None
-        Hint for numpyro.set_host_device_count in driver implementation.
+    int or None
+        The optional NumPyro host-device count hint.
     """
-    rt = getattr(rc, "runtime", None)
+    rt = getattr(rc, "runtime", rc)
     if rt is None:
         return None
 
-    # --------------------
-    # JAX platform / device
-    # --------------------
-    plat = getattr(rt, "platform", None)
-    if plat:
-        plat_norm = str(plat).lower()
+    platform = normalize_runtime_platform(getattr(rt, "platform", "cpu"))
+    os.environ["JAX_PLATFORMS"] = platform
+    # The deprecated setting takes precedence over JAX_PLATFORMS in current
+    # JAX releases and its generic "gpu" value does not include Metal.
+    os.environ.pop("JAX_PLATFORM_NAME", None)
 
-        # Convenience alias
-        if plat_norm == "gpu":
-            try:
-                sysname = os.uname().sysname.lower()
-            except Exception:
-                sysname = ""
-            # Rough heuristic: macOS → metal, else cuda
-            if "darwin" in sysname or "mac" in sysname:
-                plat_norm = "metal"
-            else:
-                plat_norm = "cuda"
+    if platform == "cuda":
+        visible = getattr(rt, "cuda_visible_devices", None)
+        if visible is not None and str(visible) != "":
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(visible)
 
-        # JAX >= 0.4 prefers JAX_PLATFORMS; we also set JAX_PLATFORM_NAME for older code.
-        os.environ["JAX_PLATFORMS"] = plat_norm
-        if plat_norm == "cpu":
-            os.environ["JAX_PLATFORM_NAME"] = "cpu"
-        elif plat_norm in ("cuda", "metal", "rocm"):
-            # JAX treats these as "gpu" at the higher level
-            os.environ["JAX_PLATFORM_NAME"] = "gpu"
+        tf_gpu_allocator = getattr(rt, "tf_gpu_allocator", None)
+        if tf_gpu_allocator:
+            os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
 
-    # Optional: NumPyro-specific override (still via JAX, provides additional
-    # control over "NumPyro device" conceptually).
-    np_plat = getattr(rt, "numpyro_platform", None)
-    if np_plat:
-        np_plat_norm = str(np_plat).lower()
-        if np_plat_norm in ("cpu", "gpu"):
-            os.environ["JAX_PLATFORM_NAME"] = np_plat_norm
+        _append_env_flags(
+            "XLA_FLAGS",
+            "--xla_gpu_enable_latency_hiding_scheduler=true "
+            "--xla_gpu_enable_highest_priority_async_stream=true "
+            "--xla_gpu_enable_fast_min_max=true "
+            "--xla_gpu_deterministic_ops=true",
+        )
+    elif platform == "rocm":
+        visible = getattr(rt, "rocm_visible_devices", None)
+        if visible is not None and str(visible) != "":
+            # AMD recommends ROCR_VISIBLE_DEVICES for isolation on Linux.
+            os.environ["ROCR_VISIBLE_DEVICES"] = str(visible)
+    elif platform == "metal":
+        # Avoid probing an installed CUDA plugin on an Apple-only run.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+    else:
+        # Avoid accelerator probing and expose configured CPU parallelism.
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        threads = getattr(rt, "threads", None)
+        if threads is not None:
+            _append_env_flags(
+                "XLA_FLAGS",
+                "--xla_cpu_multi_thread_eigen=true "
+                f"intra_op_parallelism_threads={int(threads)}",
+            )
 
-    # --------------------
-    # CUDA device visibility
-    # --------------------
-    cvis = getattr(rt, "cuda_visible_devices", None)
-    if cvis is not None:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(cvis)
+    if platform in ("cuda", "rocm"):
+        preallocate = getattr(rt, "preallocate", False)
+        os.environ.setdefault(
+            "XLA_PYTHON_CLIENT_PREALLOCATE", "true" if preallocate else "false"
+        )
+        mem_fraction = getattr(rt, "mem_fraction", 0.75)
+        os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", str(mem_fraction))
 
-    # --------------------
-    # XLA memory behaviour
-    # --------------------
-    prealloc = getattr(rt, "preallocate", None)
-    if prealloc is not None:
-        os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "true" if prealloc else "false"
+    np_platform = getattr(rt, "numpyro_platform", None)
+    if np_platform:
+        np_platform = str(np_platform).lower()
+        if np_platform not in ("cpu", "gpu"):
+            raise ValueError("runtime.numpyro_platform must be 'cpu' or 'gpu'")
+        os.environ["JAX_PLATFORM_NAME"] = np_platform
 
-    memfrac = getattr(rt, "mem_fraction", None)
-    if memfrac is not None:
-        os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(memfrac)
-
-    # --------------------
-    # Thread / host-device counts
-    # --------------------
     jax_threads = getattr(rt, "jax_threads", None)
     if jax_threads is not None:
         os.environ["JAX_NUM_THREADS"] = str(int(jax_threads))
 
-    # For BlackJAX on CPU we sometimes want XLA to expose N "host devices"
     blackjax_threads = getattr(rt, "blackjax_threads", None)
     if blackjax_threads is not None:
-        os.environ["XLA_FLAGS"] = (
-            "--xla_force_host_platform_device_count="
-            + str(int(blackjax_threads))
+        _append_env_flags(
+            "XLA_FLAGS",
+            f"--xla_force_host_platform_device_count={int(blackjax_threads)}",
         )
 
-    # --------------------
-    # NumPyro hint: how many host devices / chains to use
-    # --------------------
     numpyro_threads = getattr(rt, "numpyro_threads", None)
     return int(numpyro_threads) if numpyro_threads is not None else None

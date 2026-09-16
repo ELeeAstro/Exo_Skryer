@@ -345,6 +345,6 @@ sampling:
 # Runtime Section
 # ----------------------------------------------------------------------------------
 runtime:
-  platform: cpu           # cpu | gpu | cuda | metal
+  platform: cpu           # cpu | gpu | cuda | rocm | metal
   cuda_visible_devices: 0  # or "0,1"
   threads: 1

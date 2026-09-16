@@ -196,6 +196,6 @@ sampling:
     const_efficiency_mode: false     # Constant efficiency mode
 
 runtime:
-  platform: gpu           # cpu | gpu | cuda | metal
+  platform: gpu           # cpu | gpu | cuda | rocm | metal
   cuda_visible_devices: 1  # or "0,1"
   threads: 1

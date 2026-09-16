@@ -209,8 +209,9 @@ CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
 # Each has different strengths for exploring parameter space
 SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nautilus", "pymultinest"]
 
-# Compute platforms
-RUNTIME_PLATFORMS = ["gpu", "cpu"]
+# New configurations use an explicit backend. Existing ``gpu`` values remain
+# supported by the runner as a legacy CUDA alias.
+RUNTIME_PLATFORMS = ["cuda", "rocm", "metal", "cpu"]
 
 # Refraction modes (for transit_1d only)
 # See: build_model.py _resolve_refraction()
@@ -729,11 +730,13 @@ def build_config() -> dict:
     # Compute platform and resource allocation
     # -------------------------------------------------------------------------
     config['runtime'] = {
-        'platform': st.session_state.get('platform', 'gpu'),
+        'platform': st.session_state.get('platform', 'cuda'),
     }
-    # Only include CUDA devices if specified
-    if st.session_state.get('cuda_devices'):
+    # Device isolation uses backend-specific environment variables.
+    if config['runtime']['platform'] in ('gpu', 'cuda') and st.session_state.get('cuda_devices'):
         config['runtime']['cuda_visible_devices'] = st.session_state.cuda_devices
+    if config['runtime']['platform'] == 'rocm' and st.session_state.get('rocm_devices'):
+        config['runtime']['rocm_visible_devices'] = st.session_state.rocm_devices
     if st.session_state.get('threads'):
         config['runtime']['threads'] = st.session_state.threads
 
@@ -1490,8 +1493,8 @@ def render_runtime_section():
     Render the RUNTIME configuration section.
 
     This section configures:
-    - Compute platform (GPU vs CPU)
-    - CUDA device selection (for multi-GPU systems)
+    - Compute platform (CUDA, ROCm, Metal, or CPU)
+    - Backend-specific device selection
     - CPU thread count
     """
     st.header("Runtime Configuration")
@@ -1500,7 +1503,10 @@ def render_runtime_section():
     with col1:
         st.selectbox("Platform", RUNTIME_PLATFORMS, key="platform")
     with col2:
-        st.text_input("CUDA visible devices", key="cuda_devices", placeholder="e.g., 0,1")
+        if st.session_state.get("platform") == "rocm":
+            st.text_input("ROCm visible devices", key="rocm_devices", placeholder="e.g., 0,1")
+        else:
+            st.text_input("CUDA visible devices", key="cuda_devices", placeholder="e.g., 0,1")
     with col3:
         st.number_input("CPU threads", min_value=1, value=1, key="threads")
 

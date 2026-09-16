@@ -221,6 +221,6 @@ sampling:
     seed: 42
 
 runtime:
-  platform: gpu           # cpu | gpu | cuda | metal
+  platform: gpu           # cpu | gpu | cuda | rocm | metal
   cuda_visible_devices: 0  # or "0,1"
   threads: 1

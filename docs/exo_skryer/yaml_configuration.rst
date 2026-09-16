@@ -23,7 +23,7 @@ The configuration has these top-level blocks:
 * ``atmodeller``: explicit species-network/solver config for Atmodeller chemistry (optional)
 * ``quench_approx``: quenched-chemistry species config (optional)
 * ``sampling``: sampler engine selection and hyperparameters
-* ``runtime``: platform selection (cpu/gpu) and basic runtime knobs
+* ``runtime``: platform selection (CPU/CUDA/ROCm/Metal) and basic runtime knobs
 
 Minimal skeleton
 ----------------
@@ -567,10 +567,22 @@ runtime
 =======
 
 ``runtime.platform``
-  *Supported values*: ``cpu``, ``gpu``, ``cuda``, or ``metal``.
+  *Supported values*: ``cpu``, ``gpu``, ``cuda``, ``rocm``, or ``metal``.
+  ``gpu`` is retained as an alias for ``cuda``. Select ``rocm`` explicitly for
+  an AMD GPU or APU.
 
 ``runtime.cuda_visible_devices``
-  Only used when ``runtime.platform: gpu``. String like ``"0"`` or ``"0,1"``.
+  Only used with ``runtime.platform: gpu`` or ``cuda``. String like ``"0"`` or
+  ``"0,1"``.
+
+``runtime.rocm_visible_devices``
+  Only used with ``runtime.platform: rocm``. String like ``"0"`` or ``"0,1"``;
+  exported as ``ROCR_VISIBLE_DEVICES`` on Linux.
+
+``runtime.preallocate`` / ``runtime.mem_fraction``
+  Optional accelerator memory controls. Preallocation defaults to ``false`` and
+  the memory fraction defaults to ``0.75`` for CUDA and ROCm. A lower fraction
+  can be useful on an APU because system memory is shared with the CPU.
 
 ``runtime.threads``
   Only used when ``runtime.platform: cpu``; passed to NumPyro host device count.

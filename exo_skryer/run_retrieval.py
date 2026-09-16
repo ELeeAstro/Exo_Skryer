@@ -54,47 +54,23 @@ def main() -> None:
     from .read_yaml import read_yaml
     cfg = read_yaml(config_path)
 
-    # Platform selection from YAML (used for sampler setup). We keep CPU environment
-    # variables at JAX defaults; GPU-specific flags remain configurable.
-    platform = str(getattr(cfg.runtime, "platform", "cpu")).lower()
+    # Configure the backend before importing JAX. In particular, ROCm must not
+    # pass through the legacy ``gpu`` alias, which intentionally still means CUDA.
+    from .help_runtime import apply_runtime_env, normalize_runtime_platform
+    configured_platform = str(getattr(cfg.runtime, "platform", "cpu")).lower()
+    platform = normalize_runtime_platform(configured_platform)
+    apply_runtime_env(cfg)
 
-    if platform in ("gpu", "cuda"):
-        cuda_devices = str(getattr(cfg.runtime, "cuda_visible_devices", ""))
-        if cuda_devices:
-            os.environ["CUDA_VISIBLE_DEVICES"] = cuda_devices
-        os.environ["JAX_PLATFORMS"] = "cuda"
-        os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
-        os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", "0.75")
-        tf_gpu_allocator = getattr(cfg.runtime, "tf_gpu_allocator", None)
-        if tf_gpu_allocator:
-            os.environ.setdefault("TF_GPU_ALLOCATOR", str(tf_gpu_allocator))
-
-        xla_flags = (
-            "--xla_gpu_enable_latency_hiding_scheduler=true "
-            "--xla_gpu_enable_highest_priority_async_stream=true "
-            "--xla_gpu_enable_fast_min_max=true "
-            "--xla_gpu_deterministic_ops=true"
-        )
-        os.environ["XLA_FLAGS"] = xla_flags
-
-        print(f"[info] Platform: GPU (CUDA_VISIBLE_DEVICES={cuda_devices})")
-        print("[info] XLA GPU: latency hiding, async streams, fast math enabled")
+    if platform == "cuda":
+        visible = str(getattr(cfg.runtime, "cuda_visible_devices", ""))
+        print(f"[info] Platform: CUDA (CUDA_VISIBLE_DEVICES={visible or 'all'})")
+    elif platform == "rocm":
+        visible = str(getattr(cfg.runtime, "rocm_visible_devices", ""))
+        print(f"[info] Platform: ROCm (ROCR_VISIBLE_DEVICES={visible or 'all'})")
     elif platform == "metal":
-        os.environ["JAX_PLATFORMS"] = "metal"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
         print("[info] Platform: Metal (Apple GPU)")
-    else:  # cpu
-        os.environ["JAX_PLATFORMS"] = "cpu"
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        xla_flags_cpu = (
-            "--xla_cpu_multi_thread_eigen=true "
-            f"intra_op_parallelism_threads={cfg.runtime.threads}"
-        )
-        existing_xla_flags = os.environ.get("XLA_FLAGS", "").strip()
-        os.environ["XLA_FLAGS"] = " ".join(
-            part for part in (existing_xla_flags, xla_flags_cpu) if part
-        )
-        print(f"[info] Platform: CPU (threads={cfg.runtime.threads})")
+    else:
+        print(f"[info] Platform: CPU (threads={getattr(cfg.runtime, 'threads', 1)})")
 
     # Print main yaml parameters to command line (after setting environment)
     from .help_print import print_cfg
@@ -107,7 +83,7 @@ def main() -> None:
     # then restore the original level so nothing else is suppressed.
     import logging
     _xla_bridge_log = logging.getLogger("jax._src.xla_bridge")
-    if platform not in ("gpu", "cuda"):
+    if platform not in ("cuda", "rocm"):
         _prev_xla_level = _xla_bridge_log.level
         _xla_bridge_log.setLevel(logging.CRITICAL)
 
@@ -123,12 +99,34 @@ def main() -> None:
 
     import jax
 
-    if platform not in ("gpu", "cuda"):
+    if platform not in ("cuda", "rocm"):
         _xla_bridge_log.setLevel(_prev_xla_level)
 
     # Print the JAX setup
-    print(f"[info] JAX backend: {jax.default_backend()}")
-    print(f"[info] JAX devices: {jax.local_device_count()} {jax.devices()}")
+    try:
+        jax_backend = jax.default_backend()
+        jax_devices = jax.devices()
+    except (RuntimeError, AssertionError) as exc:
+        if platform == "rocm":
+            raise RuntimeError(
+                "JAX could not initialize ROCm. Confirm that this APU is listed "
+                "in AMD's ROCm compatibility matrix, the ROCm JAX plugin matches "
+                "the installed JAX version, and /dev/kfd and /dev/dri are accessible."
+            ) from exc
+        if platform == "cuda":
+            legacy_hint = (
+                " runtime.platform='gpu' is a legacy CUDA alias; use "
+                "runtime.platform='rocm' for an AMD GPU or APU."
+                if configured_platform == "gpu"
+                else ""
+            )
+            raise RuntimeError(
+                "JAX could not initialize CUDA because no NVIDIA backend was "
+                f"available.{legacy_hint}"
+            ) from exc
+        raise
+    print(f"[info] JAX backend: {jax_backend}")
+    print(f"[info] JAX devices: {jax.local_device_count()} {jax_devices}")
 
     # Load the observational data - return a dictionary obs
     from .read_obs import resolve_obs_path, read_obs_data

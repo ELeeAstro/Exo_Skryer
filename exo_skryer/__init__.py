@@ -4,7 +4,7 @@ except ImportError:
     __version__ = ''
 
 # Imports are commented out to prevent eager JAX initialization.
-# This allows run_retrieval.py to set CUDA_VISIBLE_DEVICES before JAX loads.
+# This allows run_retrieval.py to select CUDA/ROCm devices before JAX loads.
 # Modules are imported on-demand within functions that use them.
 #
 # For direct module usage, import explicitly:
