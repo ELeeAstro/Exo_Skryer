@@ -349,6 +349,10 @@ def run_nested_ultranest(
     frac_remain = getattr(un_cfg, "frac_remain", None)
     show_status = bool(getattr(un_cfg, "show_status", True))
     verbose = bool(getattr(un_cfg, "verbose", True))
+    resume = bool(getattr(un_cfg, "resume", False))
+    log_dir = Path(getattr(un_cfg, "log_dir", "ultranest_run"))
+    if not log_dir.is_absolute():
+        log_dir = exp_dir / log_dir
     use_stepsampler = bool(getattr(un_cfg, "use_stepsampler", False))
     stepsampler_nsteps = int(getattr(un_cfg, "stepsampler_nsteps", 30))
     stepsampler_direction = str(getattr(un_cfg, "stepsampler_direction", "mixture")).lower()
@@ -363,7 +367,9 @@ def run_nested_ultranest(
         param_names,
         loglike_fn,
         prior_fn,
-        vectorized=False
+        vectorized=False,
+        log_dir=str(log_dir),
+        resume="resume" if resume else "overwrite",
     )
 
     print(f"[UltraNest] Running nested sampling...")
@@ -373,6 +379,8 @@ def run_nested_ultranest(
     print(f"[UltraNest] min_num_live_points: {min_num_live_points}")
     print(f"[UltraNest] dlogz: {dlogz}")
     print(f"[UltraNest] frac_remain: {frac_remain}")
+    print(f"[UltraNest] log_dir: {log_dir}")
+    print(f"[UltraNest] resume: {resume}")
     print(f"[UltraNest] use_stepsampler: {use_stepsampler}")
 
     run_kwargs = dict(
@@ -444,6 +452,8 @@ def run_nested_ultranest(
         "num_live_points_cfg": n_live,
         "min_num_live_points": min_num_live_points,
         "dlogz": dlogz,
+        "log_dir": str(log_dir),
+        "resumed": resume,
     }
 
     # Extract posterior samples

@@ -256,7 +256,7 @@ def run_nested_nautilus(
     if seed is not None:
         seed = int(seed)
     filepath = getattr(ncfg, "filepath", None)
-    resume = bool(getattr(ncfg, "resume", True))
+    resume = bool(getattr(ncfg, "resume", False))
     verbose = bool(getattr(ncfg, "verbose", True))
 
     f_live = float(getattr(ncfg, "f_live", 0.01))
@@ -280,6 +280,7 @@ def run_nested_nautilus(
         if not filepath_path.is_absolute():
             filepath_path = (exp_dir / filepath_path)
         filepath_use = str(filepath_path)
+    Path(filepath_use).parent.mkdir(parents=True, exist_ok=True)
 
     print(f"[Nautilus] Running nested sampling...")
     print(f"[Nautilus] Free parameters: {len(param_names)}")
@@ -287,6 +288,8 @@ def run_nested_nautilus(
     print(f"[Nautilus] n_live: {n_live}")
     print(f"[Nautilus] f_live: {f_live}")
     print(f"[Nautilus] n_shell: {n_shell}")
+    print(f"[Nautilus] checkpoint_file: {filepath_use}")
+    print(f"[Nautilus] resume: {resume}")
 
     sampler_kwargs: Dict[str, Any] = dict(
         prior=prior,
@@ -364,6 +367,7 @@ def run_nested_nautilus(
         "f_live": f_live,
         "n_shell": n_shell,
         "checkpoint_file": filepath_use,
+        "resumed": resume,
     }
 
     if verbose:

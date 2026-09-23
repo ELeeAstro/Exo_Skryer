@@ -354,12 +354,19 @@ def run_nested_pymultinest(
     mode_tolerance = float(getattr(pmn_cfg, "mode_tolerance", -1e90))
     seed = int(getattr(pmn_cfg, "seed", -1))
     verbose = bool(getattr(pmn_cfg, "verbose", True))
-    resume = bool(getattr(pmn_cfg, "resume", True))
+    resume = bool(getattr(pmn_cfg, "resume", False))
+    outputfiles_basename_path = Path(
+        getattr(pmn_cfg, "outputfiles_basename", "pymultinest_")
+    )
+    if not outputfiles_basename_path.is_absolute():
+        outputfiles_basename_path = exp_dir / outputfiles_basename_path
+    outputfiles_basename_path.parent.mkdir(parents=True, exist_ok=True)
+    outputfiles_basename = str(outputfiles_basename_path)
     importance_nested_sampling = bool(getattr(pmn_cfg, "importance_nested_sampling", False))
     multimodal = bool(getattr(pmn_cfg, "multimodal", True))
     const_efficiency_mode = bool(getattr(pmn_cfg, "const_efficiency_mode", False))
 
-    # Ensure output directory exists (don't create subdirectories)
+    # Ensure the experiment directory exists.
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     # Build prior and likelihood
@@ -375,9 +382,8 @@ def run_nested_pymultinest(
     print(f"[PyMultiNest] evidence_tolerance: {evidence_tolerance}")
     print(f"[PyMultiNest] sampling_efficiency: {sampling_efficiency}")
     print(f"[PyMultiNest] multimodal: {multimodal}")
-
-    # Set output files basename (all files go directly to exp_dir)
-    outputfiles_basename = str(exp_dir / "pymultinest_")
+    print(f"[PyMultiNest] outputfiles_basename: {outputfiles_basename}")
+    print(f"[PyMultiNest] resume: {resume}")
 
     # Run PyMultiNest
     pymultinest.run(
@@ -445,6 +451,8 @@ def run_nested_pymultinest(
         "sampler": "pymultinest",
         "n_live": n_live_points,
         "evidence_tolerance": evidence_tolerance,
+        "outputfiles_basename": outputfiles_basename,
+        "resumed": resume,
     }
 
     # Save stats to pickle for future reference

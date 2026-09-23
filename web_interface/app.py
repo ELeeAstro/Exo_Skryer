@@ -659,6 +659,8 @@ def build_config() -> dict:
             'min_num_live_points': st.session_state.get('ultranest_min_live_points', 100),
             'dlogz': st.session_state.get('ultranest_dlogz', 0.01),
             'verbose': st.session_state.get('ultranest_verbose', True),
+            'log_dir': st.session_state.get('ultranest_log_dir', 'ultranest_run'),
+            'resume': st.session_state.get('ultranest_resume', False),
         }
         # Optional parameters
         if st.session_state.get('ultranest_max_iters'):
@@ -675,6 +677,7 @@ def build_config() -> dict:
             'sampling_efficiency': st.session_state.get('pymultinest_sampling_efficiency', 0.3),
             'seed': st.session_state.get('pymultinest_seed', 42),
             'verbose': st.session_state.get('pymultinest_verbose', True),
+            'outputfiles_basename': st.session_state.get('pymultinest_outputfiles_basename', 'pymultinest_'),
             'resume': st.session_state.get('pymultinest_resume', False),
         }
         # Optional advanced parameters
@@ -1422,11 +1425,14 @@ def render_sampling_section():
             with col2:
                 st.number_input("dlogz", min_value=0.001, value=0.1, format="%.4f", key="ultranest_dlogz")
                 st.checkbox("Verbose", value=True, key="ultranest_verbose")
+                st.checkbox("Resume", key="ultranest_resume")
 
         with st.expander("Advanced Settings"):
             col1, col2 = st.columns(2)
             with col1:
                 st.number_input("Max iterations (optional)", min_value=0, value=0, key="ultranest_max_iters", help="0 = unlimited")
+                st.text_input("Run directory", value="ultranest_run", key="ultranest_log_dir",
+                              help="Relative paths are resolved from the experiment directory")
             with col2:
                 st.checkbox("Show status", value=True, key="ultranest_show_status")
 
@@ -1441,13 +1447,15 @@ def render_sampling_section():
                 st.number_input("Sampling efficiency", min_value=0.01, max_value=1.0, value=0.3, format="%.2f", key="pymultinest_sampling_efficiency")
             with col2:
                 st.checkbox("Verbose", value=True, key="pymultinest_verbose")
-                st.checkbox("Resume", value=True, key="pymultinest_resume")
+                st.checkbox("Resume", key="pymultinest_resume")
                 st.number_input("Random seed", min_value=-1, value=-1, key="pymultinest_seed",
                                help="-1 = random seed")
 
         with st.expander("Advanced Settings"):
             col1, col2 = st.columns(2)
             with col1:
+                st.text_input("Output file prefix", value="pymultinest_", key="pymultinest_outputfiles_basename",
+                              help="Relative paths are resolved from the experiment directory")
                 st.number_input("N iter before update (optional)", min_value=0, value=0, key="pymultinest_n_iter_before_update")
                 st.number_input("Null log evidence (optional)", value=0.0, format="%.2e", key="pymultinest_null_log_evidence")
                 st.number_input("Max modes (optional)", min_value=0, value=0, key="pymultinest_max_modes")

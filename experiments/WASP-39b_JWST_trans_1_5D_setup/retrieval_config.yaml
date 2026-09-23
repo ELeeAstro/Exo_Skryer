@@ -118,6 +118,50 @@ sampling:
 
   engine: dynesty
 
+  # NUTS / HMC settings
+  nuts:
+    backend: numpyro
+    warmup: 100
+    draws: 100
+    seed: 42
+    chains: 1
+
+  # JAXNS settings
+  jaxns:
+    max_samples: 100000
+    num_live_points: 1000
+    s: 4
+    k: 0
+    c: null
+    shell_fraction: 0.5
+    difficult_model: false
+    parameter_estimation: true
+    gradient_guided: false
+    init_efficiency_threshold: 0.1
+    verbose: true
+
+    termination:
+      ess: 10000
+      evidence_uncert: null
+      dlogZ: 0.1
+      max_samples: 100000
+      max_num_likelihood_evaluations: null
+      rtol: null
+      atol: null
+
+    posterior_samples: 10000
+    seed: 42
+
+  # BlackJAX nested sampling settings
+  blackjax_ns:
+    num_live_points: 500
+    num_inner_steps: 45
+    num_delete: 250
+    dlogz_stop: 0.1
+    seed: 42
+    posterior_samples: 10000
+
+  # Dynesty settings
   dynesty:
     nlive: 1000
     bound: multi
@@ -131,6 +175,55 @@ sampling:
     dynamic: false
     print_progress: true
     seed: 42
+
+  # UltraNest settings
+  ultranest:
+    num_live_points: 1000
+    min_num_live_points: 1000
+    dlogz: 0.1
+    max_iters: 0
+    verbose: true
+    show_status: true
+    log_dir: ultranest_run
+    resume: false
+
+  # Nautilus settings
+  nautilus:
+    n_live: 1000
+    n_update: null
+    split_threshold: 100
+    n_networks: 4
+    n_batch: null
+    n_like_new_bound: null
+    seed: 42
+    filepath: nautilus_checkpoint.hdf5
+    resume: false
+
+    f_live: 0.01
+    n_shell: 1
+    n_eff: null
+    n_like_max: null
+    discard_exploration: false
+    timeout: null
+    equal_weight: true
+    verbose: true
+
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 1000
+    evidence_tolerance: 0.1
+    sampling_efficiency: 0.3
+    n_iter_before_update: 100
+    null_log_evidence: -1.0e99
+    max_modes: 100
+    mode_tolerance: -1.0e99
+    seed: -1
+    verbose: true
+    outputfiles_basename: pymultinest_
+    resume: false
+    importance_nested_sampling: false
+    multimodal: true
+    const_efficiency_mode: false
 
 runtime:
   platform: gpu

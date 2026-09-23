@@ -303,6 +303,8 @@ sampling:
     max_iters: 0
     verbose: true
     show_status: true
+    log_dir: ultranest_run
+    resume: false
 
   # Nautilus settings
   nautilus:
@@ -336,6 +338,7 @@ sampling:
     mode_tolerance: -1.0e99          # Mode separation tolerance
     seed: -1                         # Random seed (-1 = random, >=0 for reproducibility)
     verbose: true                    # Print progress
+    outputfiles_basename: pymultinest_ # Output/checkpoint prefix, relative to this file
     resume: true                     # Resume from previous run if interrupted
     importance_nested_sampling: false # Use importance nested sampling
     multimodal: true                 # Enable multimodal mode detection
