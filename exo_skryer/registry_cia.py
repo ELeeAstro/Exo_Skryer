@@ -15,6 +15,7 @@ import numpy as np
 import zarr
 
 __all__ = [
+    "runtime_cache",
     "CiaRegistryEntry",
     "reset_registry",
     "has_cia_data",
@@ -468,3 +469,17 @@ def cia_retained_log10_temperature_grids() -> jnp.ndarray:
     if _CIA_RETAINED_LOG10_TEMPERATURE_CACHE is None:
         raise RuntimeError("CIA retained log10(T) grids not built; call build_opacities() first.")
     return _CIA_RETAINED_LOG10_TEMPERATURE_CACHE
+
+
+def runtime_cache() -> dict:
+    """Device arrays the opacity kernels read, keyed for the forward-model cache."""
+    if not has_cia_data():
+        return {}
+    return {
+        "cia_master_wavelength": cia_master_wavelength(),
+        "cia_pair_species_i": cia_pair_species_i(),
+        "cia_pair_species_j": cia_pair_species_j(),
+        "cia_retained_sigma_cube": cia_retained_sigma_cube(),
+        "cia_retained_log10_temperature_grids": cia_retained_log10_temperature_grids(),
+        "cia_retained_temperature_grids": cia_retained_temperature_grids(),
+    }

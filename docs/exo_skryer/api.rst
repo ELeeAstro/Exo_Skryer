@@ -13,6 +13,9 @@ Reference/API
 .. automodapi:: exo_skryer.build_chem
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.build_common
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.build_model
     :no-inheritance-diagram:
 

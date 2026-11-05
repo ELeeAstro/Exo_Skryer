@@ -16,6 +16,7 @@ import h5py
 import zarr
 
 __all__ = [
+    "runtime_cache",
     "CKRegistryEntry",
     "reset_registry",
     "has_ck_data",
@@ -720,3 +721,16 @@ def ck_g_weights_1d() -> jnp.ndarray:
     if _CK_G_WEIGHTS_1D_CACHE is None:
         raise RuntimeError("c-k 1D g-weights cache not built; call build_opacities() first.")
     return _CK_G_WEIGHTS_1D_CACHE
+
+
+def runtime_cache() -> dict:
+    """Device arrays the opacity kernels read, keyed for the forward-model cache."""
+    if not has_ck_data():
+        return {}
+    return {
+        "ck_sigma_cube": ck_sigma_cube(),
+        "ck_log10_pressure_grid": ck_log10_pressure_grid(),
+        "ck_log10_temperature_grids": ck_log10_temperature_grids(),
+        "g_points": ck_g_points_1d(),
+        "g_weights": ck_g_weights_1d(),
+    }

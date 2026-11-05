@@ -19,6 +19,12 @@ __all__ = [
     'validate_clr_params',
     'clr_samples_to_vmr',
     'prepare_chemistry_kernel',
+    'init_chemistry',
+    'load_nasa9',
+    'init_fastchem_grid',
+    'init_element_potentials',
+    'init_atmodeller',
+    'init_quench_approx',
     'load_nasa9_if_needed',
     'init_fastchem_grid_if_needed',
     'init_element_potentials_if_needed',
@@ -482,57 +488,11 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
     return chemistry_kernel, trace_species
 
 
-def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
-    """Load NASA-9 thermo coefficients if RateJAX chemistry requires it.
+def load_nasa9(cfg: Any, exp_dir: Path) -> None:
+    """Load NASA-9 thermo coefficients (RateJAX / easychem backends).
 
-    This function checks if the configured chemistry scheme requires Gibbs free
-    energy data (RateJAX chemical equilibrium modes) and loads the NASA-9 tables
-    if needed. If data is already loaded or not required, it returns immediately.
-
-    Parameters
-    ----------
-    cfg : config object
-        Parsed YAML configuration object with `cfg.physics.vert_chem` attribute.
-    exp_dir : `~pathlib.Path`
-        Experiment directory used to resolve relative paths to NASA-9 data.
+    Relative ``data.nasa9`` paths resolve against ``exp_dir`` (cwd if None).
     """
-    phys = getattr(cfg, "physics", None)
-    if phys is None:
-        return
-
-    vert_chem_raw = getattr(phys, "vert_chem", None)
-    if vert_chem_raw is None:
-        return
-
-    vert_chem_name = str(vert_chem_raw).lower()
-    ep_names = ("easychem_jax", "easychem")
-    fc_grid_names = (
-        "fastchem_grid_jax",
-        "ce_fastchem_grid",
-        "fastchem_ce_grid",
-        "ce",
-        "chemical_equilibrium",
-        "ce_fastchem_jax",
-        "fastchem_jax",
-    )
-    needs_nasa9 = (
-        "rate_ce",
-        "rate_jax",
-        "ce_rate_jax",
-        *ep_names,
-    )
-
-    if vert_chem_name in ("quench_approx", "quench"):
-        init_quench_approx_if_needed(cfg, exp_dir)
-        return
-
-    if vert_chem_name in fc_grid_names:
-        init_fastchem_grid_if_needed(cfg, exp_dir)
-        return
-
-    if vert_chem_name not in needs_nasa9:
-        return
-
     from .rate_jax import is_nasa9_cache_loaded, load_nasa9_cache
 
     if is_nasa9_cache_loaded():
@@ -557,34 +517,9 @@ def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
         thermo = load_nasa9_cache(nasa9_path)
         print(f"[info] NASA-9 cache loaded: {len(thermo.data)} species")
 
-    # EP backend needs its own model cache as well; initialize it here so callers
-    # that only invoke `load_nasa9_if_needed` (e.g. bestfit scripts) still work.
-    if vert_chem_name in ep_names:
-        init_element_potentials_if_needed(cfg, exp_dir)
-        return
 
-
-def init_fastchem_grid_if_needed(cfg: Any, exp_dir: Path) -> None:
-    """Initialise and cache the FastChem 5D grid chemistry backend if required."""
-    phys = getattr(cfg, "physics", None)
-    if phys is None:
-        return
-
-    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
-    aliases = (
-        "fastchem_grid_jax",
-        "ce_fastchem_grid",
-        "fastchem_ce_grid",
-        "ce",
-        "chemical_equilibrium",
-        "ce_fastchem_jax",
-        "fastchem_jax",
-        "quench_approx",
-        "quench",
-    )
-    if vert_chem_name not in aliases:
-        return
-
+def init_fastchem_grid(cfg: Any, exp_dir: Path) -> None:
+    """Initialise and cache the FastChem 5D grid chemistry backend."""
     from .vert_chem import (
         is_fastchem_grid_cache_loaded,
         load_fastchem_grid_cache,
@@ -711,16 +646,8 @@ def init_fastchem_grid_if_needed(cfg: Any, exp_dir: Path) -> None:
     print("[info] FastChem-grid cache loaded")
 
 
-def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
-    """Initialise and cache the element-potentials chemistry backend if required."""
-    phys = getattr(cfg, "physics", None)
-    if phys is None:
-        return
-
-    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
-    if vert_chem_name not in ("easychem_jax", "easychem"):
-        return
-
+def init_element_potentials(cfg: Any, exp_dir: Path) -> None:
+    """Initialise and cache the element-potentials (easychem_jax) backend."""
     from .vert_chem import is_element_potentials_cache_loaded, load_element_potentials_cache
 
     if is_element_potentials_cache_loaded():
@@ -774,7 +701,7 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
 
     p0_bar = float(getattr(ep_cfg, "p0_bar", 1.0))
     e_ref = str(getattr(ep_cfg, "e_ref", "H"))
-    nlay = int(getattr(phys, "nlay", 99))
+    nlay = int(getattr(cfg.physics, "nlay", 99))
 
     print("[info] Initializing CE scheme: easychem_jax")
     print(f"[info]   NASA9 path: {nasa9_path}")
@@ -801,30 +728,8 @@ def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
     print("[info] Element-potentials cache loaded")
 
 
-def init_atmodeller_if_needed(cfg: Any, exp_dir: Path) -> None:
-    """Initialise the global atmodeller :class:`EquilibriumModel` if required.
-
-    Reads ``atmodeller.species_network`` from the YAML config and builds the
-    cached :class:`EquilibriumModel` instance.  If the cache is already loaded,
-    or the active chemistry scheme is not ``'atmodeller'``, returns immediately.
-
-    Parameters
-    ----------
-    cfg : config object
-        Parsed YAML configuration object with ``cfg.physics.vert_chem`` and
-        ``cfg.atmodeller.species_network`` attributes.
-    exp_dir : `~pathlib.Path`
-        Experiment directory (unused; kept for API symmetry with
-        :func:`load_nasa9_if_needed`).
-    """
-    phys = getattr(cfg, "physics", None)
-    if phys is None:
-        return
-
-    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
-    if vert_chem_name != "atmodeller":
-        return
-
+def init_atmodeller(cfg: Any, exp_dir: Path) -> None:
+    """Initialise the global atmodeller :class:`EquilibriumModel` from ``atmodeller.species_network``."""
     if importlib.util.find_spec("atmodeller") is None:
         raise ImportError(
             "physics.vert_chem is set to 'atmodeller', but the optional 'atmodeller' "
@@ -866,33 +771,10 @@ def init_atmodeller_if_needed(cfg: Any, exp_dir: Path) -> None:
     print("[info] Atmodeller cache loaded")
 
 
-def init_quench_approx_if_needed(cfg: Any, exp_dir: Path) -> None:
-    """Initialise the FastChem 5D grid and quench species list for quench_approx.
+def init_quench_approx(cfg: Any, exp_dir: Path) -> None:
+    """Initialise the FastChem 5D grid and the quench species list for quench_approx."""
+    init_fastchem_grid(cfg, exp_dir)
 
-    Reads ``fastchem_grid_jax`` (grid path, solver, species map) and
-    ``quench_approx.quench_species`` from the YAML config.  Both caches are
-    idempotent — already-loaded caches are skipped.
-
-    Parameters
-    ----------
-    cfg : config object
-        Parsed YAML configuration object.
-    exp_dir : `~pathlib.Path`
-        Experiment directory for resolving relative paths.
-    """
-    phys = getattr(cfg, "physics", None)
-    if phys is None:
-        return
-
-    vert_chem_name = str(getattr(phys, "vert_chem", "") or "").lower()
-    if vert_chem_name not in ("quench_approx", "quench"):
-        return
-
-    # Step 1: load the FastChem 5D grid (reuses init_fastchem_grid_if_needed,
-    # which now recognises quench_approx/quench in its aliases).
-    init_fastchem_grid_if_needed(cfg, exp_dir)
-
-    # Step 2: load the quench species list.
     from .vert_chem import is_quench_approx_cache_loaded, load_quench_approx_cache
 
     if is_quench_approx_cache_loaded():
@@ -928,3 +810,43 @@ def init_quench_approx_if_needed(cfg: Any, exp_dir: Path) -> None:
 
     load_quench_approx_cache(quench_species)
     print(f"[info] Quench species loaded: {list(quench_species)}")
+
+
+def init_chemistry(cfg: Any, exp_dir: Path | None = None) -> None:
+    """Run the setup loaders the configured ``physics.vert_chem`` kernel declares.
+
+    Loaders are idempotent; unknown or missing schemes are left to the builder
+    to report.
+    """
+    from . import kernel_registry as KR
+
+    name = getattr(getattr(cfg, "physics", None), "vert_chem", None)
+    if name is None:
+        return
+    try:
+        entry = KR.get("vert_chem", name)
+    except ValueError:
+        return
+    for setup in entry.setup:
+        setup(cfg, exp_dir)
+
+
+# Pre-registry entry points; each now runs the full chemistry setup.
+def load_nasa9_if_needed(cfg: Any, exp_dir: Path) -> None:
+    init_chemistry(cfg, exp_dir)
+
+
+def init_fastchem_grid_if_needed(cfg: Any, exp_dir: Path) -> None:
+    init_chemistry(cfg, exp_dir)
+
+
+def init_element_potentials_if_needed(cfg: Any, exp_dir: Path) -> None:
+    init_chemistry(cfg, exp_dir)
+
+
+def init_atmodeller_if_needed(cfg: Any, exp_dir: Path) -> None:
+    init_chemistry(cfg, exp_dir)
+
+
+def init_quench_approx_if_needed(cfg: Any, exp_dir: Path) -> None:
+    init_chemistry(cfg, exp_dir)

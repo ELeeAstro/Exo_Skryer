@@ -17,6 +17,7 @@ import zarr
 
 
 __all__ = [
+    "runtime_cache",
     "LineRegistryEntry",
     "reset_registry",
     "has_line_data",
@@ -509,3 +510,14 @@ def line_log10_temperature_grids() -> jnp.ndarray:
     if _LINE_LOG10_TEMPERATURE_CACHE is None:
         raise RuntimeError("Line log10(T) grids not built; call build_opacities() first.")
     return _LINE_LOG10_TEMPERATURE_CACHE
+
+
+def runtime_cache() -> dict:
+    """Device arrays the opacity kernels read, keyed for the forward-model cache."""
+    if not has_line_data():
+        return {}
+    return {
+        "line_sigma_cube": line_sigma_cube(),
+        "line_log10_pressure_grid": line_log10_pressure_grid(),
+        "line_log10_temperature_grids": line_log10_temperature_grids(),
+    }

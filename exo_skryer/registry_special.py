@@ -23,6 +23,7 @@ import numpy as np
 from .data_constants import kb
 
 __all__ = [
+    "runtime_cache",
     "reset_registry",
     "has_special_data",
     "load_special_registry",
@@ -337,3 +338,19 @@ def hminus_ff_log10_sigma_table() -> jnp.ndarray:
     if _HM_FF_LOGSIGMA_CACHE is None:
         raise RuntimeError("H- ff table not built/enabled in special registry.")
     return _HM_FF_LOGSIGMA_CACHE
+
+
+def runtime_cache() -> dict:
+    """Device arrays the opacity kernels read; bf/ff tables only when enabled."""
+    if not has_special_data():
+        return {}
+    cache = {
+        "hminus_master_wavelength": special_master_wavelength(),
+        "hminus_temperature_grid": hminus_temperature_grid(),
+        "hminus_log10_temperature_grid": hminus_log10_temperature_grid(),
+    }
+    if _HM_BF_LOGSIGMA_CACHE is not None:
+        cache["hminus_bf_log10_sigma"] = _HM_BF_LOGSIGMA_CACHE
+    if _HM_FF_LOGSIGMA_CACHE is not None:
+        cache["hminus_ff_log10_sigma"] = _HM_FF_LOGSIGMA_CACHE
+    return cache

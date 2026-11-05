@@ -71,14 +71,15 @@ CustomDumper.add_representer(type(None), represent_none)
 # Canonical names and aliases are defined in kernel_registry.py.
 
 # Radiative transfer schemes: emission (thermal) vs transit (transmission)
-# See: build_model.py _build_rt_kernel()
+# See: kernel_registry.py rt entries
 RT_SCHEMES = ["emission_1d", "transit_1d", "transit_1_5d"]
 
 # Emission calculation schemes (only used when rt_scheme is emission_1d)
 # Passed to get_emission_solver() in RT_em_schemes.py
-# - eaa / alpha_eaa: Alpha-EAA single-angle approximation (fast)
-# - toon89 / toon89_picaso: Toon et al. (1989) multi-stream method (accurate for scattering)
-EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso"]
+# - eaa / alpha_eaa: extended absorption approximation (fastest, approximate scattering)
+# - toon89 / toon89_picaso: Toon et al. (1989) two-stream method
+# - dda / 4dda: four-stream discrete ordinates adding (most accurate for scattering)
+EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso", "dda", "4dda"]
 
 # Temperature-Pressure profile parameterizations
 # See: kernel_registry.VERT_TP
@@ -144,19 +145,19 @@ VERT_MU_OPTIONS = ["dynamic", "constant", "auto"]
 VERT_CLOUD_OPTIONS = ["None", "exponential", "slab", "constant"]
 
 # Line opacity calculation methods
-# See: build_model.py _select_kernels() (opac_line block)
+# See: kernel_registry.py opac_line entries
 # - ck: Correlated-k (fast, binned opacities)
 # - os: Opacity sampling (high-resolution cross-sections)
 # - None: No line opacity
 OPAC_LINE_OPTIONS = ["ck", "os", "None"]
 
 # Rayleigh scattering opacity
-# See: build_model.py _resolve_os_ck_opac()
+# See: kernel_registry.py opac_ray / opac_cia entries
 # Both 'os' and 'ck' use the same compute_ray_opacity kernel
 OPAC_RAY_OPTIONS = ["ck", "os", "None"]
 
 # Collision-Induced Absorption (CIA) opacity
-# See: build_model.py _resolve_os_ck_opac()
+# See: kernel_registry.py opac_ray / opac_cia entries
 # Both 'os' and 'ck' use the same compute_cia_opacity kernel
 OPAC_CIA_OPTIONS = ["ck", "os", "None"]
 
@@ -184,23 +185,23 @@ _OPAC_CLOUD_NO_FILE = {"direct_nk", "nk_f18_blend", "f18", "f18_skew",
                         "grey_const", "grey_profile", "powerlaw", "None", "none"}
 
 # Special opacity sources (like H- bound-free, free-free)
-# See: build_model.py _select_kernels() (opac_special block)
+# See: kernel_registry.py opac_special entries
 OPAC_SPECIAL_OPTIONS = ["ck", "os", "on", "None"]
 
 # Cloud particle size distributions
-# See: build_model.py _extract_fixed_params() (cloud_dist block)
+# See: build_common.py extract_fixed_params()
 # - mono (or monodisperse): Single particle size
 # - lognormal: Log-normal size distribution (requires cld_sigma parameter)
 CLOUD_DIST_OPTIONS = ["mono", "log_normal", "lognormal"]
 
 # Emission mode: how the planet's emission is calculated
-# See: build_model.py build_forward_model() (emission_mode block)
+# See: build_common.py select_model() (emission_mode)
 # - planet: Standard planet emission (uses stellar flux for contrast)
 # - brown_dwarf: Brown dwarf mode (no stellar flux needed)
 EMISSION_MODES = ["planet", "brown_dwarf"]
 
 # Correlated-k mixing rules for combining opacities from multiple species
-# See: build_model.py _select_kernels() (ck_mix block)
+# See: build_common.py CkMix
 # - RORR: Random Overlap with Resorting and Rebinning (default, most accurate)
 # - TRANS: Transmission-optimized method (only for transit_1d)
 CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]

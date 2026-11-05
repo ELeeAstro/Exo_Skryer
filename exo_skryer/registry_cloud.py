@@ -10,6 +10,7 @@ import jax.numpy as jnp
 
 
 __all__ = [
+    "runtime_cache",
     "compute_kk_grid_cache",
     "get_or_create_kk_cache",
     "clear_kk_cache",
@@ -368,3 +369,13 @@ def load_cloud_nk_data(path: str | Path, wl_master: np.ndarray) -> None:
 
     set_cloud_nk_data(jnp.asarray(wl_master), jnp.asarray(n_i), jnp.asarray(k_i))
     _CLOUD_NK_DATA["conducting"] = jnp.asarray(1 if conducting else 0, dtype=jnp.int32)
+
+
+def runtime_cache() -> dict:
+    """Device arrays the opacity kernels read, keyed for the forward-model cache."""
+    if not has_cloud_nk_data():
+        return {}
+    return {
+        "cloud_nk_n": cloud_nk_n(),
+        "cloud_nk_k": cloud_nk_k(),
+    }

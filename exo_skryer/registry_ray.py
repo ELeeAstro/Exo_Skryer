@@ -14,6 +14,7 @@ import jax.numpy as jnp
 
 
 __all__ = [
+    "runtime_cache",
     "RayRegistryEntry",
     "reset_registry",
     "has_ray_data",
@@ -403,3 +404,14 @@ def ray_pick_arrays():
     picks_wavelengths = tuple((lambda _=None, wl=wavelengths: wl) for _ in range(n_species))
     picks_sigma = tuple((lambda _=None, xs=sigma[i]: xs) for i in range(n_species))
     return picks_wavelengths, picks_sigma
+
+
+def runtime_cache() -> dict:
+    """Device arrays the opacity kernels read, keyed for the forward-model cache."""
+    if not has_ray_data():
+        return {}
+    return {
+        "ray_master_wavelength": ray_master_wavelength(),
+        "ray_sigma_linear_table": ray_sigma_linear_table(),
+        "ray_refractivity_coeff_table": ray_refractivity_coeff_table(),
+    }

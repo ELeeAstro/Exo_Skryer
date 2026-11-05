@@ -79,13 +79,14 @@ def main() -> None:
     # Prepare JAX and numpyro JAX settings
     # On non-GPU platforms JAX still discovers and tries to initialise every
     # installed CUDA plugin, which logs a noisy ERROR when cuInit returns
-    # CUDA_ERROR_NO_DEVICE.  Silence that specific logger around the import,
-    # then restore the original level so nothing else is suppressed.
+    # CUDA_ERROR_NO_DEVICE.  Silence JAX's logger around backend
+    # initialisation (the first jax.devices() call, not the import), then
+    # restore the original level so nothing else is suppressed.
     import logging
-    _xla_bridge_log = logging.getLogger("jax._src.xla_bridge")
+    _jax_log = logging.getLogger("jax")
+    _prev_jax_level = _jax_log.level
     if platform not in ("cuda", "rocm"):
-        _prev_xla_level = _xla_bridge_log.level
-        _xla_bridge_log.setLevel(logging.CRITICAL)
+        _jax_log.setLevel(logging.CRITICAL)
 
     from jax import config as jax_config
     jax_config.update("jax_enable_x64", True)
@@ -98,9 +99,6 @@ def main() -> None:
     #     numpyro.set_host_device_count(cfg.runtime.threads)
 
     import jax
-
-    if platform not in ("cuda", "rocm"):
-        _xla_bridge_log.setLevel(_prev_xla_level)
 
     # Print the JAX setup
     try:
@@ -125,6 +123,8 @@ def main() -> None:
                 f"available.{legacy_hint}"
             ) from exc
         raise
+    finally:
+        _jax_log.setLevel(_prev_jax_level)
     print(f"[info] JAX backend: {jax_backend}")
     print(f"[info] JAX devices: {jax.local_device_count()} {jax_devices}")
 
@@ -150,20 +150,15 @@ def main() -> None:
     from .registry_bandpass import load_bandpass_registry
     load_bandpass_registry(obs, full_grid, cut_grid)
 
-    # Initialize chemistry backends with experiment-relative paths before the
-    # forward model's direct-use fallback runs.
-    from .build_chem import (
-        load_nasa9_if_needed,
-        init_atmodeller_if_needed,
-    )
-    load_nasa9_if_needed(cfg, exp_dir)
-    init_atmodeller_if_needed(cfg, exp_dir)
+    # Load chemistry data (NASA-9, FastChem grid, ...) the vert_chem scheme needs.
+    from .build_chem import init_chemistry
+    init_chemistry(cfg, exp_dir)
 
     # Build the forward model from the YAML options - return a function that samplers can use
     from .build_model import build_forward_model
     stellar_flux = read_stellar_spectrum(cfg, cut_grid, bool(cfg.opac.ck), base_dir=exp_dir)
 
-    fm_fnc = build_forward_model(cfg, obs, stellar_flux=stellar_flux)
+    fm_fnc = build_forward_model(cfg, obs, stellar_flux=stellar_flux, exp_dir=exp_dir)
 
     # All samplers are now self-contained - no build_prepared needed!
     t_start_2 = time.perf_counter()

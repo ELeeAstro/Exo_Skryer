@@ -7,79 +7,48 @@ from pathlib import Path
 from typing import Optional
 import numpy as np
 
+from . import registry_line, registry_ck, registry_cia, registry_ray, registry_special, registry_cloud
+# Re-exported registry accessors used by the opacity kernels and analysis scripts.
 from .registry_line import (
-    LineRegistryEntry,
     has_line_data,
-    line_master_wavelength,
-    line_pressure_grid,
-    line_log10_pressure_grid,
     line_sigma_cube,
     line_species_names,
-    line_temperature_grids,
-    line_temperature_grid,
+    line_log10_pressure_grid,
     line_log10_temperature_grids,
     line_runtime_species_order,
     load_line_registry,
     reset_registry as reset_line_registry,
 )
 from .registry_ck import (
-    CKRegistryEntry,
     has_ck_data,
     ck_master_wavelength,
-    ck_pressure_grid,
-    ck_log10_pressure_grid,
-    ck_temperature_grid,
-    ck_temperature_grids,
-    ck_log10_temperature_grids,
-    ck_runtime_species_order,
-    ck_g_points_1d,
-    ck_g_weights_1d,
     ck_sigma_cube,
     ck_species_names,
+    ck_log10_pressure_grid,
+    ck_log10_temperature_grids,
+    ck_runtime_species_order,
     ck_g_points,
     ck_g_weights,
     load_ck_registry,
     reset_registry as reset_ck_registry,
 )
 from .registry_cia import (
-    CiaRegistryEntry,
-    cia_master_wavelength,
+    has_cia_data,
     cia_sigma_cube,
     cia_species_names,
-    cia_temperature_grid,
     cia_temperature_grids,
     cia_log10_temperature_grids,
     cia_runtime_species_order,
-    cia_kept_pair_indices,
-    cia_pair_species_i,
-    cia_pair_species_j,
-    cia_retained_sigma_cube,
-    cia_retained_temperature_grids,
-    cia_retained_log10_temperature_grids,
-    has_cia_data,
     load_cia_registry,
     reset_registry as reset_cia_registry,
 )
 from .registry_ray import (
-    RayRegistryEntry,
     has_ray_data,
-    ray_master_wavelength,
-    ray_sigma_table,
-    ray_nm1_table,
-    ray_nd_ref,
-    ray_species_names,
-    ray_runtime_species_order,
-    ray_sigma_linear_table,
-    ray_refractivity_coeff_table,
-    ray_pick_arrays,
     load_ray_registry,
     reset_registry as reset_ray_registry,
 )
 from .registry_cloud import (
     has_cloud_nk_data,
-    cloud_nk_wavelength,
-    cloud_nk_n,
-    cloud_nk_k,
     load_cloud_nk_data,
     clear_cloud_nk_data,
 )
@@ -94,13 +63,13 @@ from .registry_special import (
     reset_registry as reset_special_registry,
 )
 
-
 __all__ = [
-    'read_master_wl',
-    'init_cut_master_wl',
-    'master_wavelength',
-    'master_wavelength_cut',
-    'build_opacities'
+    "build_opacities",
+    "read_master_wl",
+    "init_cut_master_wl",
+    "master_wavelength",
+    "master_wavelength_cut",
+    "runtime_opacity_cache",
 ]
 
 # Global wavelength array registries
@@ -212,6 +181,12 @@ def init_cut_master_wl(obs, lam_master: Optional[np.ndarray] = None, full_grid=F
     return _MASTER_WL_CUT
 
 
+def _set_master_wavelength_cut(lam: np.ndarray) -> np.ndarray:
+    global _MASTER_WL_CUT
+    _MASTER_WL_CUT = lam
+    return lam
+
+
 def master_wavelength() -> np.ndarray:
     if _MASTER_WL is None:
         raise RuntimeError("Master wavelength grid not initialised; call read_master_wl() first.")
@@ -225,8 +200,11 @@ def master_wavelength_cut() -> np.ndarray:
 
 
 def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
+    global _MASTER_WL, _MASTER_WL_CUT
 
-    # Reset all the global registries
+    # Reset all the global registries (including cached wavelength grids)
+    _MASTER_WL = None
+    _MASTER_WL_CUT = None
     reset_line_registry()
     reset_ck_registry()
     reset_cia_registry()
@@ -264,9 +242,7 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
         #
         # After loading CK tables (possibly cut to obs bands), override the cut master
         # wavelength grid to be the CK wavelength grid.
-        lam_master_cut = np.asarray(ck_master_wavelength(), dtype=float)
-        global _MASTER_WL_CUT
-        _MASTER_WL_CUT = lam_master_cut
+        lam_master_cut = _set_master_wavelength_cut(np.asarray(ck_master_wavelength(), dtype=float))
     else:
         # Load opacity sampling (OS) opacities
         print("[info] Using opacity sampling (os) opacities")
@@ -296,75 +272,9 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
             load_cloud_nk_data(path, wl_master=lam_master_cut)
 
 
-__all__ = [
-    "build_opacities",
-    "read_master_wl",
-    "master_wavelength",
-    "master_wavelength_cut",
-    "LineRegistryEntry",
-    "CKRegistryEntry",
-    "CiaRegistryEntry",
-    "RayRegistryEntry",
-    "has_line_data",
-    "has_ck_data",
-    "has_cia_data",
-    "has_ray_data",
-    "line_master_wavelength",
-    "line_pressure_grid",
-    "line_log10_pressure_grid",
-    "line_temperature_grid",
-    "line_temperature_grids",
-    "line_log10_temperature_grids",
-    "line_sigma_cube",
-    "line_species_names",
-    "line_runtime_species_order",
-    "load_line_registry",
-    "ck_master_wavelength",
-    "ck_pressure_grid",
-    "ck_log10_pressure_grid",
-    "ck_temperature_grid",
-    "ck_temperature_grids",
-    "ck_log10_temperature_grids",
-    "ck_sigma_cube",
-    "ck_species_names",
-    "ck_g_points",
-    "ck_g_weights",
-    "ck_runtime_species_order",
-    "ck_g_points_1d",
-    "ck_g_weights_1d",
-    "load_ck_registry",
-    "load_cia_registry",
-    "load_ray_registry",
-    "cia_master_wavelength",
-    "cia_temperature_grid",
-    "cia_temperature_grids",
-    "cia_log10_temperature_grids",
-    "cia_sigma_cube",
-    "cia_species_names",
-    "cia_runtime_species_order",
-    "cia_kept_pair_indices",
-    "cia_pair_species_i",
-    "cia_pair_species_j",
-    "cia_retained_sigma_cube",
-    "cia_retained_temperature_grids",
-    "cia_retained_log10_temperature_grids",
-    "ray_master_wavelength",
-    "ray_sigma_table",
-    "ray_nm1_table",
-    "ray_nd_ref",
-    "ray_species_names",
-    "ray_runtime_species_order",
-    "ray_sigma_linear_table",
-    "ray_refractivity_coeff_table",
-    "ray_pick_arrays",
-    "has_special_data",
-    "special_master_wavelength",
-    "hminus_temperature_grid",
-    "hminus_log10_temperature_grid",
-    "hminus_bf_log10_sigma_table",
-    "hminus_ff_log10_sigma_table",
-    "has_cloud_nk_data",
-    "cloud_nk_wavelength",
-    "cloud_nk_n",
-    "cloud_nk_k",
-]
+def runtime_opacity_cache() -> dict:
+    """Merged device-array cache from every loaded opacity registry."""
+    cache: dict = {}
+    for registry in (registry_ck, registry_line, registry_cia, registry_ray, registry_cloud, registry_special):
+        cache.update(registry.runtime_cache())
+    return cache

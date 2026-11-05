@@ -1,32 +1,41 @@
 """kernel_registry.py
 ==================
-Central registry mapping YAML physics-scheme names to their Python kernel functions.
+Central registry mapping YAML scheme names to kernel functions.
 
-**Adding a new module is a two-step process:**
+Each entry is a :class:`Kernel`: the function plus what it needs at build time
+(opacity-cache keys, setup loaders). Builders read only this registry, so a new
+scheme needs no builder edits:
 
-1. Implement the function in the appropriate ``vert_*.py`` or ``opacity_*.py`` file
-   and make sure it is exported in that module's ``__all__``.
-2. Import it below and add one entry to the relevant registry dict.
-3. Use the new key string in your YAML config — done!
+1. Implement the kernel with the signature of its kind (listed below).
+2. Register it, either here or from your own script::
 
-Aliases (multiple keys that map to the same function) are marked with ``# alias``.
+       from exo_skryer import kernel_registry as KR
+       KR.register("vert_Tp", "my_profile", my_profile)
 
-Registry layout
----------------
-VERT_TP    : temperature-pressure profile kernels
-VERT_ALT   : altitude / hydrostatic-structure kernels
-VERT_CHEM  : chemistry / VMR-profile kernels
-VERT_MU    : mean-molecular-weight kernels
-VERT_CLOUD : cloud vertical-profile kernels
-OPAC_CLOUD : cloud opacity kernels  (``None`` entry = disabled)
+3. Use ``vert_Tp: my_profile`` in the YAML. A ``module:function`` path
+   (``vert_Tp: mypkg.profiles:my_profile``) also works without registering.
+
+Kinds and signatures
+--------------------
+- ``vert_Tp``: ``(p_lev, params) -> (T_lev, T_lay)``
+- ``vert_alt``: ``(p_lev, T_lay, mu_lay, params) -> (z_lev, z_lay, dz)``
+- ``vert_chem``: ``(p_lay, T_lay, params, nlay) -> vmr_lay``
+- ``vert_mu``: ``(params, vmr_lay, nlay) -> mu_lay``
+- ``vert_cloud``: ``(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params) -> q_c_lay``
+- ``opac_line``, ``opac_ray``, ``opac_cia``, ``opac_special``: ``(state, opac, params) -> kappa``
+- ``opac_cloud``: ``(state, params) -> (k_ext, ssa, g)``
+- ``rt``: keyed ``"<rt_scheme>/<os|ck|ck_trans>"``; 1D kernels are
+  ``(state, params, components, opac) -> (spectrum, contrib)``
 """
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import partial
-from typing import Callable, Optional
+from typing import Callable, Iterable, Optional
 
-# --- vertical structure ---
 from .vert_Tp import (
     isothermal,
     Barstow,
@@ -60,8 +69,11 @@ from .vert_cloud import (
     slab_profile,
     const_profile,
 )
-
-# --- cloud opacity ---
+from .opacity_line import compute_line_opacity
+from .opacity_ck import compute_ck_opacity
+from .opacity_ray import compute_ray_opacity
+from .opacity_cia import compute_cia_opacity
+from .opacity_special import compute_special_opacity
 from .opacity_cloud import (
     compute_cloud_opacity,
     grey_const_cloud,
@@ -71,97 +83,175 @@ from .opacity_cloud import (
     nk_f18_blend,
     f18_skew_cloud,
 )
+from .RT_trans_1D_os import compute_transit_depth_1d_os
+from .RT_trans_1D_ck import compute_transit_depth_1d_ck
+from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
+from .RT_em_1D_os import compute_emission_spectrum_1d_os
+from .RT_em_1D_ck import compute_emission_spectrum_1d_ck
+from .RT_trans_1_5D_os import compute_transit_depth_1_5d_os
+from .RT_trans_1_5D_ck import compute_transit_depth_1_5d_ck
+from .RT_trans_1_5D_ck_trans import compute_transit_depth_1_5d_ck_trans
+from . import build_chem as _chem
 
 __all__ = [
+    "Kernel",
+    "KINDS",
+    "register",
+    "get",
+    "names",
+    "resolve",
     "VERT_TP",
     "VERT_ALT",
     "VERT_CHEM",
     "VERT_MU",
     "VERT_CLOUD",
     "OPAC_CLOUD",
-    "resolve",
 ]
 
+
+@dataclass(frozen=True)
+class Kernel:
+    """A registered scheme and its build-time requirements."""
+    fn: Optional[Callable]                # None = disabled
+    cache: tuple[str, ...] = ()           # opacity-cache keys the kernel reads
+    setup: tuple[Callable, ...] = ()      # setup(cfg, exp_dir) loaders, idempotent
+
+
+KINDS = (
+    "vert_Tp", "vert_alt", "vert_chem", "vert_mu", "vert_cloud",
+    "opac_line", "opac_ray", "opac_cia", "opac_special", "opac_cloud", "rt",
+)
+_REGISTRY: dict[str, dict[str, Kernel]] = {kind: {} for kind in KINDS}
+_ALIASES: dict[str, dict[str, str]] = {kind: {} for kind in KINDS}
+
+
+def register(
+    kind: str,
+    name: str,
+    fn: Optional[Callable],
+    *,
+    cache: Iterable[str] = (),
+    setup: Iterable[Callable] = (),
+    aliases: Iterable[str] = (),
+) -> Kernel:
+    """Register ``fn`` under ``name`` (case-insensitive) for ``kind``."""
+    if kind not in _REGISTRY:
+        raise ValueError(f"Unknown kernel kind {kind!r}. Kinds: {', '.join(KINDS)}")
+    entry = Kernel(fn, tuple(cache), tuple(setup))
+    key = name.strip().lower()
+    _REGISTRY[kind][key] = entry
+    for alias in aliases:
+        _ALIASES[kind][alias.strip().lower()] = key
+    return entry
+
+
+def names(kind: str) -> list[str]:
+    """Canonical names registered for ``kind``."""
+    return sorted(_REGISTRY[kind])
+
+
+def get(kind: str, name, cfg_key: Optional[str] = None) -> Kernel:
+    """Look up ``name`` for ``kind``; ``module:function`` paths are imported."""
+    cfg_key = cfg_key or f"physics.{kind}"
+    if name is None:
+        raise ValueError(f"{cfg_key} must be set explicitly. Valid options: {names(kind)}")
+    raw = str(name).strip()
+    key = raw.lower()
+    key = _ALIASES[kind].get(key, key)
+    if key in _REGISTRY[kind]:
+        return _REGISTRY[kind][key]
+    if ":" in raw:
+        module_name, _, attr = raw.partition(":")
+        try:
+            return Kernel(getattr(importlib.import_module(module_name), attr))
+        except (ImportError, AttributeError) as exc:
+            raise ValueError(f"{cfg_key}='{raw}' could not be imported: {exc}") from exc
+    raise ValueError(f"Unknown {cfg_key}='{raw}'. Valid options: {names(kind)}")
+
+
+class _LegacyView(Mapping):
+    """Read-only ``{name_or_alias: fn}`` view of one kind (pre-registry API)."""
+
+    def __init__(self, kind: str):
+        self._kind = kind
+
+    def _items(self) -> dict:
+        reg = _REGISTRY[self._kind]
+        out = {k: v.fn for k, v in reg.items()}
+        out.update({a: reg[c].fn for a, c in _ALIASES[self._kind].items()})
+        return out
+
+    def __getitem__(self, key):
+        return self._items()[key]
+
+    def __iter__(self):
+        return iter(self._items())
+
+    def __len__(self):
+        return len(self._items())
+
+
+def resolve(name, registry, cfg_key: str):
+    """Pre-registry API: return the kernel function for ``name``."""
+    kind = registry._kind if isinstance(registry, _LegacyView) else registry
+    return get(kind, name, cfg_key).fn
+
+
+VERT_TP = _LegacyView("vert_Tp")
+VERT_ALT = _LegacyView("vert_alt")
+VERT_CHEM = _LegacyView("vert_chem")
+VERT_MU = _LegacyView("vert_mu")
+VERT_CLOUD = _LegacyView("vert_cloud")
+OPAC_CLOUD = _LegacyView("opac_cloud")
+
+
 # ---------------------------------------------------------------------------
-# Temperature-pressure profile kernels
-# Signature: (p_lev, params) -> (T_lev, T_lay)
+# Opacity-cache keys
 # ---------------------------------------------------------------------------
 
-VERT_TP: dict[str, Callable] = {
-    # canonical names
-    "isothermal":        isothermal,
-    "barstow":           Barstow,
-    "milne":             Milne,
-    "guillot":           Guillot,
-    "modified_guillot":  Modified_Guillot,
-    "modified_milne":    Modified_Milne,
-    "line":              Line,
-    "picket_fence":      picket_fence,
-    "mands":             MandS,
-    # aliases
-    "constant":          isothermal,         # alias
-    "guillot_modified":  Modified_Guillot,   # alias
-    "guillot_2":         Modified_Guillot,   # alias
-    "milne_2":           Modified_Milne,     # alias
-    "milne_modified":    Modified_Milne,     # alias
-}
+LINE_CACHE = ("line_sigma_cube", "line_log10_pressure_grid", "line_log10_temperature_grids")
+CK_CACHE = ("ck_sigma_cube", "ck_log10_pressure_grid", "ck_log10_temperature_grids",
+            "g_points", "g_weights")
+CIA_CACHE = ("cia_master_wavelength", "cia_pair_species_i", "cia_pair_species_j",
+             "cia_retained_sigma_cube", "cia_retained_log10_temperature_grids",
+             "cia_retained_temperature_grids")
+RAY_CACHE = ("ray_master_wavelength", "ray_sigma_linear_table")
+CLOUD_NK_CACHE = ("cloud_nk_n", "cloud_nk_k")
+
 
 # ---------------------------------------------------------------------------
-# Altitude / hydrostatic-structure kernels
-# Signature: (p_lev, T_lay, mu_lay, params) -> (z_lev, z_lay, dz)
+# Vertical structure
 # ---------------------------------------------------------------------------
 
-VERT_ALT: dict[str, Callable] = {
-    # canonical names
-    "hypsometric":                   hypsometric,
-    "variable_g":                    hypsometric_variable_g,
-    "p_ref":                         hypsometric_variable_g_pref,
-    # aliases
-    "constant":                      hypsometric,                    # alias
-    "constant_g":                    hypsometric,                    # alias
-    "fixed":                         hypsometric,                    # alias
-    "hypsometric_variable_g":        hypsometric_variable_g,         # alias
-    "variable":                      hypsometric_variable_g,         # alias
-    "hypsometric_variable_g_pref":   hypsometric_variable_g_pref,    # alias
-}
+register("vert_Tp", "isothermal", isothermal, aliases=("constant",))
+register("vert_Tp", "barstow", Barstow)
+register("vert_Tp", "milne", Milne)
+register("vert_Tp", "modified_milne", Modified_Milne, aliases=("milne_2", "milne_modified"))
+register("vert_Tp", "guillot", Guillot)
+register("vert_Tp", "modified_guillot", Modified_Guillot, aliases=("guillot_modified", "guillot_2"))
+register("vert_Tp", "line", Line)
+register("vert_Tp", "picket_fence", picket_fence)
+register("vert_Tp", "mands", MandS)
 
-# ---------------------------------------------------------------------------
-# Chemistry / VMR-profile kernels
-# Signature: (p_lay, T_lay, params, nlay) -> vmr_lay dict
-# ---------------------------------------------------------------------------
+register("vert_alt", "hypsometric", hypsometric, aliases=("constant", "constant_g", "fixed"))
+register("vert_alt", "variable_g", hypsometric_variable_g,
+         aliases=("hypsometric_variable_g", "variable"))
+register("vert_alt", "p_ref", hypsometric_variable_g_pref, aliases=("hypsometric_variable_g_pref",))
 
-VERT_CHEM: dict[str, Callable] = {
-    # canonical names
-    "constant_vmr":         constant_vmr,
-    "constant_vmr_clr":     constant_vmr_clr,
-    "ce":                   CE_fastchem_jax,
-    "fastchem_grid_jax":    CE_fastchem_grid_jax,
-    "rate_ce":              CE_rate_jax,
-    "easychem_jax":         CE_easychem_jax,
-    "quench_approx":        quench_approx,
-    "atmodeller":           CE_atmodeller,
-    # aliases
-    "constant":             constant_vmr,       # alias
-    "constant_clr":         constant_vmr_clr,   # alias
-    "clr":                  constant_vmr_clr,   # alias
-    "chemical_equilibrium": CE_fastchem_jax,    # alias
-    "ce_fastchem_jax":      CE_fastchem_jax,    # alias
-    "fastchem_jax":         CE_fastchem_jax,    # alias
-    "ce_fastchem_grid":     CE_fastchem_grid_jax,   # alias
-    "fastchem_ce_grid":     CE_fastchem_grid_jax,   # alias
-    "rate_jax":             CE_rate_jax,        # alias
-    "ce_rate_jax":          CE_rate_jax,        # alias
-    "easychem":             CE_easychem_jax,    # alias
-    "quench":               quench_approx,      # alias
-}
+register("vert_chem", "constant_vmr", constant_vmr, aliases=("constant",))
+register("vert_chem", "constant_vmr_clr", constant_vmr_clr, aliases=("constant_clr", "clr"))
+register("vert_chem", "ce", CE_fastchem_jax, setup=(_chem.init_fastchem_grid,),
+         aliases=("chemical_equilibrium", "ce_fastchem_jax", "fastchem_jax"))
+register("vert_chem", "fastchem_grid_jax", CE_fastchem_grid_jax, setup=(_chem.init_fastchem_grid,),
+         aliases=("ce_fastchem_grid", "fastchem_ce_grid"))
+register("vert_chem", "rate_ce", CE_rate_jax, setup=(_chem.load_nasa9,),
+         aliases=("rate_jax", "ce_rate_jax"))
+register("vert_chem", "easychem_jax", CE_easychem_jax,
+         setup=(_chem.load_nasa9, _chem.init_element_potentials), aliases=("easychem",))
+register("vert_chem", "quench_approx", quench_approx, setup=(_chem.init_quench_approx,),
+         aliases=("quench",))
+register("vert_chem", "atmodeller", CE_atmodeller, setup=(_chem.init_atmodeller,))
 
-# ---------------------------------------------------------------------------
-# Mean-molecular-weight kernels
-# Signature: (params, vmr_lay, nlay) -> mu_lay
-#
-# These are thin wrappers so that constant_mu / compute_mu present a uniform
-# interface regardless of whether the user passes `mu` as a parameter.
-# ---------------------------------------------------------------------------
 
 def _mu_auto(params, vmr_lay, nlay):
     """Use constant_mu if 'mu' is a free parameter, otherwise compute from VMR."""
@@ -184,113 +274,59 @@ def _mu_dynamic(params, vmr_lay, nlay):
     return compute_mu(vmr_lay)
 
 
-VERT_MU: dict[str, Callable] = {
-    # canonical names
-    "auto":     _mu_auto,
-    "constant": _mu_constant,
-    "dynamic":  _mu_dynamic,
-    # aliases
-    "fixed":    _mu_constant,   # alias
-    "variable": _mu_dynamic,    # alias
-    "vmr":      _mu_dynamic,    # alias
-}
+register("vert_mu", "auto", _mu_auto)
+register("vert_mu", "constant", _mu_constant, aliases=("fixed",))
+register("vert_mu", "dynamic", _mu_dynamic, aliases=("variable", "vmr"))
+
+register("vert_cloud", "none", no_cloud, aliases=("off", "no_cloud"))
+register("vert_cloud", "exponential", exponential_decay_profile,
+         aliases=("exp_decay", "exponential_decay", "exponential_decay_profile"))
+register("vert_cloud", "slab", slab_profile, aliases=("slab_profile",))
+register("vert_cloud", "constant", const_profile, aliases=("const", "const_profile"))
+
 
 # ---------------------------------------------------------------------------
-# Cloud vertical-profile kernels
-# Signature: (p_lay, T_lay, mu_lay, rho_lay, nd_lay, params) -> q_c_lay
+# Opacities
 # ---------------------------------------------------------------------------
 
-VERT_CLOUD: dict[str, Callable] = {
-    # canonical names
-    "none":        no_cloud,
-    "exponential": exponential_decay_profile,
-    "slab":        slab_profile,
-    "constant":    const_profile,
-    # aliases
-    "off":                       no_cloud,                    # alias
-    "no_cloud":                  no_cloud,                    # alias
-    "exp_decay":                 exponential_decay_profile,   # alias
-    "exponential_decay":         exponential_decay_profile,   # alias
-    "exponential_decay_profile": exponential_decay_profile,   # alias
-    "slab_profile":              slab_profile,                # alias
-    "const":                     const_profile,              # alias
-    "const_profile":             const_profile,              # alias
-}
+register("opac_line", "none", None)
+register("opac_line", "os", compute_line_opacity, cache=LINE_CACHE)
+register("opac_line", "ck", compute_ck_opacity, cache=CK_CACHE)
+
+# Rayleigh and CIA kernels are the same for os and ck.
+for _kind, _fn, _cache in (("opac_ray", compute_ray_opacity, RAY_CACHE),
+                           ("opac_cia", compute_cia_opacity, CIA_CACHE)):
+    register(_kind, "none", None)
+    register(_kind, "os", _fn, cache=_cache, aliases=("ck",))
+
+# H- tables are optional; the kernel returns zeros without them.
+register("opac_special", "none", None, aliases=("off", "false", "0"))
+register("opac_special", "on", compute_special_opacity, aliases=("os", "ck", "true", "hminus", "h-"))
+
+_f18 = partial(compute_cloud_opacity, opacity_scheme="f18")
+_madt = partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh")
+_lxmie = partial(compute_cloud_opacity, opacity_scheme="lxmie")
+register("opac_cloud", "none", None, aliases=("off",))
+register("opac_cloud", "grey_const", grey_const_cloud)
+register("opac_cloud", "grey_profile", grey_profile_cloud, aliases=("grey_slab",))
+register("opac_cloud", "powerlaw", deck_and_powerlaw, aliases=("deck_and_powerlaw",))
+register("opac_cloud", "f18", _f18)
+register("opac_cloud", "madt_rayleigh", _madt, cache=CLOUD_NK_CACHE, aliases=("madt-rayleigh", "mie_madt"))
+register("opac_cloud", "lxmie", _lxmie, cache=CLOUD_NK_CACHE, aliases=("mie_full", "full_mie"))
+register("opac_cloud", "direct_nk", direct_nk, aliases=("nk",))
+register("opac_cloud", "nk_f18_blend", nk_f18_blend, aliases=("nk_f18",))
+register("opac_cloud", "f18_skew", f18_skew_cloud, aliases=("f18_skewnormal",))
+
 
 # ---------------------------------------------------------------------------
-# Cloud opacity kernels
-# Signature: (state, params) -> (k_ext, ssa, g)
-# A value of None means cloud opacity is disabled for that entry.
+# Radiative transfer
 # ---------------------------------------------------------------------------
 
-OPAC_CLOUD: dict[str, Optional[Callable]] = {
-    # canonical names
-    "none":          None,
-    "grey_const":    grey_const_cloud,
-    "grey_profile":  grey_profile_cloud,
-    "powerlaw":      deck_and_powerlaw,
-    "f18":           partial(compute_cloud_opacity, opacity_scheme="f18"),
-    "madt_rayleigh": partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh"),
-    "lxmie":         partial(compute_cloud_opacity, opacity_scheme="lxmie"),
-    "direct_nk":     direct_nk,
-    "nk_f18_blend":  nk_f18_blend,
-    "f18_skew":      f18_skew_cloud,
-    # aliases
-    "nk_f18":           nk_f18_blend,                                                  # alias
-    "f18_skewnormal":   f18_skew_cloud,                                                # alias
-    "off":              None,                                                          # alias
-    "grey_slab":        grey_profile_cloud,                                            # alias
-    "deck_and_powerlaw": deck_and_powerlaw,                                            # alias
-    "madt-rayleigh":    partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh"), # alias
-    "mie_madt":         partial(compute_cloud_opacity, opacity_scheme="madt_rayleigh"), # alias
-    "mie_full":         partial(compute_cloud_opacity, opacity_scheme="lxmie"),         # alias
-    "full_mie":         partial(compute_cloud_opacity, opacity_scheme="lxmie"),         # alias
-    "nk":               direct_nk,                                                     # alias
-}
-
-# ---------------------------------------------------------------------------
-# Public resolver
-# ---------------------------------------------------------------------------
-
-def resolve(name, registry: dict, cfg_key: str):
-    """Return the kernel for *name* from *registry*, raising a clear error on failure.
-
-    Parameters
-    ----------
-    name : str or None
-        The scheme name from the YAML config (case-insensitive).  A Python
-        ``None`` (i.e. the YAML key was absent entirely) always raises.
-    registry : dict
-        One of the ``VERT_TP`` / ``VERT_ALT`` / ``VERT_CHEM`` / … dicts above.
-    cfg_key : str
-        Config key shown in the error message, e.g. ``"physics.vert_Tp"``.
-
-    Returns
-    -------
-    Callable or None
-        The kernel function.  ``None`` is a valid return value for registries
-        that explicitly map ``"none"`` to ``None`` (e.g. ``OPAC_CLOUD``).
-
-    Raises
-    ------
-    ValueError
-        If *name* is Python ``None`` (key missing from YAML) or not found in
-        the registry, with a list of valid options included in the message.
-    """
-    if name is None:
-        raise ValueError(
-            f"{cfg_key} must be set explicitly. "
-            f"Valid options: {_option_list(registry)}"
-        )
-    key = str(name).strip().lower()
-    if key in registry:
-        return registry[key]
-    raise ValueError(
-        f"Unknown {cfg_key}='{name}'. "
-        f"Valid options: {_option_list(registry)}"
-    )
-
-
-def _option_list(registry: dict) -> list[str]:
-    """Return sorted unique canonical option names for error messages."""
-    return sorted(registry.keys())
+register("rt", "transit_1d/os", compute_transit_depth_1d_os)
+register("rt", "transit_1d/ck", compute_transit_depth_1d_ck)
+register("rt", "transit_1d/ck_trans", compute_transit_depth_1d_ck_trans)
+register("rt", "emission_1d/os", compute_emission_spectrum_1d_os)
+register("rt", "emission_1d/ck", compute_emission_spectrum_1d_ck)
+register("rt", "transit_1_5d/os", compute_transit_depth_1_5d_os)
+register("rt", "transit_1_5d/ck", compute_transit_depth_1_5d_ck)
+register("rt", "transit_1_5d/ck_trans", compute_transit_depth_1_5d_ck_trans)
