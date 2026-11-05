@@ -13,7 +13,29 @@ from typing import Optional, Literal
 
 
 
-__all__ = ['pchip_1d', 'latin_hypercube', 'simpson', 'simpson_padded']
+__all__ = ['safe_sqrt', 'pchip_1d', 'latin_hypercube', 'simpson', 'simpson_padded']
+
+
+def safe_sqrt(x: jnp.ndarray) -> jnp.ndarray:
+    """
+    Square root that returns 0 for x <= 0 with a finite (zero) gradient there.
+
+    ``jnp.sqrt(jnp.maximum(x, 0.0))`` gives a NaN gradient wherever x <= 0,
+    because d/dx sqrt(0) = inf is multiplied by the zero gradient of the clamp.
+    The inner ``where`` keeps sqrt away from 0 so its gradient stays finite.
+
+    Parameters
+    ----------
+    x : `~jax.numpy.ndarray`
+        Input array of any shape.
+
+    Returns
+    -------
+    `~jax.numpy.ndarray`
+        sqrt(x) where x > 0, otherwise 0, with the same shape as `x`.
+    """
+    pos = x > 0.0
+    return jnp.where(pos, jnp.sqrt(jnp.where(pos, x, 1.0)), 0.0)
 
 
 def _pchip_slopes(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:

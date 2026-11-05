@@ -116,9 +116,12 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
         sigma_3d = sigma_cube[i]  # (nT, nP, nwl) in log10(cm^2)
         log_temp_grid = log_temperature_grids[i]  # (nT,)
 
-        t_idx = jnp.searchsorted(log_temp_grid, log_t_layers) - 1
+        # Clip to this species' own T range: shorter grids are edge-padded, and a
+        # zero-width padded segment would give a NaN gradient above its Tmax.
+        log_t_c = jnp.clip(log_t_layers, log_temp_grid[0], log_temp_grid[-1])
+        t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
         t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-        t_weight = (log_t_layers - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+        t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
         t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
         s_t0_p0 = sigma_3d[t_idx, p_idx, :]         # (nlay, nwl)

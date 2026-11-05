@@ -65,9 +65,12 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
 
         def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
             # Temperature bracket indices and weights (species-dependent)
-            t_idx = jnp.searchsorted(log_temp_grid, log_t) - 1
+            # Clip to this species' own T range: shorter grids are edge-padded, and a
+            # zero-width padded segment would give a NaN gradient above its Tmax.
+            log_t_c = jnp.clip(log_t, log_temp_grid[0], log_temp_grid[-1])
+            t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
             t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-            t_weight = (log_t - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+            t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
             t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
             # Bilinear interpolation in (logT, logP). Indices are scalars here, so outputs are (nwl, ng).
@@ -237,9 +240,12 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
         def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
-            t_idx = jnp.searchsorted(log_temp_grid, log_t) - 1
+            # Clip to this species' own T range: shorter grids are edge-padded, and a
+            # zero-width padded segment would give a NaN gradient above its Tmax.
+            log_t_c = jnp.clip(log_t, log_temp_grid[0], log_temp_grid[-1])
+            t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
             t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-            t_weight = (log_t - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+            t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
             t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
             s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
@@ -359,9 +365,12 @@ def compute_ck_opacity_perspecies(
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
         def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
-            t_idx = jnp.searchsorted(log_temp_grid, log_t) - 1
+            # Clip to this species' own T range: shorter grids are edge-padded, and a
+            # zero-width padded segment would give a NaN gradient above its Tmax.
+            log_t_c = jnp.clip(log_t, log_temp_grid[0], log_temp_grid[-1])
+            t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
             t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-            t_weight = (log_t - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
+            t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
             t_weight = jnp.clip(t_weight, 0.0, 1.0)
 
             s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]

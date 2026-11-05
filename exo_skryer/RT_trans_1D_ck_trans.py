@@ -21,6 +21,7 @@ from typing import Dict, Mapping, Tuple
 import jax.numpy as jnp
 from jax import lax
 
+from .aux_functions import safe_sqrt
 from .refraction import maybe_refraction_cutoff_mask
 from .RT_trans_1D_os import _get_base_transit_radius
 
@@ -59,8 +60,8 @@ def _build_transit_geometry(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray,
     r_low_2d = r_low[None, :]
     dr_2d = dr[None, :]
 
-    sqrt_up = jnp.sqrt(jnp.maximum(r_up_2d**2 - r_mid_2d**2, 0.0))
-    sqrt_low = jnp.sqrt(jnp.maximum(r_low_2d**2 - r_mid_2d**2, 0.0))
+    sqrt_up = safe_sqrt(r_up_2d**2 - r_mid_2d**2)
+    sqrt_low = safe_sqrt(r_low_2d**2 - r_mid_2d**2)
 
     P_case1 = jnp.zeros_like(sqrt_up)
     P_case2 = 2.0 / dr_2d * sqrt_up
