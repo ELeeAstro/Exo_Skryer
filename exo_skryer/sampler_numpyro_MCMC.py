@@ -292,6 +292,19 @@ def _compute_init_u(param, bijector: Bijector) -> float:
     """Compute initial u-space value for a parameter."""
     dist = str(getattr(param, "dist", "")).lower()
     init_theta = _default_init(dist, param)
+    # An init on a logit bound maps to a saturated u where the gradient
+    # vanishes and the chain never moves; start just inside the bounds.
+    if _infer_transform(dist, param) == "logit":
+        low = float(getattr(param, "low"))
+        high = float(getattr(param, "high"))
+        margin = 1e-3 * (high - low)
+        clipped = min(max(init_theta, low + margin), high - margin)
+        if clipped != init_theta:
+            print(
+                f"[warn] init={init_theta} for '{getattr(param, 'name', '?')}' is on "
+                f"or outside its bounds [{low}, {high}]; starting at {clipped:.6g}."
+            )
+            init_theta = clipped
     init_arr = jnp.asarray(init_theta)
     return float(bijector.inverse(init_arr))
 
@@ -348,9 +361,10 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_acti
 
         def _ok(_):
             r = res / sig
-            r = jnp.where(jnp.isfinite(r), r, 0.0)
             logC = -jnp.log(sig) - 0.5 * jnp.log(2.0 * jnp.pi)
-            return jnp.sum(logC - 0.5 * (r * r))
+            ll = jnp.sum(logC - 0.5 * (r * r))
+            # Reject non-finite data/residuals rather than scoring them as a perfect fit.
+            return jnp.where(jnp.isfinite(ll), ll, jnp.asarray(LOG_FLOOR))
 
         def _bad(_):
             return jnp.asarray(LOG_FLOOR)
@@ -438,7 +452,7 @@ def run_nuts_numpyro(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nda
     )
 
     # Setup MCMC
-    rng_key = jax.random.PRNGKey(int(seed))
+    rng_key = jax.random.key(int(seed))
     mcmc = MCMC(
         kernel,
         num_warmup=int(warmup),

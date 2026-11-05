@@ -13,37 +13,29 @@ from __future__ import annotations
 
 from typing import Dict, Any, Tuple
 from pathlib import Path
-import types
+import math
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow_probability.substrates.jax as tfp
+from jaxns.constrained_sampler import UniDimSliceSampler
+from jaxns.core import NestedSampler
+from jaxns.depth_condition import DepthCondition
+from jaxns.model import Model
+from jaxns.priors import Prior
 from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
-
-def _patch_jax_for_tfp() -> None:
-    """Compatibility shim for TFP versions expecting removed JAX symbols."""
-    try:
-        interps = getattr(jax, "interpreters", None)
-        if interps is None:
-            return
-        xla_mod = getattr(interps, "xla", None)
-        if xla_mod is None:
-            xla_mod = types.SimpleNamespace()
-            setattr(interps, "xla", xla_mod)
-        if not hasattr(xla_mod, "pytype_aval_mappings"):
-            setattr(xla_mod, "pytype_aval_mappings", jax.core.pytype_aval_mappings)
-    except Exception:
-        # If patching fails, normal import path will raise the underlying error.
-        pass
-
-
-_patch_jax_for_tfp()
-import tensorflow_probability.substrates.jax as tfp
-from jaxns import NestedSampler, TerminationCondition, resample, Model, Prior, summary
-from jaxns.utils import save_results
-
 tfpd = tfp.distributions
+
+# jaxns 2 options with no jaxns 3 equivalent; reported and ignored if set.
+_V2_ONLY_OPTIONS = (
+    "difficult_model",
+    "parameter_estimation",
+    "shell_fraction",
+    "gradient_guided",
+    "init_efficiency_threshold",
+)
 
 __all__ = [
     "make_jaxns_model",
@@ -165,11 +157,11 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
     if overlap:
         raise ValueError(f"Parameter(s) appear both as sampled and delta: {sorted(overlap)}")
 
-    # ----- prior_model: generator of jaxns.Prior objects -----
-    def prior_model():
+    # ----- realise_params: sample jaxns.Prior objects into a parameter dict -----
+    def realise_params() -> Dict[str, Any]:
         """
-        Generator that yields Prior(...) objects and finally returns the
-        dict of parameters passed to the likelihood.
+        Realise the sampled priors and return the dict of parameters passed
+        to the likelihood.
 
         Returned dict ALWAYS contains:
           - all sampled params (physical names)
@@ -196,21 +188,21 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
                 if transform == "logit":
                     # Unconstrained latent + smooth map to (low, high)
                     # z ~ Logistic(0,1) => sigmoid(z) ~ Uniform(0,1) exactly
-                    z = yield Prior(tfpd.Logistic(loc=0.0, scale=1.0), name=f"{name}__z")
+                    z = Prior(tfpd.Logistic(loc=0.0, scale=1.0), name=f"{name}__z").realise()
                     t = _sigmoid(z)  # sigmoid output is strictly in (0,1) for finite inputs
                     theta = low + (high - low) * t
                 else:
-                    theta = yield Prior(tfpd.Uniform(low=low, high=high), name=name)
+                    theta = Prior(tfpd.Uniform(low=low, high=high), name=name).realise()
 
             elif dist_name in ("gaussian", "normal"):
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
-                theta = yield Prior(tfpd.Normal(loc=mu, scale=sigma), name=name)
+                theta = Prior(tfpd.Normal(loc=mu, scale=sigma), name=name).realise()
 
             elif dist_name == "lognormal":
                 mu = float(getattr(p, "mu"))
                 sigma = float(getattr(p, "sigma"))
-                theta = yield Prior(tfpd.LogNormal(loc=mu, scale=sigma), name=name)
+                theta = Prior(tfpd.LogNormal(loc=mu, scale=sigma), name=name).realise()
 
             else:
                 raise ValueError(f"Unsupported dist '{dist_name}' for param '{name}' in JAXNS model.")
@@ -269,7 +261,11 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
 
         return jax.lax.cond(valid_mu, valid_ll, invalid_ll, operand=None)
 
-    return Model(prior_model=prior_model, log_likelihood=log_likelihood)
+    # jaxns 3: the prior model realises the priors and returns the log-likelihood.
+    def prior_model() -> jnp.ndarray:
+        return log_likelihood(realise_params())
+
+    return Model(prior_model=prior_model)
 
 
 def run_nested_jaxns(
@@ -287,26 +283,30 @@ def run_nested_jaxns(
     jcfg = cfg.sampling.jaxns
 
     # ---- core NS configuration ----
-    max_samples = int(getattr(jcfg, "max_samples", 100_000))
+    max_samples = getattr(jcfg, "max_samples", None)
+    if max_samples is not None:
+        max_samples = int(max_samples)
     num_live_points = getattr(jcfg, "num_live_points", None)
-    if num_live_points is not None:
-        num_live_points = int(num_live_points)
-
     s = getattr(jcfg, "s", None)
-    k = getattr(jcfg, "k", None)
+    k = int(getattr(jcfg, "k", None) or 0)
     c = getattr(jcfg, "c", None)
-    shell_fraction = getattr(jcfg, "shell_fraction", 0.5)
-
-    difficult_model = bool(getattr(jcfg, "difficult_model", False))
-    parameter_estimation = bool(getattr(jcfg, "parameter_estimation", True))
-    gradient_guided = bool(getattr(jcfg, "gradient_guided", False))
-    init_eff_thr = float(getattr(jcfg, "init_efficiency_threshold", 0.1))
     verbose = bool(getattr(jcfg, "verbose", False))
 
     posterior_samples = int(getattr(jcfg, "posterior_samples", 5000))
     seed = int(getattr(jcfg, "seed", 0))
 
-    key = jax.random.PRNGKey(seed)
+    ignored = [n for n in _V2_ONLY_OPTIONS if getattr(jcfg, n, None) is not None]
+    if ignored:
+        print(f"[JAXNS] Ignoring options removed in jaxns 3: {ignored}")
+
+    # jaxns 2's c (number of parallel Markov chains) is jaxns 3's
+    # root_allocation_degree; jaxns 2 derived c = num_live_points // (k + 1).
+    if c is not None:
+        root_degree = int(c)
+    elif num_live_points is not None:
+        root_degree = max(1, int(num_live_points) // (k + 1))
+    else:
+        root_degree = None  # jaxns default: 30 * D
 
     # ---- build JAXNS model from cfg + obs + fm ----
     model = make_jaxns_model(cfg, obs, fm)
@@ -314,61 +314,89 @@ def run_nested_jaxns(
     # Get parameter names for printing
     param_names = [p.name for p in cfg.params if str(getattr(p, "dist", "")).lower() != "delta"]
 
-    print(f"[JAXNS] Running nested sampling...")
-    print(f"[JAXNS] Free parameters: {len(param_names)}")
-    print(f"[JAXNS] Parameter names: {param_names}")
-    print(f"[JAXNS] num_live_points: {num_live_points}")
-    print(f"[JAXNS] max_samples: {max_samples}")
-    print(f"[JAXNS] difficult_model: {difficult_model}")
-    print(f"[JAXNS] gradient_guided: {gradient_guided}")
-
-    ns = NestedSampler(
-        model=model,
-        max_samples=max_samples,
-        num_live_points=num_live_points,
-        s=s,
-        k=k,
-        c=c,
-        difficult_model=difficult_model,
-        parameter_estimation=parameter_estimation,
-        shell_fraction=shell_fraction,
-        gradient_guided=gradient_guided,
-        init_efficiency_threshold=init_eff_thr,
-        verbose=verbose,
-    )
+    # s = slices per dimension (jaxns default 5 per dimension)
+    sampler = None
+    if s is not None:
+        sampler = UniDimSliceSampler(num_slices=max(1, int(s) * len(param_names)))
 
     # ---- termination condition ----
     term_cfg = getattr(jcfg, "termination", None)
-    if term_cfg is not None:
-        term_cond = TerminationCondition(
-            ess=getattr(term_cfg, "ess", None),
-            evidence_uncert=getattr(term_cfg, "evidence_uncert", None),
-            dlogZ=getattr(term_cfg, "dlogZ", None),
-            max_samples=getattr(term_cfg, "max_samples", None),
-            max_num_likelihood_evaluations=getattr(term_cfg, "max_num_likelihood_evaluations", None),
-            rtol=getattr(term_cfg, "rtol", None),
-            atol=getattr(term_cfg, "atol", None),
-        )
-    else:
-        term_cond = TerminationCondition(ess=None, max_samples=max_samples)
+
+    def _term(name):
+        return getattr(term_cfg, name, None) if term_cfg is not None else None
+
+    # jaxns 2 dlogZ = log(1 + Z_remaining / Z_current); jaxns 3 takes the
+    # remaining-evidence fraction Z_remaining / (Z_current + Z_remaining).
+    depth_condition = None
+    if _term("dlogZ") is not None:
+        depth_condition = DepthCondition(dlogZ=-math.expm1(-float(_term("dlogZ"))))
+    if _term("max_samples") is not None:
+        term_max = int(_term("max_samples"))
+        max_samples = term_max if max_samples is None else min(max_samples, term_max)
+    ess_target = _term("ess")
+    uncert_target = _term("evidence_uncert")
+    max_like = _term("max_num_likelihood_evaluations")
+    unsupported = [n for n in ("rtol", "atol") if _term(n) is not None]
+    if unsupported:
+        print(f"[JAXNS] Ignoring termination options removed in jaxns 3: {unsupported}")
+
+    print(f"[JAXNS] Running nested sampling...")
+    print(f"[JAXNS] Free parameters: {len(param_names)}")
+    print(f"[JAXNS] Parameter names: {param_names}")
+    print(f"[JAXNS] root_allocation_degree: {root_degree if root_degree is not None else 'default (30*D)'}")
+    print(f"[JAXNS] max_samples: {max_samples}")
+    print(f"[JAXNS] phantom samples: {k > 0}")
+
+    ns = NestedSampler(
+        model=model,
+        root_allocation_degree=root_degree,
+        max_samples=max_samples,
+        sampler=sampler,
+        depth_condition=depth_condition,
+        collect_phantom_samples=k > 0,
+        verbose=verbose,
+    )
 
     # ---- run nested sampler ----
-    term_reason, state = ns(key, term_cond=term_cond)
-    results = ns.to_results(termination_reason=term_reason, state=state)
+    key = jax.random.key(seed)
+    run_key, post_key = jax.random.split(key)
+    state = ns.run(key=run_key)
+
+    # ESS / evidence-uncertainty / likelihood-budget targets are a Python goal
+    # in jaxns 3: keep extending the run until they are met.
+    if ess_target is not None or uncert_target is not None or max_like is not None:
+
+        def goal(st) -> bool:
+            if int(st.termination_reason) != 0:
+                return True
+            if max_like is not None and int(st.total_num_likelihood_evaluations) >= int(max_like):
+                return True
+            res = st.to_result()
+            if ess_target is not None and float(res.ess) < float(ess_target):
+                return False
+            if uncert_target is not None and float(res.log_Z_uncert) > float(uncert_target):
+                return False
+            return True
+
+        if not goal(state):
+            state = ns.resume_until_goal(state, goal)
+
+    results = state.to_result().trim()
+    term_reason = int(results.termination_reason)
 
     print(f"JAXNS termination_reason: {term_reason}")
 
     # Save full results to experiment directory
     exp_dir.mkdir(parents=True, exist_ok=True)
     results_file = exp_dir / "jaxns_results.json"
-    save_results(results, str(results_file))
-    summary(results)
+    results.save(str(results_file))
+    results.summary()
 
     # ---- evidence info ----
     evidence_info: Dict[str, Any] = {
         "logZ": float(results.log_Z_mean),
         "logZ_err": float(results.log_Z_uncert),
-        "ESS": float(results.ESS),
+        "ESS": float(results.ess),
         "H_mean": float(results.H_mean),
         "n_samples": int(results.total_num_samples),
         "n_like": int(results.total_num_likelihood_evaluations),
@@ -377,14 +405,7 @@ def run_nested_jaxns(
     }
 
     # ---- posterior resampling to equal-weight samples ----
-    post_key = jax.random.split(key, 2)[1]
-    eq_samples = resample(
-        key=post_key,
-        samples=results.samples,
-        log_weights=results.log_dp_mean,
-        S=posterior_samples,
-        replace=True,
-    )
+    eq_samples = results.resample(posterior_samples, key=post_key).X_samples
 
     # ---- convert to samples_dict format ----
     samples_dict: Dict[str, np.ndarray] = {}

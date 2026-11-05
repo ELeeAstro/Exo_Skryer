@@ -36,6 +36,45 @@ def _append_env_flags(name, flags):
     os.environ[name] = " ".join(part for part in (current, flags) if part)
 
 
+# Launcher variables giving a process's rank among those on the same node.
+_LOCAL_RANK_VARS = (
+    "OMPI_COMM_WORLD_LOCAL_RANK",
+    "MPI_LOCALRANKID",
+    "PMI_LOCAL_RANK",
+    "MV2_COMM_WORLD_LOCAL_RANK",
+    "SLURM_LOCALID",
+)
+
+
+def _limit_cpu_threads(threads):
+    """Restrict this process to ``threads`` CPU cores.
+
+    XLA has no flag for its CPU thread count, but it sizes its thread pool
+    from the cores the process may run on, so CPU affinity is the supported
+    limit. Processes sharing a node (MPI/Slurm) take consecutive blocks of
+    cores by local rank so they do not pile onto the same cores. Affinity is
+    Linux-only; elsewhere JAX uses every core.
+    """
+    if threads < 1:
+        raise ValueError(f"runtime.threads must be >= 1, got {threads}")
+    if not hasattr(os, "sched_setaffinity"):
+        print(
+            f"[warn] runtime.threads={threads} cannot be enforced on this OS; "
+            "JAX will use all available cores."
+        )
+        return
+    allowed = sorted(os.sched_getaffinity(0))
+    if threads >= len(allowed):
+        return
+    local_rank = next(
+        (int(os.environ[v]) for v in _LOCAL_RANK_VARS if os.environ.get(v, "").isdigit()),
+        0,
+    )
+    start = (local_rank * threads) % len(allowed)
+    cores = {allowed[(start + i) % len(allowed)] for i in range(threads)}
+    os.sched_setaffinity(0, cores)
+
+
 def apply_runtime_env(rc):
     """Apply runtime settings before importing JAX or NumPyro.
 
@@ -99,13 +138,12 @@ def apply_runtime_env(rc):
     else:
         # Avoid accelerator probing and expose configured CPU parallelism.
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        # jax_threads is a legacy alias for threads.
         threads = getattr(rt, "threads", None)
+        if threads is None:
+            threads = getattr(rt, "jax_threads", None)
         if threads is not None:
-            _append_env_flags(
-                "XLA_FLAGS",
-                "--xla_cpu_multi_thread_eigen=true "
-                f"intra_op_parallelism_threads={int(threads)}",
-            )
+            _limit_cpu_threads(int(threads))
 
     if platform in ("cuda", "rocm"):
         preallocate = getattr(rt, "preallocate", False)
@@ -115,16 +153,11 @@ def apply_runtime_env(rc):
         mem_fraction = getattr(rt, "mem_fraction", 0.75)
         os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", str(mem_fraction))
 
+    # JAX_PLATFORM_NAME (what numpyro.set_platform used) no longer exists in
+    # JAX, so an explicit NumPyro platform overrides JAX_PLATFORMS instead.
     np_platform = getattr(rt, "numpyro_platform", None)
     if np_platform:
-        np_platform = str(np_platform).lower()
-        if np_platform not in ("cpu", "gpu"):
-            raise ValueError("runtime.numpyro_platform must be 'cpu' or 'gpu'")
-        os.environ["JAX_PLATFORM_NAME"] = np_platform
-
-    jax_threads = getattr(rt, "jax_threads", None)
-    if jax_threads is not None:
-        os.environ["JAX_NUM_THREADS"] = str(int(jax_threads))
+        os.environ["JAX_PLATFORMS"] = normalize_runtime_platform(np_platform)
 
     blackjax_threads = getattr(rt, "blackjax_threads", None)
     if blackjax_threads is not None:

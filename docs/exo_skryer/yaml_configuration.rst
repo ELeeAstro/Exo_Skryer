@@ -548,8 +548,8 @@ Fields not listed here may be ignored.
   ``ess, evidence_uncert, dlogZ, max_samples, max_num_likelihood_evaluations, rtol, atol``.
 
 ``sampling.blackjax_ns``
-  Common fields: ``num_live_points, num_inner_steps, num_delete, dlogz_stop, seed,
-  likelihood_batch_size, jit``.
+  Common fields: ``num_live_points, num_inner_steps, num_delete, dlogz_stop, posterior_samples, seed, jit``.
+  ``dlogz_stop`` is ``log(1 + Z_live / Z)``, as ``dlogz`` is for dynesty.
 
 ``sampling.ultranest``
   Common fields: ``num_live_points, min_num_live_points, dlogz, max_iters, verbose, show_status``.

@@ -3,7 +3,7 @@ sampler_blackjax_NS.py
 ======================
 
 BlackJAX nested sampling driver with:
-- Stable parameter keys (sampled + deltas + optional defaults injected)
+- Particles hold only the sampled parameters; deltas and defaults join in the likelihood
 - Optional logit latent parameterisation for bounded uniforms (via distrax.Transformed)
 - Same Gaussian likelihood + jitter as JAXNS/dynesty/ultranest
 """
@@ -179,13 +179,13 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     num_delete = int(getattr(ns_cfg, "num_delete", max(1, num_live // 2)))
     seed = int(getattr(ns_cfg, "seed", 0))
     dlogz_stop = float(getattr(ns_cfg, "dlogz_stop", 0.0))
-    ll_batch_size = int(getattr(ns_cfg, "likelihood_batch_size", min(num_live, 16)))
-    ll_batch_size = max(1, min(num_live, ll_batch_size))
     jit_enable = bool(getattr(ns_cfg, "jit", True))
+    posterior_samples = int(getattr(ns_cfg, "posterior_samples", 5000))
 
     exp_dir.mkdir(parents=True, exist_ok=True)
 
     delta_dict, defaults_active = _collect_delta_and_defaults(cfg)
+    jitter_key = jitter_param_name(getattr(getattr(cfg, "physics", None), "rt_scheme", None))
 
     # Build joint prior
     prior, param_names = build_joint_prior_distrax(cfg)
@@ -197,54 +197,43 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     print(f"[blackjax_ns] num_inner_steps: {num_inner_steps}")
     print(f"[blackjax_ns] num_delete: {num_delete}")
     print(f"[blackjax_ns] dlogz_stop: {dlogz_stop}")
-    print(f"[blackjax_ns] likelihood_batch_size: {ll_batch_size}")
     print(f"[blackjax_ns] jit: {jit_enable}")
 
     if bool(getattr(cfg.opac, "full_grid", False)):
         print(
             "[blackjax_ns][warning] cfg.opac.full_grid=True can make BlackJAX NS very memory-hungry, "
-            "because likelihood evaluations may be batched; consider full_grid=False if you hit OOM."
+            "because likelihoods are vectorised over the live points; consider full_grid=False if you hit OOM."
         )
 
     # RNG and initial particles
-    rng_key = jax.random.PRNGKey(seed)
+    rng_key = jax.random.key(seed)
     rng_key, prior_key = jax.random.split(rng_key)
 
     particles = prior.sample(seed=prior_key, sample_shape=(num_live,))
 
-    # Inject delta params + defaults into the particle pytree (stable keys for fm)
-    def inject_fixed(pytree: Dict[str, jnp.ndarray]) -> Dict[str, jnp.ndarray]:
-        out = dict(pytree)
-        base_dtype = out[param_names[0]].dtype if len(param_names) else jnp.float64
-        for k, v in delta_dict.items():
-            out[k] = jnp.full((num_live,), v, dtype=base_dtype)
-        for k, v in defaults_active.items():
-            if k not in out:
-                out[k] = jnp.full((num_live,), v, dtype=base_dtype)
-        if has_offsets:
-            offset_cols = []
-            for name in offset_param_names:
-                if name in out:
-                    offset_cols.append(out[name])
-                elif name in delta_dict:
-                    offset_cols.append(jnp.full((num_live,), delta_dict[name], dtype=base_dtype))
-                elif name in defaults_active:
-                    offset_cols.append(jnp.full((num_live,), defaults_active[name], dtype=base_dtype))
-                else:
-                    raise KeyError(f"Missing offset parameter '{name}' while packing offsets.")
-            out[OFFSET_VECTOR_KEY] = jnp.stack(offset_cols, axis=-1)
-        return out
+    # Extract offset parameters (with_fixed needs these)
+    offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
 
-    particles = inject_fixed(particles)
+    # Fixed values are added inside the likelihood, never to the particles: NSS
+    # takes a Cholesky of the live-point covariance, and a zero-variance
+    # coordinate makes that factor (so every slice direction) NaN.
+    def with_fixed(params: Dict[str, jnp.ndarray]) -> Dict[str, jnp.ndarray]:
+        out = dict(params)
+        for k, v in delta_dict.items():
+            out[k] = jnp.asarray(v)
+        for k, v in defaults_active.items():
+            out.setdefault(k, jnp.asarray(v))
+        if has_offsets:
+            out[OFFSET_VECTOR_KEY] = jnp.stack([out[name] for name in offset_param_names])
+        return out
 
     # Observations
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
 
-    # Extract offset parameters
-    offset_param_names, offset_group_idx, has_offsets = _extract_offset_params(cfg, obs)
-
-    def _loglikelihood_single(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    def loglikelihood_fn_impl(particle: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        """Log-likelihood of one particle; BlackJAX vectorises over the live points."""
+        params = with_fixed(particle)
         mu = fm(params)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
@@ -264,7 +253,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
 
             r = y_shifted - mu
 
-            # c is always present due to injection (or present in YAML sampling)
+            # c is always present via with_fixed (or sampled from the YAML)
             c = params[jitter_key]
             sig_jit2 = 10.0 ** (2.0 * c)
 
@@ -278,60 +267,8 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
 
         return jax.lax.cond(valid_mu, valid_ll, invalid_ll, operand=None)
 
-    def _pad_to_multiple(pytree: Dict[str, jnp.ndarray], multiple: int) -> Tuple[Dict[str, jnp.ndarray], int]:
-        n = int(jax.tree_util.tree_leaves(pytree)[0].shape[0])
-        pad = (-n) % multiple
-        if pad == 0:
-            return pytree, n
-
-        def pad_leaf(x: jnp.ndarray) -> jnp.ndarray:
-            tail = jnp.repeat(x[-1:], pad, axis=0)
-            return jnp.concatenate([x, tail], axis=0)
-
-        return jax.tree.map(pad_leaf, pytree), n
-
-    def loglikelihood_fn_impl(particles_batch: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        """
-        BlackJAX NS calls `loglikelihood_fn` with a *batch* of particles.
-
-        We evaluate the forward model in a memory-bounded way to avoid
-        vectorizing the full radiative-transfer calculation over `num_live`.
-        """
-        # BlackJAX also calls this on a *single* particle inside the inner kernel.
-        # Detect that case (scalar leaves) and return a scalar log-likelihood.
-        first_leaf = jax.tree_util.tree_leaves(particles_batch)[0]
-        if first_leaf.ndim == 0:
-            return _loglikelihood_single(particles_batch)
-
-        n = first_leaf.shape[0]
-        if ll_batch_size >= n:
-            return jax.vmap(_loglikelihood_single)(particles_batch)
-
-        padded, n = _pad_to_multiple(particles_batch, ll_batch_size)
-        n_full = int(jax.tree_util.tree_leaves(padded)[0].shape[0])
-        n_blocks = n_full // ll_batch_size
-
-        blocks = jax.tree.map(
-            lambda x: x.reshape((n_blocks, ll_batch_size) + x.shape[1:]),
-            padded,
-        )
-
-        def body(carry, idx):
-            block_params = jax.tree.map(lambda x: x[idx], blocks)
-            ll_block = jax.vmap(_loglikelihood_single)(block_params)
-            return carry, ll_block
-
-        _, ll_blocks = jax.lax.scan(body, None, jnp.arange(n_blocks))  # (n_blocks, ll_batch_size)
-        return ll_blocks.reshape((n_full,))[:n]
-
-    # For logprior, we must evaluate only over the sampled parameters (exclude injected deltas/defaults).
-    sampled_only = {name: None for name in param_names}
-
-    def strip_fixed(pytree: Dict[str, jnp.ndarray]) -> Dict[str, jnp.ndarray]:
-        return {k: pytree[k] for k in sampled_only.keys()}
-
-    def logprior_fn_impl(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        return prior.log_prob(strip_fixed(params))
+    def logprior_fn_impl(particle: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+        return prior.log_prob(particle)
 
     loglikelihood_fn = jax.jit(loglikelihood_fn_impl) if jit_enable else loglikelihood_fn_impl
     logprior_fn = jax.jit(logprior_fn_impl) if jit_enable else logprior_fn_impl
@@ -347,14 +284,17 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     step_fn = jax.jit(nested_sampler.step) if jit_enable else nested_sampler.step
 
     print(f"[blackjax_ns] Initializing with {num_live} live points...")
-    live = init_fn(particles)
+    rng_key, init_key = jax.random.split(rng_key)
+    live = init_fn(particles, init_key)
 
     dead = []
     with tqdm.tqdm(desc="Dead points", unit=" dead points") as pbar:
         while True:
-            # Remaining evidence estimate (should decrease toward 0 as the run converges)
-            dlogz = float(jax.device_get(live.logZ_live - live.logZ))
+            # dlogz = log(1 + Z_live / Z), the same criterion as dynesty and nautilus.
+            dlogz = float(np.logaddexp(0.0, jax.device_get(live.integrator.logZ_live - live.integrator.logZ)))
 
+            if np.isnan(dlogz):
+                raise RuntimeError("[blackjax_ns] Evidence became NaN; stopping the run.")
             if dlogz <= dlogz_stop:
                 break
 
@@ -366,7 +306,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     dead = blackjax.ns.utils.finalise(live, dead)
 
     rng_key, weight_key, sample_key = jax.random.split(rng_key, 3)
-    re_samples = blackjax.ns.utils.sample(sample_key, dead, shape=num_live)
+    re_samples = blackjax.ns.utils.sample(sample_key, dead, shape=posterior_samples).position
     log_w = blackjax.ns.utils.log_weights(weight_key, dead, shape=100)
     ns_ess = blackjax.ns.utils.ess(sample_key, dead)
     logzs = jax.scipy.special.logsumexp(log_w, axis=0)
@@ -391,10 +331,14 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
 
     labels = {name: make_latex_label(name) for name in param_names}
 
+    # blackjax >= 1.7: dead.particles is a StateWithLogLikelihood. Initial
+    # particles have a NaN birth contour; anesthetic expects -inf for them.
+    logL_birth = np.asarray(dead.particles.loglikelihood_birth)
+    logL_birth = np.where(np.isnan(logL_birth), -np.inf, logL_birth)
     samples = NestedSamples(
-        dead.particles,
-        logL=dead.loglikelihood,
-        logL_birth=dead.loglikelihood_birth,
+        dead.particles.position,
+        logL=dead.particles.loglikelihood,
+        logL_birth=logL_birth,
         labels=labels,
     )
 

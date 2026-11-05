@@ -58,7 +58,7 @@ def mix_k_tables_pras(
     if mixing_ratios.ndim == 1:
         mixing_ratios = jnp.broadcast_to(mixing_ratios[:, None], (n_species, n_layers))
 
-    base_key = jax.random.PRNGKey(0)
+    base_key = jax.random.key(0)
     wl_indices = jnp.arange(n_wl)
 
     def _mix_one_layer(layer_index: jnp.ndarray) -> jnp.ndarray:

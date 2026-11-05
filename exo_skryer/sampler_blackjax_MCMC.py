@@ -292,6 +292,19 @@ def _compute_init_u(param, bijector: Bijector) -> float:
     """Compute initial u-space value for a parameter."""
     dist = str(getattr(param, "dist", "")).lower()
     init_theta = _default_init(dist, param)
+    # An init on a logit bound maps to a saturated u where the gradient
+    # vanishes and the chain never moves; start just inside the bounds.
+    if _infer_transform(dist, param) == "logit":
+        low = float(getattr(param, "low"))
+        high = float(getattr(param, "high"))
+        margin = 1e-3 * (high - low)
+        clipped = min(max(init_theta, low + margin), high - margin)
+        if clipped != init_theta:
+            print(
+                f"[warn] init={init_theta} for '{getattr(param, 'name', '?')}' is on "
+                f"or outside its bounds [{low}, {high}]; starting at {clipped:.6g}."
+            )
+            init_theta = clipped
     init_arr = jnp.asarray(init_theta)
     return float(bijector.inverse(init_arr))
 
@@ -348,9 +361,10 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_acti
 
         def _ok(_):
             r = res / sig
-            r = jnp.where(jnp.isfinite(r), r, 0.0)
             logC = -jnp.log(sig) - 0.5 * jnp.log(2.0 * jnp.pi)
-            return jnp.sum(logC - 0.5 * (r * r))
+            ll = jnp.sum(logC - 0.5 * (r * r))
+            # Reject non-finite data/residuals rather than scoring them as a perfect fit.
+            return jnp.where(jnp.isfinite(ll), ll, jnp.asarray(LOG_FLOOR))
 
         def _bad(_):
             return jnp.asarray(LOG_FLOOR)
@@ -377,11 +391,19 @@ def _run_blackjax_single_chain(
     """
     Single-chain BlackJAX NUTS in u-space; returns constrained samples per parameter.
     """
-    key = jax.random.PRNGKey(int(seed))
+    warmup_key, sample_key = jax.random.split(jax.random.key(int(seed)))
+
+    # Trace logprob before entering a progress bar. The bar taps any lax.scan it
+    # sees at top level, and window_adaptation evaluates logprob before its own
+    # scan, so the forward model's scans would otherwise get a host callback
+    # baked into every likelihood call.
+    logprob = jax.jit(logprob)
+    jax.block_until_ready(jax.value_and_grad(logprob)(init_u))
 
     # Window adaptation to tune step size / mass matrix
     wa = blackjax.window_adaptation(blackjax.nuts, logprob)
-    (state, parameters), _ = wa.run(key, init_u, num_steps=int(warmup))
+    with blackjax.progress_bar(label="NUTS warmup", print_rate=1):
+        (state, parameters), _ = wa.run(warmup_key, init_u, num_steps=int(warmup))
 
     # Build the NUTS step kernel with tuned parameters
     step_fn = blackjax.nuts(logprob, **parameters).step
@@ -390,16 +412,21 @@ def _run_blackjax_single_chain(
     @jax.jit
     def one_step(st, rng):
         st, info = kernel(rng, st)
-        return st, st  # carry state, collect state
+        return st, (st.position, info.acceptance_rate, info.is_divergent, info.num_integration_steps)
 
-    # Split key to avoid reusing warmup key for sampling
-    key, sample_key = jax.random.split(key)
     # Independent keys for each draw
     keys = jax.random.split(sample_key, int(draws))
 
     # Run the chain with lax.scan (fully JITted loop)
-    _, states = jax.lax.scan(one_step, state, keys)
-    u = states.position  # (draws, dim_free)
+    with blackjax.progress_bar(label="NUTS sampling", print_rate=1):
+        _, (u, accept, divergent, n_steps) = jax.lax.scan(one_step, state, keys)  # u: (draws, dim_free)
+
+    print(
+        f"[blackjax_nuts] step size: {float(parameters['step_size']):.3g}, "
+        f"mean acceptance: {float(accept.mean()):.3f}, "
+        f"divergences: {int(divergent.sum())}/{int(draws)}, "
+        f"mean leapfrog steps: {float(n_steps.mean()):.1f}"
+    )
 
     # Transform output: u → physical
     out: Dict[str, jnp.ndarray] = {}

@@ -18,6 +18,7 @@ See: https://johannesbuchner.github.io/PyMultiNest/
 from __future__ import annotations
 from typing import Dict, Any, Tuple, List, Callable
 from pathlib import Path
+import os
 import pickle
 
 import numpy as np
@@ -362,6 +363,19 @@ def run_nested_pymultinest(
         outputfiles_basename_path = exp_dir / outputfiles_basename_path
     outputfiles_basename_path.parent.mkdir(parents=True, exist_ok=True)
     outputfiles_basename = str(outputfiles_basename_path)
+    # MultiNest stores file names in 100-character Fortran buffers, so the
+    # basename plus its longest suffix ("post_equal_weights.dat") must fit.
+    max_basename = 100 - len("post_equal_weights.dat")
+    if len(outputfiles_basename) > max_basename:
+        relative = os.path.relpath(outputfiles_basename_path)
+        if len(relative) > max_basename:
+            raise ValueError(
+                f"PyMultiNest output path is too long for MultiNest "
+                f"({len(outputfiles_basename)} > {max_basename} characters): "
+                f"{outputfiles_basename}. Run from a directory closer to the "
+                "experiment or use a shorter outputfiles_basename."
+            )
+        outputfiles_basename = relative
     importance_nested_sampling = bool(getattr(pmn_cfg, "importance_nested_sampling", False))
     multimodal = bool(getattr(pmn_cfg, "multimodal", True))
     const_efficiency_mode = bool(getattr(pmn_cfg, "const_efficiency_mode", False))
