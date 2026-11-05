@@ -2,8 +2,8 @@
 name = "Exo_Skryer"
 description = "A JAX accelerated sub-stellar atmosphere retrieval code"
 readme = "README.rst"
-requires-python = ">=3.12"
-license = { file = "LICENSE", content-type = "text/plain" }
+requires-python = ">=3.12,<3.15"
+license = { file = "LICENSE" }
 authors = [
   { name = "Elspeth K. H. Lee", email = "elspeth.lee@unibe.ch" },
 ]
@@ -12,13 +12,15 @@ dependencies = [
   "scipy",
   "jax",
   "jaxlib",
-  "jaxns",
+  "jaxns>=3",
   "numpyro",
+  "blackjax[progress]>=1.7",
+  "anesthetic",
   "arviz",
   "pyyaml",
   "optimistix",
   "distrax",
-  "tensorflow-probability",
+  "tfp-nightly",
   "dynesty",
   "ultranest",
   "nautilus-sampler",
@@ -47,17 +49,10 @@ rocm = [
 atmodeller = [
     "atmodeller",
 ]
-blackjax = [
-    "blackjax",
-]
-anesthetic = [
-    "anesthetic",
-]
 pymultinest = [
     "pymultinest",
 ]
 all-samplers = [
-    "blackjax",
     "pymultinest",
 ]
 test = [
@@ -74,8 +69,6 @@ docs = [
     "sphinx-book-theme",
     "IPython",
     "tox",
-    "blackjax",
-    "anesthetic",
     "pymultinest",
 ]
 
@@ -89,6 +82,66 @@ requires = [
   "wheel",
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64"]
+
+# Compiled, JAX-independent libraries come from conda-forge. JAX and everything
+# that depends on it (numpyro, jaxns, distrax, optimistix, ...) is resolved from
+# PyPI via the project dependencies so the latest JAX releases are used and no
+# conda-forge jax is pulled in alongside the PyPI one.
+[tool.pixi.dependencies]
+python = ">=3.12,<3.15"
+numpy = "*"
+scipy = "*"
+matplotlib = "*"
+h5py = "*"
+netcdf4 = "*"
+zarr = ">=3.0"
+pyyaml = "*"
+tqdm = "*"
+seaborn = "*"
+corner = "*"
+dynesty = "*"
+ultranest = "*"
+nautilus-sampler = "*"
+
+[tool.pixi.pypi-dependencies]
+exo_skryer = { path = ".", editable = true }
+
+# NVIDIA: jax[cuda13] wheels bundle the CUDA runtime; only the driver is needed.
+[tool.pixi.feature.gpu]
+platforms = ["linux-64"]
+
+# AMD: jax[rocm7-local] uses the system ROCm installation.
+[tool.pixi.feature.rocm]
+platforms = ["linux-64"]
+activation = { env = { LLVM_PATH = "/opt/rocm/llvm" } }
+
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+[tool.pixi.feature.py314.dependencies]
+python = "3.14.*"
+
+[tool.pixi.feature.pymultinest.dependencies]
+multinest = "*"
+
+[tool.pixi.environments]
+default = ["atmodeller"]
+cuda = ["gpu", "atmodeller"]
+rocm = ["rocm", "atmodeller"]
+test = ["test", "all-samplers", "pymultinest"]
+docs = { features = ["docs", "pymultinest"] }
+py312 = ["py312"]
+py313 = ["py313"]
+py314 = ["py314"]
+
+[tool.pixi.tasks]
+devices = "python -c 'import jax; print(jax.__version__, jax.devices())'"
+test = "pytest --pyargs exo_skryer docs"
 
 [tool.setuptools]
 zip-safe = false
