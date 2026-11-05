@@ -56,7 +56,7 @@ physics:
   refraction: None         # none | cutoff (refractive cutoff; requires 'a_sm' param and ray data)
 
   # --- Emission-only settings (ignored when rt_scheme: transit_1d/transit_1_5d) ---
-  # em_scheme: eaa          # Emission solver. Options: eaa | twostream | ...
+  # em_scheme: eaa          # Emission solver. Options: eaa | toon89 | dda
   # emission_mode: planet   # planet | brown_dwarf
 
 # ----------------------------------------------------------------------------------

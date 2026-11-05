@@ -95,6 +95,7 @@ def compute_emission_spectrum_1d_os(
     state: Dict[str, jnp.ndarray],
     params: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    opac: Mapping[str, jnp.ndarray] | None = None,  # unused; shared RT signature
     emission_solver=solve_alpha_eaa,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     contri_func = state.get("contri_func", False)
@@ -110,21 +111,21 @@ def compute_emission_spectrum_1d_os(
     else:
         be_internal = jnp.zeros_like(be_levels[-1])
 
-    def _lw_up_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def _olr_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
         ssa_os, g_os = _compute_scattering_properties(
             components,
             state,
             k_tot_local,
         )
         dtau_os = _layer_optical_depth_os(k_tot_local, rho_lay, dz)
-        lw_up_out, _, layer_contrib_out = emission_solver(
+        olr_out, layer_contrib_out = emission_solver(
             be_levels, dtau_os, ssa_os, g_os, be_internal,
             return_layer_contrib=contri_func
         )
-        return lw_up_out, layer_contrib_out
+        return olr_out, layer_contrib_out
 
     k_tot_cloud = _sum_opacity_components_os(state, opacity_components)
-    lw_up_cloud, layer_contrib_cloud = _lw_up_for_components(opacity_components, k_tot_cloud)
+    olr_cloud, layer_contrib_cloud = _olr_for_components(opacity_components, k_tot_cloud)
 
     if "f_cloud" in params and "cloud" in opacity_components:
         f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
@@ -136,15 +137,15 @@ def compute_emission_spectrum_1d_os(
         opacity_clear["cloud_ssa"] = zeros
         opacity_clear["cloud_g"] = zeros
 
-        lw_up_clear, layer_contrib_clear = _lw_up_for_components(opacity_clear, k_tot_clear)
-        lw_up = f_cloud * lw_up_cloud + (1.0 - f_cloud) * lw_up_clear
+        olr_clear, layer_contrib_clear = _olr_for_components(opacity_clear, k_tot_clear)
+        olr = f_cloud * olr_cloud + (1.0 - f_cloud) * olr_clear
         layer_contrib_flux = f_cloud * layer_contrib_cloud + (1.0 - f_cloud) * layer_contrib_clear
     else:
-        lw_up = lw_up_cloud
+        olr = olr_cloud
         layer_contrib_flux = layer_contrib_cloud
 
     s_dilute = jnp.asarray(params.get("s_dilute", 1.0))
-    top_flux = s_dilute * lw_up[0]
+    top_flux = s_dilute * olr
     if state.get("is_brown_dwarf", False):
         R0 = jnp.asarray(state["R0"], dtype=top_flux.dtype)
         D = params["D"]

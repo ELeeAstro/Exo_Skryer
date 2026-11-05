@@ -112,6 +112,15 @@ Reference/API
 .. automodapi:: exo_skryer.RT_em_schemes
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.RT_em_eaa
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.RT_em_toon89
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.RT_em_dda
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.RT_trans_1D_ck
     :no-inheritance-diagram:
 

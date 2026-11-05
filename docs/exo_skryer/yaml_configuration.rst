@@ -304,7 +304,13 @@ determines which retrieval parameters (in ``params``) you must provide.
 ``physics.em_scheme``
   Only relevant for ``physics.rt_scheme: emission_1d``.
 
-  *Supported values*: ``eaa`` / ``alpha_eaa`` / ``toon89`` / ``toon89_picaso``.
+  *Supported values*:
+
+  * ``eaa`` / ``alpha_eaa`` (default): extended absorption approximation. Fastest;
+    approximate scattering, less accurate at moderate-high single scattering albedo.
+  * ``toon89`` / ``toon89_picaso``: Toon et al. (1989) two-stream method.
+  * ``dda`` / ``4dda``: four-stream discrete ordinates adding method. Most accurate
+    for multiple scattering (e.g. Mie clouds), at roughly Toon89 cost.
 
 ``physics.contri_func``
   Boolean. If true, the forward model also computes a contribution function and
