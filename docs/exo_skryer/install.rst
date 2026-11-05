@@ -73,6 +73,7 @@ Environment    Contents
 ``cuda``       NVIDIA GPU JAX (``jax[cuda13]``), Linux x86-64 only
 ``rocm``       AMD GPU JAX using the system ROCm, Linux x86-64 only
 ``test``       pytest plus all optional samplers
+``nessai``     ``default`` plus nessai and PyTorch
 ``docs``       Sphinx documentation build
 ``py312`` …    ``default`` pinned to Python 3.12, 3.13 or 3.14
 =============  ==========================================================

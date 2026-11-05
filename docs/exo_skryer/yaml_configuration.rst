@@ -523,6 +523,7 @@ sampling
   * ``ultranest``
   * ``nautilus``
   * ``pymultinest``
+  * ``nessai`` (needs the ``nessai`` extra, which installs PyTorch)
   * ``nuts`` (MCMC; requires ``sampling.nuts.backend``)
 
 ``sampling.nuts.backend``
@@ -563,6 +564,12 @@ Fields not listed here may be ignored.
   Common fields: ``n_live, n_update, split_threshold, n_networks, n_batch, n_like_new_bound, seed,
   filepath, resume, f_live, n_shell, n_eff, n_like_max, discard_exploration, timeout,
   equal_weight, verbose``.
+
+``sampling.nessai``
+  Common fields: ``nlive, stopping, seed, max_iteration, output, resume, checkpointing,
+  checkpoint_interval, pytorch_threads, plot, log_level``. ``stopping`` is a ``dlogZ``
+  criterion. Unbounded priors are truncated at 6 sigma. Set ``resume: true`` to continue
+  a run from the checkpoint in ``output``.
 
 ``sampling.nuts``
   Common fields: ``backend, warmup, draws, seed, chains``.

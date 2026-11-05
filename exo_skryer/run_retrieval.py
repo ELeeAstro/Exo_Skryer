@@ -216,8 +216,13 @@ def main() -> None:
         from .sampler_nautilus_NS import run_nested_nautilus
         samples_dict, evidence_info = run_nested_nautilus(cfg, obs, fm_fnc, exp_dir)
 
+    elif engine == "nessai":
+        # nessai nested-sampling driver (self-contained)
+        from .sampler_nessai_NS import run_nested_nessai
+        samples_dict, evidence_info = run_nested_nessai(cfg, obs, fm_fnc, exp_dir)
+
     else:
-        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty, pymultinest, nautilus")
+        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty, pymultinest, nautilus, nessai")
 
     print(f"[info] Finished Sampling")
 

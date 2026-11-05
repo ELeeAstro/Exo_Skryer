@@ -234,7 +234,7 @@ fastchem_grid_jax:
 # Sampling Section
 # ----------------------------------------------------------------------------------
 sampling:
-  # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest
+  # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest | nessai
   # Only the section matching 'engine' below is used at runtime.
   engine: nautilus
 
@@ -343,6 +343,17 @@ sampling:
     importance_nested_sampling: false # Use importance nested sampling
     multimodal: true                 # Enable multimodal mode detection
     const_efficiency_mode: false     # Constant efficiency mode
+
+  # nessai settings (normalising-flow proposals; needs the nessai extra)
+  nessai:
+    nlive: 2000                      # Number of live points
+    stopping: 0.1                    # dlogZ stopping criterion
+    seed: 42
+    output: nessai_run               # Output/checkpoint directory, relative to this file
+    resume: false                    # Continue from the checkpoint in output
+    checkpoint_interval: 600         # Seconds between checkpoints
+    pytorch_threads: 1               # CPU threads for flow training
+    plot: false                      # Write nessai's diagnostic plots to output
 
 # ----------------------------------------------------------------------------------
 # Runtime Section

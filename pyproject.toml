@@ -52,8 +52,12 @@ atmodeller = [
 pymultinest = [
     "pymultinest",
 ]
+nessai = [
+    "nessai",
+]
 all-samplers = [
     "pymultinest",
+    "nessai",
 ]
 test = [
     "pytest-doctestplus",
@@ -129,11 +133,16 @@ python = "3.14.*"
 [tool.pixi.feature.pymultinest.dependencies]
 multinest = "*"
 
+# conda-forge's nessai brings a PyTorch that shares the OpenMP runtime with NumPy.
+[tool.pixi.feature.nessai.dependencies]
+nessai = "*"
+
 [tool.pixi.environments]
 default = ["atmodeller"]
 cuda = ["gpu", "atmodeller"]
 rocm = ["rocm", "atmodeller"]
-test = ["test", "all-samplers", "pymultinest"]
+test = ["test", "all-samplers", "pymultinest", "nessai"]
+nessai = ["nessai", "atmodeller"]
 docs = { features = ["docs", "pymultinest"] }
 py312 = ["py312"]
 py313 = ["py313"]

@@ -208,7 +208,7 @@ CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space
-SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nautilus", "pymultinest"]
+SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nautilus", "pymultinest", "nessai"]
 
 # New configurations use an explicit backend. Existing ``gpu`` values remain
 # supported by the runner as a legacy CUDA alias.
@@ -643,6 +643,15 @@ def build_config() -> dict:
             'dlogz_stop': st.session_state.get('blackjax_dlogz_stop', 0.01),
             'seed': st.session_state.get('blackjax_seed', 42),
             'posterior_samples': st.session_state.get('blackjax_posterior_samples', 5000),
+        }
+    elif engine == 'nessai':
+        # nessai: nested sampling with normalising-flow proposals
+        config['sampling']['nessai'] = {
+            'nlive': st.session_state.get('nessai_nlive', 2000),
+            'stopping': st.session_state.get('nessai_stopping', 0.1),
+            'seed': st.session_state.get('nessai_seed', 42),
+            'pytorch_threads': st.session_state.get('nessai_pytorch_threads', 1),
+            'resume': st.session_state.get('nessai_resume', False),
         }
     elif engine == 'nuts':
         # NUTS: No-U-Turn Sampler (Hamiltonian Monte Carlo variant)
@@ -1310,6 +1319,7 @@ def render_sampling_section():
     - blackjax_ns: JAX-based, modern
     - ultranest: MLFriends algorithm
     - pymultinest: Wrapper for MultiNest
+    - nessai: Normalising-flow proposals (needs PyTorch)
 
     MCMC ENGINE:
     - nuts: No-U-Turn Sampler (posteriors only, no evidence)
@@ -1403,6 +1413,17 @@ def render_sampling_section():
             st.number_input("dlogz stop", min_value=0.001, value=0.1, format="%.4f", key="blackjax_dlogz_stop")
             st.number_input("Posterior samples", min_value=100, value=10000, key="blackjax_posterior_samples")
             st.number_input("Random seed", min_value=0, value=42, key="blackjax_seed")
+
+    elif engine == "nessai":
+        st.subheader("nessai Configuration")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input("Live points", min_value=50, value=2000, key="nessai_nlive")
+            st.number_input("Stopping (dlogZ)", min_value=0.001, value=0.1, format="%.4f", key="nessai_stopping")
+            st.number_input("PyTorch threads", min_value=1, value=1, key="nessai_pytorch_threads")
+        with col2:
+            st.number_input("Random seed", min_value=0, value=42, key="nessai_seed")
+            st.checkbox("Resume from checkpoint", value=False, key="nessai_resume")
 
     elif engine == "nuts":
         st.subheader("NUTS (HMC) Configuration")
