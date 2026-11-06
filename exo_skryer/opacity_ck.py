@@ -14,6 +14,9 @@ from .data_constants import amu, bar
 from .ck_mix_RORR import mix_k_tables_rorr
 from .ck_mix_PRAS import mix_k_tables_pras
 
+# exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
+_LN10 = 2.302585092994046
+
 __all__ = [
     "zero_ck_opacity",
     "compute_ck_opacity",
@@ -271,10 +274,11 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
                 vmr_layer[:, None],
                 g_points,
                 g_weights,
+                layer_offset=layer_idx,
             )[0]
         else:
             mixed = mix_k_tables_rorr(
-                10.0 ** sigma_log_layer[:, None, :, :].astype(jnp.float64),
+                jnp.exp(_LN10 * sigma_log_layer[:, None, :, :].astype(jnp.float64)),
                 vmr_layer[:, None],
                 g_points,
                 g_weights,
@@ -390,7 +394,7 @@ def compute_ck_opacity_perspecies(
     sigma_log_all = jnp.transpose(sigma_log_all, (1, 0, 2, 3))
 
     # Convert from log10 to linear space
-    sigma_linear = 10.0 ** sigma_log_all.astype(jnp.float64)
+    sigma_linear = jnp.exp(_LN10 * sigma_log_all.astype(jnp.float64))
 
     # Convert to mass opacity (cm² / g)
     # sigma_linear is cross-section (cm² molecule⁻¹)

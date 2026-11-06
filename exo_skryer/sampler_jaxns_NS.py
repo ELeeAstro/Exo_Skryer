@@ -43,6 +43,15 @@ __all__ = [
 ]
 
 LOG_FLOOR = -1e300  # finite invalid logL for numerical stability
+
+# jaxns pickles the model into its checkpoints, but the forward-model closure
+# cannot be pickled. Checkpoints store this module-level function by name, and
+# make_jaxns_model() points it at the model rebuilt in the current process.
+_active_prior_model = None
+
+
+def _prior_model() -> jnp.ndarray:
+    return _active_prior_model()
 OFFSET_VECTOR_KEY = "__offset_values__"
 
 
@@ -265,7 +274,9 @@ def make_jaxns_model(cfg, obs: dict, fm) -> Model:
     def prior_model() -> jnp.ndarray:
         return log_likelihood(realise_params())
 
-    return Model(prior_model=prior_model)
+    global _active_prior_model
+    _active_prior_model = prior_model
+    return Model(prior_model=_prior_model)
 
 
 def run_nested_jaxns(
@@ -291,6 +302,19 @@ def run_nested_jaxns(
     k = int(getattr(jcfg, "k", None) or 0)
     c = getattr(jcfg, "c", None)
     verbose = bool(getattr(jcfg, "verbose", False))
+    allocation_target = str(getattr(jcfg, "allocation_target", None) or "uniform")
+    replacement_width = getattr(jcfg, "replacement_width", None)
+    if replacement_width is not None:
+        replacement_width = int(replacement_width)
+
+    # A checkpoint found in checkpoint_dir is resumed automatically.
+    checkpoint_dir = getattr(jcfg, "checkpoint_dir", None)
+    if checkpoint_dir is not None:
+        checkpoint_dir = Path(checkpoint_dir)
+        if not checkpoint_dir.is_absolute():
+            checkpoint_dir = exp_dir / checkpoint_dir
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    checkpoint_cadence = float(getattr(jcfg, "checkpoint_cadence", None) or 3600.0)
 
     posterior_samples = int(getattr(jcfg, "posterior_samples", 5000))
     seed = int(getattr(jcfg, "seed", 0))
@@ -346,6 +370,9 @@ def run_nested_jaxns(
     print(f"[JAXNS] root_allocation_degree: {root_degree if root_degree is not None else 'default (30*D)'}")
     print(f"[JAXNS] max_samples: {max_samples}")
     print(f"[JAXNS] phantom samples: {k > 0}")
+    print(f"[JAXNS] allocation_target: {allocation_target}")
+    print(f"[JAXNS] replacement_width: {replacement_width if replacement_width is not None else 'default (10*D)'}")
+    print(f"[JAXNS] checkpoint_dir: {checkpoint_dir}")
 
     ns = NestedSampler(
         model=model,
@@ -354,13 +381,28 @@ def run_nested_jaxns(
         sampler=sampler,
         depth_condition=depth_condition,
         collect_phantom_samples=k > 0,
+        replacement_width=replacement_width,
+        allocation_target=allocation_target,
         verbose=verbose,
     )
+    checkpoint = {"checkpoint_dir": checkpoint_dir, "checkpoint_cadence": checkpoint_cadence}
+
+    def report(st) -> Any:
+        res = st.to_result()
+        if verbose:
+            print(
+                f"[JAXNS] samples={int(st.num_samples)} "
+                f"likelihood_evals={int(st.total_num_likelihood_evaluations)} "
+                f"logZ={float(res.log_Z_mean):.3f}+-{float(res.log_Z_uncert):.3f} "
+                f"ESS={float(res.ess):.0f}",
+                flush=True,
+            )
+        return res
 
     # ---- run nested sampler ----
     key = jax.random.key(seed)
     run_key, post_key = jax.random.split(key)
-    state = ns.run(key=run_key)
+    state = ns.run(key=run_key, **checkpoint)
 
     # ESS / evidence-uncertainty / likelihood-budget targets are a Python goal
     # in jaxns 3: keep extending the run until they are met.
@@ -369,9 +411,9 @@ def run_nested_jaxns(
         def goal(st) -> bool:
             if int(st.termination_reason) != 0:
                 return True
+            res = report(st)
             if max_like is not None and int(st.total_num_likelihood_evaluations) >= int(max_like):
                 return True
-            res = st.to_result()
             if ess_target is not None and float(res.ess) < float(ess_target):
                 return False
             if uncert_target is not None and float(res.log_Z_uncert) > float(uncert_target):
@@ -379,12 +421,16 @@ def run_nested_jaxns(
             return True
 
         if not goal(state):
-            state = ns.resume_until_goal(state, goal)
+            state = ns.resume_until_goal(state, goal, **checkpoint)
+    else:
+        report(state)
 
     results = state.to_result().trim()
     term_reason = int(results.termination_reason)
 
     print(f"JAXNS termination_reason: {term_reason}")
+    if term_reason != 0:
+        print(f"[JAXNS] Warning: stopped by max_samples ({max_samples}), before the termination targets were met.")
 
     # Save full results to experiment directory
     exp_dir.mkdir(parents=True, exist_ok=True)

@@ -26,10 +26,11 @@ from .chem_fastchem_grid_jax import (
     FastChemGridModel,
     load_fastchem_grid,
     resolve_species_indices,
+    select_species,
     interpolate_profile_scan as interpolate_fc_profile_scan,
     interpolate_profile_vmap as interpolate_fc_profile_vmap,
 )
-from .vert_mu import build_compute_mu, compute_mu
+from .vert_mu import _SPECIES_MASS, build_compute_mu
 
 
 # Solar reference abundances (relative to H) - Asplund et al. (2021)
@@ -41,7 +42,7 @@ solar_O  = 10.0 ** (8.69  - 12.0)
 solar_Na  = 10.0 ** (6.22  - 12.0)
 solar_Si  = 10.0 ** (7.51  - 12.0)
 solar_S  = 10.0 ** (7.12  - 12.0)
-solar_Cl  = 10.0 ** (7.12  - 12.0)
+solar_Cl  = 10.0 ** (5.31  - 12.0)
 solar_K  = 10.0 ** (5.07  - 12.0)
 solar_Fe  = 10.0 ** (7.46  - 12.0)
 
@@ -118,9 +119,9 @@ def load_fastchem_grid_cache(
     if mode not in ("scan", "vmap"):
         raise ValueError("fastchem_grid_jax.solver.mode must be one of: scan, vmap")
 
-    _FC_GRID_MODEL = model
     _FC_GRID_SPECIES_OUT = tuple(resolved.keys())
-    _FC_GRID_SPECIES_IDX = jnp.asarray([resolved[s] for s in _FC_GRID_SPECIES_OUT], dtype=jnp.int32)
+    _FC_GRID_MODEL = select_species(model, [resolved[s] for s in _FC_GRID_SPECIES_OUT])
+    _FC_GRID_SPECIES_IDX = jnp.arange(len(_FC_GRID_SPECIES_OUT), dtype=jnp.int32)
     _FC_GRID_SOLVER_MODE = mode
     _FC_GRID_UNMAPPED = tuple(missing)
 
@@ -209,7 +210,7 @@ def load_element_potentials_cache(
         "mode": "scan",
         "max_steps": 64,
         "tol": 1.0e-11,
-        "throw": True,
+        "throw": False,
         "relax_limit": 0.75,
     }
     _EP_SOLVER_CFG = {**solver_defaults, **(solver_kwargs or {})}
@@ -402,6 +403,8 @@ def constant_vmr(species_order: tuple[str, ...]):
         values = [10.0 ** params[k] for k in param_keys]
         trace = jnp.stack(values, axis=0) if values else jnp.zeros((0,), dtype=jnp.float64)
         background = 1.0 - jnp.sum(trace) if values else 1.0
+        # No room for the H2/He filler: NaN so the likelihood rejects this point.
+        background = jnp.where(background > 0.0, background, jnp.nan)
 
         # Build VMR dictionary with constant profiles for each species
         vmr = {s: jnp.full((nlay,), trace[i]) for i, s in enumerate(species_order)}
@@ -1002,7 +1005,12 @@ def quench_approx(
     if "CO2" in _FC_QUENCH_SPECIES and {"CO", "H2O", "H2", "CO2"}.issubset(vmr_out.keys()):
         vmr_out["CO2"] = _co2_quench_special(T_lay, p_lay_bar, vmr_out, tau_mix)
 
-    vmr_out["__mu_lay__"] = compute_mu(vmr_out)
+    # The grid mu covers every FastChem species, not only the active opacity
+    # species in vmr_out, so start from it and correct for what quenching changed.
+    quenched = [sp for sp in _FC_QUENCH_SPECIES if sp in vmr_out]
+    d_vmr = sum(vmr_out[sp] - vmr_eq[sp] for sp in quenched)
+    d_mu = sum((vmr_out[sp] - vmr_eq[sp]) * _SPECIES_MASS[sp] for sp in quenched)
+    vmr_out["__mu_lay__"] = (mu_bar + d_mu) / (1.0 + d_vmr)
     return vmr_out
 
 

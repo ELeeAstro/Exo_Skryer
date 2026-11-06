@@ -21,7 +21,8 @@ def rayleigh(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarra
     """Compute extinction and scattering efficiencies using Rayleigh approximation.
 
     Valid for small particles (x << 1). Uses the polarizability approximation
-    with first-order size-parameter corrections.
+    with first-order size-parameter corrections. Absorption follows from
+    Q_abs = Q_ext - Q_sca.
 
     Parameters
     ----------
@@ -49,9 +50,9 @@ def rayleigh(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarra
 
     # Rayleigh regime with first-order corrections
     term = 1.0 + (x**2 / 15.0) * alp * ((m2 * m2 + 27.0 * m2 + 38.0) / (2.0 * m2 + 3.0))
-    Q_abs_ray = 4.0 * x * jnp.imag(alp * term)
-    Q_sca_ray = (8.0 / 3.0) * x**4 * jnp.real(alp**2)
-    Q_ext_ray = Q_abs_ray + Q_sca_ray
+    # Bohren & Huffman (1983) small-particle expansions; Q_abs = Q_ext - Q_sca.
+    Q_ext_ray = 4.0 * x * jnp.imag(alp * term) + (8.0 / 3.0) * x**4 * jnp.real(alp**2)
+    Q_sca_ray = (8.0 / 3.0) * x**4 * jnp.real(alp * jnp.conj(alp))
 
     # Asymmetry parameter: zero for Rayleigh (isotropic scattering
     g_ray = 0.0

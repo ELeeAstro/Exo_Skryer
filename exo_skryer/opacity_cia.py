@@ -10,6 +10,9 @@ from jax import lax
 
 from . import build_opacities as XS
 
+# exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
+_LN10 = 2.302585092994046
+
 __all__ = [
     "compute_cia_opacity",
     "zero_cia_opacity"
@@ -143,7 +146,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         tiny = jnp.array(-199.0, dtype=s_interp.dtype)
         s_interp = jnp.where(below_min[:, None], tiny, s_interp)
 
-        sigma_val = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl)
+        sigma_val = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl)
         pair_weight = vmr_stack[pair_i[i]] * vmr_stack[pair_j[i]]  # (nlay,)
         normalization = pair_weight * weights_nd2_over_rho  # (nlay,)
         return acc + normalization[:, None] * sigma_val

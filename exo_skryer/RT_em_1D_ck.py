@@ -80,15 +80,17 @@ def _compute_scattering_properties(
     cloud_ssa = _get_component("cloud_ssa", base_shape)
     cloud_g = _get_component("cloud_g", base_shape)
 
-    k_cloud_scat = cloud_ssa * k_cloud_ext
+    # Clamped because MADT can give a slightly negative Q_sca.
+    k_cloud_scat = jnp.maximum(cloud_ssa * k_cloud_ext, 0.0)
     k_tot_scat = k_ray + k_cloud_scat
     k_tot_safe = jnp.maximum(k_tot, 1.0e-30)
 
-    k_tot_scat = k_tot_scat[:, :, None]
-    cloud_g = jnp.broadcast_to(cloud_g[:, :, None], k_tot.shape)
+    # Scattering-weighted asymmetry; Rayleigh contributes g = 0.
+    g = k_cloud_scat * cloud_g / jnp.maximum(k_tot_scat, 1.0e-30)
+    g = jnp.broadcast_to(g[:, :, None], k_tot.shape)
 
+    k_tot_scat = k_tot_scat[:, :, None]
     ssa = jnp.clip(k_tot_scat / k_tot_safe, 0.0, 0.99)
-    g = cloud_g
     return ssa, g
 
 

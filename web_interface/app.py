@@ -203,19 +203,20 @@ EMISSION_MODES = ["planet", "brown_dwarf"]
 # Correlated-k mixing rules for combining opacities from multiple species
 # See: build_common.py CkMix
 # - RORR: Random Overlap with Resorting and Rebinning (default, most accurate)
-# - TRANS: Transmission-optimized method (only for transit_1d)
+# - PRAS: Pre-sorted sampling of the k-distributions (slower than RORR)
+# - TRANS: Transmission-optimized method (transit schemes only)
 CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space
-SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nautilus", "pymultinest", "nessai"]
+SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nautilus", "pymultinest", "nessai", "blackjax_smc", "pocomc"]
 
 # New configurations use an explicit backend. Existing ``gpu`` values remain
 # supported by the runner as a legacy CUDA alias.
-RUNTIME_PLATFORMS = ["cuda", "rocm", "metal", "cpu"]
+RUNTIME_PLATFORMS = ["cuda", "rocm", "cpu"]
 
 # Refraction modes (for transit_1d only)
-# See: build_model.py _resolve_refraction()
+# See: build_common.py _parse_refraction()
 # - None: No refraction
 # - cutoff / refractive_cutoff: Apply refractive cutoff without ray tracing
 REFRACTION_OPTIONS = ["None", "cutoff", "refractive_cutoff", "refraction_cutoff"]
@@ -284,7 +285,7 @@ def init_session_state():
         'easychem_mode': 'scan',
         'easychem_max_steps': 64,
         'easychem_tol': 1.0e-11,
-        'easychem_throw': True,
+        'easychem_throw': False,
         'easychem_relax_limit': 0.75,
         'easychem_p0_bar': 1.0,
         'easychem_e_ref': 'H',
@@ -515,7 +516,7 @@ def build_config() -> dict:
                 'mode': st.session_state.get('easychem_mode', 'scan'),
                 'max_steps': int(st.session_state.get('easychem_max_steps', 64)),
                 'tol': float(st.session_state.get('easychem_tol', 1.0e-11)),
-                'throw': bool(st.session_state.get('easychem_throw', True)),
+                'throw': bool(st.session_state.get('easychem_throw', False)),
                 'relax_limit': float(st.session_state.get('easychem_relax_limit', 0.75)),
                 'prefer_chord': bool(st.session_state.get('easychem_prefer_chord', False)),
             },
@@ -579,18 +580,14 @@ def build_config() -> dict:
             's': st.session_state.get('jaxns_s', 5),  # Slices per dimension
             'k': st.session_state.get('jaxns_k', 0),  # Phantom samples
             'c': st.session_state.get('jaxns_c') or None,  # Parallel chains (None = auto)
-            'difficult_model': st.session_state.get('jaxns_difficult_model', False),
-            'parameter_estimation': st.session_state.get('jaxns_parameter_estimation', True),
-            'gradient_guided': st.session_state.get('jaxns_gradient_guided', False),
+            'allocation_target': st.session_state.get('jaxns_allocation_target', 'uniform'),
+            'replacement_width': st.session_state.get('jaxns_replacement_width') or None,  # None = 10 * free parameters
+            'checkpoint_dir': st.session_state.get('jaxns_checkpoint_dir') or None,
+            'checkpoint_cadence': st.session_state.get('jaxns_checkpoint_cadence', 3600),
             'verbose': st.session_state.get('jaxns_verbose', True),
             'posterior_samples': st.session_state.get('jaxns_posterior_samples', 5000),
             'seed': st.session_state.get('jaxns_seed', 42),  # For reproducibility
         }
-        # Optional advanced parameters
-        if st.session_state.get('jaxns_shell_fraction'):
-            jaxns_config['shell_fraction'] = st.session_state.get('jaxns_shell_fraction')
-        if st.session_state.get('jaxns_init_efficiency_threshold'):
-            jaxns_config['init_efficiency_threshold'] = st.session_state.get('jaxns_init_efficiency_threshold')
 
         # Termination criteria - when to stop sampling
         termination = {
@@ -643,15 +640,56 @@ def build_config() -> dict:
             'dlogz_stop': st.session_state.get('blackjax_dlogz_stop', 0.01),
             'seed': st.session_state.get('blackjax_seed', 42),
             'posterior_samples': st.session_state.get('blackjax_posterior_samples', 5000),
+            'jit': st.session_state.get('blackjax_jit', True),
         }
     elif engine == 'nessai':
         # nessai: nested sampling with normalising-flow proposals
-        config['sampling']['nessai'] = {
+        nessai_config = {
             'nlive': st.session_state.get('nessai_nlive', 2000),
             'stopping': st.session_state.get('nessai_stopping', 0.1),
             'seed': st.session_state.get('nessai_seed', 42),
-            'pytorch_threads': st.session_state.get('nessai_pytorch_threads', 1),
+            'output': st.session_state.get('nessai_output', 'nessai_run'),
             'resume': st.session_state.get('nessai_resume', False),
+            'checkpointing': st.session_state.get('nessai_checkpointing', True),
+            'checkpoint_interval': st.session_state.get('nessai_checkpoint_interval', 600),
+            'pytorch_threads': st.session_state.get('nessai_pytorch_threads', 1),
+            'plot': st.session_state.get('nessai_plot', False),
+            'log_level': st.session_state.get('nessai_log_level', 'INFO'),
+        }
+        # Optional parameters
+        if st.session_state.get('nessai_max_iteration'):
+            nessai_config['max_iteration'] = st.session_state.get('nessai_max_iteration')
+
+        config['sampling']['nessai'] = nessai_config
+    elif engine == 'blackjax_smc':
+        # BlackJAX persistent sampling: tempered SMC with a random-walk kernel
+        config['sampling']['blackjax_smc'] = {
+            'num_particles': st.session_state.get('blackjax_smc_num_particles', 1000),
+            'num_mcmc_steps': st.session_state.get('blackjax_smc_num_mcmc_steps', 25),
+            'target_ess': st.session_state.get('blackjax_smc_target_ess', 3.0),
+            'max_iterations': st.session_state.get('blackjax_smc_max_iterations', 200),
+            'batch_size': st.session_state.get('blackjax_smc_batch_size', 0),
+            'posterior_samples': st.session_state.get('blackjax_smc_posterior_samples', 5000),
+            'seed': st.session_state.get('blackjax_smc_seed', 42),
+            'resume': st.session_state.get('blackjax_smc_resume', False),
+            'checkpoint': st.session_state.get('blackjax_smc_checkpoint', 'blackjax_smc_checkpoint.npz'),
+            'checkpoint_interval': st.session_state.get('blackjax_smc_checkpoint_interval', 600),
+        }
+    elif engine == 'pocomc':
+        # pocoMC: tempered SMC preconditioned by a normalising flow
+        config['sampling']['pocomc'] = {
+            'n_effective': st.session_state.get('pocomc_n_effective', 512),
+            'n_active': st.session_state.get('pocomc_n_active', 256),
+            'n_total': st.session_state.get('pocomc_n_total', 4096),
+            'n_evidence': st.session_state.get('pocomc_n_evidence', 4096),
+            'batch_size': st.session_state.get('pocomc_batch_size') or None,  # None = n_active
+            'posterior_samples': st.session_state.get('pocomc_posterior_samples', 5000),
+            'seed': st.session_state.get('pocomc_seed', 42),
+            'output': st.session_state.get('pocomc_output', 'pocomc_run'),
+            'resume': st.session_state.get('pocomc_resume', False),
+            'save_every': st.session_state.get('pocomc_save_every', 5) or None,  # None = no state files
+            'pytorch_threads': st.session_state.get('pocomc_pytorch_threads', 1),
+            'progress': st.session_state.get('pocomc_progress', False),
         }
     elif engine == 'nuts':
         # NUTS: No-U-Turn Sampler (Hamiltonian Monte Carlo variant)
@@ -677,6 +715,12 @@ def build_config() -> dict:
             ultranest_config['max_iters'] = st.session_state.get('ultranest_max_iters')
         if st.session_state.get('ultranest_show_status') is not None:
             ultranest_config['show_status'] = st.session_state.get('ultranest_show_status')
+        if st.session_state.get('ultranest_frac_remain'):
+            ultranest_config['frac_remain'] = st.session_state.get('ultranest_frac_remain')
+        if st.session_state.get('ultranest_use_stepsampler'):
+            ultranest_config['use_stepsampler'] = True
+            ultranest_config['stepsampler_nsteps'] = st.session_state.get('ultranest_stepsampler_nsteps', 30)
+            ultranest_config['stepsampler_direction'] = st.session_state.get('ultranest_stepsampler_direction', 'mixture')
 
         config['sampling']['ultranest'] = ultranest_config
     elif engine == 'pymultinest':
@@ -997,7 +1041,8 @@ def render_chemistry_backend_section():
             st.number_input("Tolerance", value=1.0e-11, format="%.3e", key="easychem_tol")
             st.number_input("Relax limit", min_value=0.0, max_value=1.0, value=0.75, key="easychem_relax_limit")
         with col3:
-            st.checkbox("Throw on solver failure", key="easychem_throw")
+            st.checkbox("Throw on solver failure", key="easychem_throw",
+                        help="Off: a failed layer rejects that point. On: stop the run (useful for debugging).")
             st.checkbox("Prefer chord fallback", key="easychem_prefer_chord")
             st.number_input("P0 [bar]", min_value=0.0, value=1.0, key="easychem_p0_bar")
             st.text_input("Reference element", key="easychem_e_ref")
@@ -1320,6 +1365,8 @@ def render_sampling_section():
     - ultranest: MLFriends algorithm
     - pymultinest: Wrapper for MultiNest
     - nessai: Normalising-flow proposals (needs PyTorch)
+    - blackjax_smc: Tempered SMC with persistent sampling
+    - pocomc: Flow-preconditioned tempered SMC (needs PyTorch)
 
     MCMC ENGINE:
     - nuts: No-U-Turn Sampler (posteriors only, no evidence)
@@ -1351,9 +1398,6 @@ def render_sampling_section():
                                help="0 = auto")
                 st.number_input("Posterior samples", min_value=100, value=10000, key="jaxns_posterior_samples")
             with col3:
-                st.checkbox("Difficult model", key="jaxns_difficult_model")
-                st.checkbox("Parameter estimation", value=True, key="jaxns_parameter_estimation")
-                st.checkbox("Gradient guided", key="jaxns_gradient_guided")
                 st.checkbox("Verbose", value=True, key="jaxns_verbose")
 
         with st.expander("Termination Criteria", expanded=True):
@@ -1371,11 +1415,17 @@ def render_sampling_section():
         with st.expander("Advanced Settings"):
             col1, col2 = st.columns(2)
             with col1:
-                st.number_input("Shell fraction (optional)", min_value=0.0, max_value=1.0, value=0.0, format="%.2f", key="jaxns_shell_fraction")
-                st.number_input("Init efficiency threshold (optional)", min_value=0.0, max_value=1.0, value=0.0, format="%.2f", key="jaxns_init_efficiency_threshold")
-            with col2:
                 st.number_input("atol (optional)", min_value=0.0, value=0.0, format="%.6f", key="jaxns_atol")
+                st.selectbox("Allocation target", ["uniform", "evidence_improving", "posterior_improving"],
+                             key="jaxns_allocation_target")
+                st.number_input("Replacement width (optional)", min_value=0, value=0, key="jaxns_replacement_width",
+                                help="Parallel chains; 0 = 10 x free parameters")
+            with col2:
                 st.number_input("Random seed", min_value=0, value=42, key="jaxns_seed")
+                st.text_input("Checkpoint directory (optional)", value="", key="jaxns_checkpoint_dir",
+                              help="Relative to the experiment directory. A checkpoint found here is resumed automatically.")
+                st.number_input("Checkpoint cadence (s)", min_value=1, value=3600, key="jaxns_checkpoint_cadence",
+                                help="Minimum seconds between saves")
 
     elif engine == "dynesty":
         st.subheader("Dynesty Configuration")
@@ -1413,6 +1463,7 @@ def render_sampling_section():
             st.number_input("dlogz stop", min_value=0.001, value=0.1, format="%.4f", key="blackjax_dlogz_stop")
             st.number_input("Posterior samples", min_value=100, value=10000, key="blackjax_posterior_samples")
             st.number_input("Random seed", min_value=0, value=42, key="blackjax_seed")
+            st.checkbox("JIT compile", value=True, key="blackjax_jit")
 
     elif engine == "nessai":
         st.subheader("nessai Configuration")
@@ -1424,6 +1475,68 @@ def render_sampling_section():
         with col2:
             st.number_input("Random seed", min_value=0, value=42, key="nessai_seed")
             st.checkbox("Resume from checkpoint", value=False, key="nessai_resume")
+
+        with st.expander("Output & Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Output directory", value="nessai_run", key="nessai_output",
+                              help="Relative paths are resolved from the experiment directory")
+                st.checkbox("Write checkpoints", value=True, key="nessai_checkpointing")
+                st.number_input("Checkpoint interval (s)", min_value=1, value=600, key="nessai_checkpoint_interval")
+            with col2:
+                st.number_input("Max iterations (optional)", min_value=0, value=0, key="nessai_max_iteration", help="0 = unlimited")
+                st.selectbox("Log level", ["INFO", "DEBUG", "WARNING", "ERROR"], key="nessai_log_level")
+                st.checkbox("Write diagnostic plots", value=False, key="nessai_plot")
+
+    elif engine == "blackjax_smc":
+        st.subheader("BlackJAX SMC Configuration")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input("Particles", min_value=50, value=1000, key="blackjax_smc_num_particles")
+            st.number_input("MCMC steps per temperature", min_value=1, value=25, key="blackjax_smc_num_mcmc_steps")
+            st.number_input("Target ESS (multiple of particles)", min_value=0.1, value=3.0, key="blackjax_smc_target_ess")
+        with col2:
+            st.number_input("Posterior samples", min_value=100, value=5000, key="blackjax_smc_posterior_samples")
+            st.number_input("Random seed", min_value=0, value=42, key="blackjax_smc_seed")
+            st.checkbox("Resume from checkpoint", value=False, key="blackjax_smc_resume")
+
+        with st.expander("Memory & Checkpoint Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.number_input("Max temperature steps", min_value=1, value=200, key="blackjax_smc_max_iterations",
+                                help="Upper limit on temperature steps; sets the stored array size")
+                st.number_input("Batch size", min_value=0, value=0, key="blackjax_smc_batch_size",
+                                help="Particles evaluated together; 0 = all at once. Lower this if memory runs out.")
+            with col2:
+                st.text_input("Checkpoint file", value="blackjax_smc_checkpoint.npz", key="blackjax_smc_checkpoint",
+                              help="Relative to the experiment directory")
+                st.number_input("Checkpoint interval (s)", min_value=1, value=600, key="blackjax_smc_checkpoint_interval")
+
+    elif engine == "pocomc":
+        st.subheader("pocoMC Configuration")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.number_input("Effective sample size", min_value=64, value=512, key="pocomc_n_effective")
+            st.number_input("Active particles", min_value=32, value=256, key="pocomc_n_active")
+            st.number_input("Total effective samples", min_value=256, value=4096, key="pocomc_n_total")
+        with col2:
+            st.number_input("Evidence samples", min_value=0, value=4096, key="pocomc_n_evidence")
+            st.number_input("Posterior samples", min_value=100, value=5000, key="pocomc_posterior_samples")
+            st.number_input("Random seed", min_value=0, value=42, key="pocomc_seed")
+            st.checkbox("Resume from state", value=False, key="pocomc_resume")
+
+        with st.expander("Output & Advanced Settings"):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.text_input("Output directory", value="pocomc_run", key="pocomc_output",
+                              help="Relative paths are resolved from the experiment directory")
+                st.number_input("Save state every N iterations", min_value=0, value=5, key="pocomc_save_every",
+                                help="0 = no state files")
+            with col2:
+                st.number_input("Batch size (optional)", min_value=0, value=0, key="pocomc_batch_size",
+                                help="Particles per likelihood batch; 0 = Active particles")
+                st.number_input("PyTorch threads", min_value=1, value=1, key="pocomc_pytorch_threads")
+                st.checkbox("Show progress bar", value=False, key="pocomc_progress")
 
     elif engine == "nuts":
         st.subheader("NUTS (HMC) Configuration")
@@ -1457,6 +1570,12 @@ def render_sampling_section():
                               help="Relative paths are resolved from the experiment directory")
             with col2:
                 st.checkbox("Show status", value=True, key="ultranest_show_status")
+                st.number_input("frac_remain (optional)", min_value=0.0, max_value=1.0, value=0.0, format="%.3f",
+                                key="ultranest_frac_remain", help="0 = UltraNest default")
+                st.checkbox("Use step sampler", key="ultranest_use_stepsampler")
+                if st.session_state.get("ultranest_use_stepsampler"):
+                    st.number_input("Step sampler steps", min_value=1, value=30, key="ultranest_stepsampler_nsteps")
+                    st.selectbox("Step sampler direction", ["mixture", "random"], key="ultranest_stepsampler_direction")
 
     elif engine == "pymultinest":
         st.subheader("PyMultiNest Configuration")
@@ -1523,7 +1642,7 @@ def render_runtime_section():
     Render the RUNTIME configuration section.
 
     This section configures:
-    - Compute platform (CUDA, ROCm, Metal, or CPU)
+    - Compute platform (CUDA, ROCm, or CPU)
     - Backend-specific device selection
     - CPU thread count
     """
@@ -1581,6 +1700,20 @@ def render_yaml_preview():
 # MAIN APPLICATION
 # =============================================================================
 
+def persist_widget_state():
+    """
+    Keep the values of widgets on pages that are not currently shown.
+
+    Streamlit deletes a widget's value once a run does not draw that widget, so
+    without this every setting is lost when the user moves to another section.
+    Rewriting a value makes it ordinary session state, which is kept. Buttons
+    cannot be written to, so their keys are skipped.
+    """
+    for key in list(st.session_state.keys()):
+        if not str(key).startswith(("add_", "rm_")):
+            st.session_state[key] = st.session_state[key]
+
+
 def main():
     """
     Main entry point for the Streamlit application.
@@ -1593,6 +1726,7 @@ def main():
     """
     # Initialize session state (only sets values if they don't exist)
     init_session_state()
+    persist_widget_state()
 
     # Page title
     st.title("Exo_Skryer Configuration Generator")

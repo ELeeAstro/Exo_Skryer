@@ -15,7 +15,7 @@ _PLATFORM_ALIASES = {
     "amd": "rocm",
     "hip": "rocm",
 }
-_SUPPORTED_PLATFORMS = frozenset(("cpu", "cuda", "rocm", "metal"))
+_SUPPORTED_PLATFORMS = frozenset(("cpu", "cuda", "rocm"))
 
 
 def normalize_runtime_platform(platform):
@@ -23,7 +23,7 @@ def normalize_runtime_platform(platform):
     normalized = str(platform or "cpu").strip().lower()
     normalized = _PLATFORM_ALIASES.get(normalized, normalized)
     if normalized not in _SUPPORTED_PLATFORMS:
-        choices = "cpu, cuda, rocm, metal (or the legacy gpu alias)"
+        choices = "cpu, cuda, rocm (or the legacy gpu alias)"
         raise ValueError(
             f"Unsupported runtime.platform {platform!r}; choose one of: {choices}"
         )
@@ -82,7 +82,7 @@ def apply_runtime_env(rc):
     attribute) or the runtime namespace itself. Supported settings are::
 
       runtime:
-        platform: cpu | gpu | cuda | rocm | metal
+        platform: cpu | gpu | cuda | rocm
         cuda_visible_devices: "0" or "0,1"
         rocm_visible_devices: "0" or "0,1"
         preallocate: true/false
@@ -108,7 +108,7 @@ def apply_runtime_env(rc):
     platform = normalize_runtime_platform(getattr(rt, "platform", "cpu"))
     os.environ["JAX_PLATFORMS"] = platform
     # The deprecated setting takes precedence over JAX_PLATFORMS in current
-    # JAX releases and its generic "gpu" value does not include Metal.
+    # JAX releases.
     os.environ.pop("JAX_PLATFORM_NAME", None)
 
     if platform == "cuda":
@@ -124,7 +124,6 @@ def apply_runtime_env(rc):
             "XLA_FLAGS",
             "--xla_gpu_enable_latency_hiding_scheduler=true "
             "--xla_gpu_enable_highest_priority_async_stream=true "
-            "--xla_gpu_enable_fast_min_max=true "
             "--xla_gpu_deterministic_ops=true",
         )
     elif platform == "rocm":
@@ -132,9 +131,6 @@ def apply_runtime_env(rc):
         if visible is not None and str(visible) != "":
             # AMD recommends ROCR_VISIBLE_DEVICES for isolation on Linux.
             os.environ["ROCR_VISIBLE_DEVICES"] = str(visible)
-    elif platform == "metal":
-        # Avoid probing an installed CUDA plugin on an Apple-only run.
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
     else:
         # Avoid accelerator probing and expose configured CPU parallelism.
         os.environ["CUDA_VISIBLE_DEVICES"] = ""

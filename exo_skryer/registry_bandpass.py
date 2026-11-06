@@ -120,10 +120,18 @@ def get_filter_data(mode: str) -> Tuple[np.ndarray, np.ndarray]:
     """
     base_dir = Path(__file__).resolve().parent.parent / "telescope_data"
     if mode not in _MODE_TO_FILE:
-        raise FileNotFoundError(f"No transmission file is mapped for filter mode '{mode}'.")
+        raise FileNotFoundError(
+            f"No transmission file is mapped for filter mode '{mode}'.\n"
+            f"Solution: use 'boxcar' or one of {sorted(_MODE_TO_FILE)} in the response column of "
+            "the observation file, or add this filter to _MODE_TO_FILE in registry_bandpass.py."
+        )
     path = base_dir / _MODE_TO_FILE[mode]
     if not path.exists():
-        raise FileNotFoundError(f"Transmission file not found: {path}")
+        raise FileNotFoundError(
+            f"Transmission file for filter mode '{mode}' not found: {path}\n"
+            "Solution: install Exo Skryer from a source checkout with 'pip install -e .' so that "
+            f"telescope_data sits next to the package, or copy {_MODE_TO_FILE[mode]} into {base_dir}."
+        )
 
     print(f"[info] Loading filter data for '{mode}' from {path}")
 
@@ -197,14 +205,11 @@ def load_bandpass_registry(
 
         final_method = "boxcar" if (not mode or mode.lower() == "boxcar") else mode
 
-        # Pre-load filter data if needed; fallback to boxcar on failure
+        # Pre-load filter data if needed. A missing filter stops the run: a boxcar
+        # stand-in would silently change the binned spectrum.
         filter_wl = filter_throughput = None
         if final_method.lower() != "boxcar":
-            try:
-                filter_wl, filter_throughput = get_filter_data(final_method)
-            except FileNotFoundError as e:
-                print(f"[warn] {e}. Skipping bin {idx} and treating as boxcar.")
-                final_method = "boxcar"
+            filter_wl, filter_throughput = get_filter_data(final_method)
 
         # Bin edges
         center = wl_obs[idx]

@@ -23,7 +23,7 @@ The configuration has these top-level blocks:
 * ``atmodeller``: explicit species-network/solver config for Atmodeller chemistry (optional)
 * ``quench_approx``: quenched-chemistry species config (optional)
 * ``sampling``: sampler engine selection and hyperparameters
-* ``runtime``: platform selection (CPU/CUDA/ROCm/Metal) and basic runtime knobs
+* ``runtime``: platform selection (CPU/CUDA/ROCm) and basic runtime knobs
 
 Minimal skeleton
 ----------------
@@ -524,6 +524,8 @@ sampling
   * ``nautilus``
   * ``pymultinest``
   * ``nessai`` (needs the ``nessai`` extra, which installs PyTorch)
+  * ``blackjax_smc``
+  * ``pocomc`` (needs the pixi ``pocomc`` environment, or ``pip install pocomc``)
   * ``nuts`` (MCMC; requires ``sampling.nuts.backend``)
 
 ``sampling.nuts.backend``
@@ -542,11 +544,23 @@ Fields not listed here may be ignored.
   update_interval, dynamic, print_progress, seed``.
 
 ``sampling.jaxns``
-  Common fields: ``max_samples, num_live_points, s, k, c, shell_fraction, difficult_model,
-  parameter_estimation, gradient_guided, init_efficiency_threshold, verbose, posterior_samples, seed``.
+  Common fields: ``max_samples, num_live_points, s, k, c, allocation_target, replacement_width,
+  checkpoint_dir, checkpoint_cadence, verbose, posterior_samples, seed``.
+
+  ``allocation_target`` is ``uniform`` (default), ``evidence_improving`` or ``posterior_improving``.
+  ``posterior_improving`` reaches an ESS target with fewer likelihood calls but gives a looser
+  ``logZ``, so avoid it for model comparison. ``replacement_width`` is the number of chains run in
+  parallel and defaults to ``10 * D``. ``max_samples`` is a hard limit, so a run can stop before its
+  termination targets are met; the driver prints a warning if it does.
+
+  A relative ``checkpoint_dir`` is taken from the experiment directory. A run resumes automatically
+  from any checkpoint found there, and that checkpoint's state takes precedence over the YAML, so
+  use a new directory for a new configuration. Timed saves, at most every ``checkpoint_cadence``
+  seconds (default 3600), happen only at the end of a pass. To save part-way through a pass, send
+  ``SIGINT``; ``SIGTERM`` does not save.
 
   Optional nested block: ``sampling.jaxns.termination`` with fields
-  ``ess, evidence_uncert, dlogZ, max_samples, max_num_likelihood_evaluations, rtol, atol``.
+  ``ess, evidence_uncert, dlogZ, max_samples, max_num_likelihood_evaluations``.
 
 ``sampling.blackjax_ns``
   Common fields: ``num_live_points, num_inner_steps, num_delete, dlogz_stop, posterior_samples, seed, jit``.
@@ -571,6 +585,18 @@ Fields not listed here may be ignored.
   criterion. Unbounded priors are truncated at 6 sigma. Set ``resume: true`` to continue
   a run from the checkpoint in ``output``.
 
+``sampling.blackjax_smc``
+  Common fields: ``num_particles, num_mcmc_steps, target_ess, max_iterations, batch_size,
+  posterior_samples, seed, resume, checkpoint, checkpoint_interval``. This is persistent
+  sampling with a random-walk kernel, so it needs no gradients. ``target_ess`` is a multiple
+  of ``num_particles``, measured over all kept particles. The reported ``logZ_err`` only
+  covers importance-weight scatter and is a lower limit, so repeat seeds for a full error.
+
+``sampling.pocomc``
+  Common fields: ``n_effective, n_active, n_total, n_evidence, batch_size, posterior_samples,
+  seed, output, resume, save_every, pytorch_threads, progress``. The likelihood is evaluated
+  in batches. Set ``resume: true`` to continue from the newest state file in ``output``.
+
 ``sampling.nuts``
   Common fields: ``backend, warmup, draws, seed, chains``.
   Note: the current BlackJAX NUTS driver supports ``chains: 1`` only.
@@ -580,7 +606,7 @@ runtime
 =======
 
 ``runtime.platform``
-  *Supported values*: ``cpu``, ``gpu``, ``cuda``, ``rocm``, or ``metal``.
+  *Supported values*: ``cpu``, ``gpu``, ``cuda``, or ``rocm``.
   ``gpu`` is retained as an alias for ``cuda``. Select ``rocm`` explicitly for
   an AMD GPU or APU.
 

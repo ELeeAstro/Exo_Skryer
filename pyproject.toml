@@ -1,7 +1,7 @@
 [project]
 name = "Exo_Skryer"
 description = "A JAX accelerated sub-stellar atmosphere retrieval code"
-readme = "README.rst"
+readme = "README.md"
 requires-python = ">=3.12,<3.15"
 license = { file = "LICENSE" }
 authors = [
@@ -137,12 +137,33 @@ multinest = "*"
 [tool.pixi.feature.nessai.dependencies]
 nessai = "*"
 
+# As for nessai, take PyTorch from conda-forge rather than from the PyPI wheels.
+[tool.pixi.feature.pocomc.dependencies]
+pytorch = "*"
+
+[tool.pixi.feature.pocomc.pypi-dependencies]
+pocomc = "*"
+
+[tool.pixi.feature.harmonic.dependencies]
+python = ">=3.12,<3.14"
+scikit-learn = "*"
+
+[tool.pixi.feature.harmonic.pypi-dependencies]
+harmonic = ">=1.3"
+
+# harmonic's build-tool pins are listed as runtime requirements and clash with conda-forge.
+[tool.pixi.feature.harmonic.pypi-options.dependency-overrides]
+setuptools = ">=68"
+wheel = ">=0.41"
+
 [tool.pixi.environments]
 default = ["atmodeller"]
 cuda = ["gpu", "atmodeller"]
 rocm = ["rocm", "atmodeller"]
 test = ["test", "all-samplers", "pymultinest", "nessai"]
 nessai = ["nessai", "atmodeller"]
+pocomc = ["pocomc", "atmodeller"]
+evidence = ["harmonic", "pocomc", "atmodeller"]
 docs = { features = ["docs", "pymultinest"] }
 py312 = ["py312"]
 py313 = ["py313"]
@@ -168,7 +189,7 @@ testpaths = [
 ]
 doctest_plus = "enabled"
 text_file_format = "rst"
-addopts = "--doctest-rst"
+addopts = "--doctest-rst --ignore=docs/_build"
 
 [tool.coverage.run]
 omit = [

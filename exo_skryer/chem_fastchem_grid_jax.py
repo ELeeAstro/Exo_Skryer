@@ -5,7 +5,7 @@ chem_fastchem_grid_jax.py
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 import re
 
@@ -20,6 +20,7 @@ __all__ = [
     "FastChemGridModel",
     "load_fastchem_grid",
     "resolve_species_indices",
+    "select_species",
     "interpolate_profile_scan",
     "interpolate_profile_vmap",
 ]
@@ -295,6 +296,31 @@ def resolve_species_indices(
             resolved[sp_name] = int(found_idx)
 
     return resolved, missing
+
+
+def select_species(model: FastChemGridModel, indices: list[int]) -> FastChemGridModel:
+    """Return a model holding only the species at ``indices``, in that order.
+
+    The grid is embedded as a constant in every jitted likelihood, so keeping only
+    the species in use cuts memory and compile time. Interpolation is per species,
+    so results are unchanged.
+    """
+    log10_vmr = model.mixing_ratios[..., jnp.asarray(indices, dtype=jnp.int32)]
+    axes = (model.interp_temperature, model.interp_pressure, model.interp_M_H, model.interp_C_O)
+    species_names = tuple(model.species_names[i] for i in indices)
+    species_index_canonical: dict[str, int] = {}
+    for i, name in enumerate(species_names):
+        species_index_canonical.setdefault(_canonical_formula(name), i)
+    return replace(
+        model,
+        mixing_ratios=log10_vmr,
+        species_names=species_names,
+        species_index_raw={name: i for i, name in enumerate(species_names)},
+        species_index_canonical=species_index_canonical,
+        vmr_interpolator=RegularGridInterpolator(
+            axes, log10_vmr, method="linear", bounds_error=False, fill_value=None
+        ),
+    )
 
 
 def _build_points(

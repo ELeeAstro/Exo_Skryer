@@ -48,7 +48,14 @@ def mix_k_tables_pras(
     mixing_ratios: jnp.ndarray,
     g_points: jnp.ndarray,
     base_weights: jnp.ndarray,
+    layer_offset=0,
 ) -> jnp.ndarray:
+    """Mix correlated-k tables across species using PRAS.
+
+    ``layer_offset`` is the index of the first layer in the full atmosphere, so
+    a caller passing one layer at a time still gets separate samples per layer.
+    The keys do not depend on the parameters, so the likelihood stays deterministic.
+    """
     n_species, n_layers, n_wl, n_g = sigma_values_log.shape
     dtype = sigma_values_log.dtype
 
@@ -63,14 +70,14 @@ def mix_k_tables_pras(
 
     def _mix_one_layer(layer_index: jnp.ndarray) -> jnp.ndarray:
         vmr_layer = mixing_ratios[:, layer_index]
-        key_layer = jax.random.fold_in(base_key, layer_index)
+        key_layer = jax.random.fold_in(base_key, layer_index + layer_offset)
 
         def _mix_one_wl(wl_index):
             sigma_band = sigma_values_log[:, layer_index, wl_index, :]
             key = jax.random.fold_in(key_layer, wl_index)
             return _pras_mix_band(sigma_band, vmr_layer, g_points, base_weights, key)
 
-        # Parallelize over wavelengths: each bin is independent with unique PRNG key
+        # Parallelize over wavelengths: each (layer, wavelength) has a unique PRNG key
         mixed_by_wl = jax.vmap(_mix_one_wl)(wl_indices)  # (nwl, ng)
         return mixed_by_wl
 

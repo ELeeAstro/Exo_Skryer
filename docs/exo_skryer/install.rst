@@ -22,11 +22,9 @@ Change into the repository directory:
 
 .. note::
 
-    **JAX and GPU support:** ``Exo_Skryer`` installs ``jax`` automatically, but
-    GPU/Metal acceleration requires a platform-specific JAX install (CUDA or
-    ROCm on Linux, Metal on macOS). For GPU support, install JAX with the
-    appropriate backend *before* installing Exo_Skryer, following the
-    `JAX installation guide <https://docs.jax.dev/en/latest/installation.html>`_.
+    **JAX and GPU support:** ``Exo_Skryer`` installs CPU ``jax`` automatically.
+    For GPU acceleration use the CUDA or ROCm routes below (Linux only), which
+    install the matching JAX packages for you.
 
 Recommended: install in a clean environment
 -------------------------------------------
@@ -72,10 +70,12 @@ Environment    Contents
 ``default``    CPU JAX and atmodeller (macOS arm64 and Linux x86-64)
 ``cuda``       NVIDIA GPU JAX (``jax[cuda13]``), Linux x86-64 only
 ``rocm``       AMD GPU JAX using the system ROCm, Linux x86-64 only
-``test``       pytest plus all optional samplers
+``test``       pytest plus nessai and PyMultiNest
 ``nessai``     ``default`` plus nessai and PyTorch
+``pocomc``     ``default`` plus pocoMC and PyTorch
+``evidence``   ``pocomc`` plus harmonic, on Python 3.12 or 3.13 only
 ``docs``       Sphinx documentation build
-``py312`` …    ``default`` pinned to Python 3.12, 3.13 or 3.14
+``py312`` …    CPU JAX pinned to Python 3.12, 3.13 or 3.14, without atmodeller
 =============  ==========================================================
 
 Select one with ``-e``, e.g. ``pixi run -e cuda exo-skryer --config …``.
@@ -139,6 +139,19 @@ Python venv (alternative)
 
    python -m pip install -e .
 
+Optional packages
+^^^^^^^^^^^^^^^^^
+
+The conda and venv routes install the core samplers only. Add others as extras,
+for example ``python -m pip install -e ".[atmodeller]"``:
+
+* ``atmodeller``: the atmodeller chemistry backend
+* ``nessai``: the nessai sampler, which brings in PyTorch
+* ``pymultinest``: the PyMultiNest sampler, which also needs the MultiNest library
+  (the pixi ``test`` and ``docs`` environments provide it)
+
+pocoMC has no extra: use ``python -m pip install pocomc``.
+
 GPU Installation (NVIDIA/CUDA)
 ------------------------------
 
@@ -175,7 +188,8 @@ so only the NVIDIA driver is needed on the system:
 **Option 3 — conda**
 
 A ready-made conda environment file is provided that installs the CUDA-enabled
-``jaxlib`` from conda-forge and then installs Exo_Skryer via pip:
+``jaxlib`` from conda-forge and then installs Exo_Skryer via pip. Run this from
+the repository root:
 
 .. code-block:: bash
 

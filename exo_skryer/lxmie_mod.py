@@ -203,7 +203,7 @@ def lxmie_jax(ri, x, *, nmax: int = 2000, cf_max_terms: int = 2000, cf_eps: floa
     Parameters
     ----------
     ri : `~jax.numpy.ndarray`
-        Complex refractive index (m = n + ik).
+        Complex refractive index (m = n - ik, with k >= 0 for an absorbing particle).
     x : `~jax.numpy.ndarray`
         Size parameter (x = 2πr/λ).
     nmax : int, optional
@@ -231,9 +231,12 @@ def lxmie_jax(ri, x, *, nmax: int = 2000, cf_max_terms: int = 2000, cf_eps: floa
     # truncation order for sums only (dynamic is OK here because it's only used in comparisons)
     nb = jnp.minimum(_nb_from_x(x), jnp.int32(nmax))
 
-    # Continued fraction at N = nmax (static)
-    A_N_c = _starting_AN_cf(nmax, mx, cf_max_terms=cf_max_terms, cf_eps=cf_eps)
-    A_N_r = _starting_AN_cf_real(nmax, x, cf_max_terms=cf_max_terms, cf_eps=cf_eps)
+    # Continued fraction at N = nmax (static). This only seeds the downward
+    # recurrence, which forgets its start well before the orders that are summed,
+    # so no gradient is needed here; stop_gradient also keeps the while_loops
+    # out of reverse-mode differentiation.
+    A_N_c = _starting_AN_cf(nmax, jax.lax.stop_gradient(mx), cf_max_terms=cf_max_terms, cf_eps=cf_eps)
+    A_N_r = _starting_AN_cf_real(nmax, jax.lax.stop_gradient(x), cf_max_terms=cf_max_terms, cf_eps=cf_eps)
 
     # A_n arrays and Mie coefficients up to N=nmax
     A_c, A_r = _compute_A_arrays(nmax, mx, jnp.maximum(x, 1e-300), A_N_c, A_N_r)
@@ -262,7 +265,7 @@ def lxmie_jax(ri, x, *, nmax: int = 2000, cf_max_terms: int = 2000, cf_eps: floa
     b_np1 = b[1:]
 
     term1 = n_g * (n_g + 2.0) / (n_g + 1.0) * jnp.real(a_n * jnp.conj(a_np1) + b_n * jnp.conj(b_np1))
-    term2 = (2.0 * n_g + 1.0) / (n_g * (n_g + 1.0)) * jnp.real(b_n * jnp.conj(b_n))
+    term2 = (2.0 * n_g + 1.0) / (n_g * (n_g + 1.0)) * jnp.real(a_n * jnp.conj(b_n))
 
     g_num = jnp.sum((term1 + term2) * mask_g)
     g = jnp.where(q_sca > 0.0, g_num * (4.0 / (x2 * q_sca)), 0.0)
@@ -283,7 +286,7 @@ def lxmie_jax_vmap(
     Parameters
     ----------
     ri : `~jax.numpy.ndarray`, shape (N,)
-        Complex refractive indices.
+        Complex refractive indices (m = n - ik, with k >= 0 for an absorbing particle).
     x : `~jax.numpy.ndarray`, shape (N,)
         Size parameters.
     nmax : int, optional

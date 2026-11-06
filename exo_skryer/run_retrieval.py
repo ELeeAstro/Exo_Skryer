@@ -17,8 +17,46 @@ from .help_print import format_duration
 
 __all__ = [
     "main",
+    "build_retrieval_inputs",
     "format_duration",
 ]
+
+
+def build_retrieval_inputs(cfg, exp_dir: Path):
+    """Load the data, opacities and chemistry, and return (obs, forward_model)."""
+    # Load the observational data - return a dictionary obs
+    from .read_obs import resolve_obs_path, read_obs_data
+    from .read_stellar import read_stellar_spectrum
+    obs_spec = resolve_obs_path(cfg)
+    obs = read_obs_data(obs_spec, base_dir=exp_dir)
+
+    # Load the opacities (if present in YAML file)
+    from .build_opacities import build_opacities, master_wavelength, master_wavelength_cut
+    build_opacities(cfg, obs, exp_dir)
+    full_grid = np.asarray(master_wavelength(), dtype=float)
+    cut_grid = np.asarray(master_wavelength_cut(), dtype=float)
+    print(
+        f"[info] Master grid: N={full_grid.size}, range=[{full_grid.min():.5f}, {full_grid.max():.5f}]"
+    )
+    print(
+        f"[info] Cut grid:    N={cut_grid.size}, range=[{cut_grid.min():.5f}, {cut_grid.max():.5f}]"
+    )
+
+    # Read and prepare any response functions and bandpasses for each observational band
+    from .registry_bandpass import load_bandpass_registry
+    load_bandpass_registry(obs, full_grid, cut_grid)
+
+    # Load chemistry data (NASA-9, FastChem grid, ...) the vert_chem scheme needs.
+    from .build_chem import init_chemistry
+    init_chemistry(cfg, exp_dir)
+
+    # Build the forward model from the YAML options - return a function that samplers can use
+    from .build_model import build_forward_model
+    stellar_flux = read_stellar_spectrum(cfg, cut_grid, bool(cfg.opac.ck), base_dir=exp_dir)
+
+    fm_fnc = build_forward_model(cfg, obs, stellar_flux=stellar_flux, exp_dir=exp_dir)
+
+    return obs, fm_fnc
 
 
 def main() -> None:
@@ -67,8 +105,6 @@ def main() -> None:
     elif platform == "rocm":
         visible = str(getattr(cfg.runtime, "rocm_visible_devices", ""))
         print(f"[info] Platform: ROCm (ROCR_VISIBLE_DEVICES={visible or 'all'})")
-    elif platform == "metal":
-        print("[info] Platform: Metal (Apple GPU)")
     else:
         print(f"[info] Platform: CPU (threads={getattr(cfg.runtime, 'threads', 1)})")
 
@@ -128,37 +164,7 @@ def main() -> None:
     print(f"[info] JAX backend: {jax_backend}")
     print(f"[info] JAX devices: {jax.local_device_count()} {jax_devices}")
 
-    # Load the observational data - return a dictionary obs
-    from .read_obs import resolve_obs_path, read_obs_data
-    from .read_stellar import read_stellar_spectrum
-    obs_spec = resolve_obs_path(cfg)
-    obs = read_obs_data(obs_spec, base_dir=exp_dir)
-
-    # Load the opacities (if present in YAML file)
-    from .build_opacities import build_opacities, master_wavelength, master_wavelength_cut
-    build_opacities(cfg, obs, exp_dir)
-    full_grid = np.asarray(master_wavelength(), dtype=float)
-    cut_grid = np.asarray(master_wavelength_cut(), dtype=float)
-    print(
-        f"[info] Master grid: N={full_grid.size}, range=[{full_grid.min():.5f}, {full_grid.max():.5f}]"
-    )
-    print(
-        f"[info] Cut grid:    N={cut_grid.size}, range=[{cut_grid.min():.5f}, {cut_grid.max():.5f}]"
-    )
-
-    # Read and prepare any response functions and bandpasses for each observational band
-    from .registry_bandpass import load_bandpass_registry
-    load_bandpass_registry(obs, full_grid, cut_grid)
-
-    # Load chemistry data (NASA-9, FastChem grid, ...) the vert_chem scheme needs.
-    from .build_chem import init_chemistry
-    init_chemistry(cfg, exp_dir)
-
-    # Build the forward model from the YAML options - return a function that samplers can use
-    from .build_model import build_forward_model
-    stellar_flux = read_stellar_spectrum(cfg, cut_grid, bool(cfg.opac.ck), base_dir=exp_dir)
-
-    fm_fnc = build_forward_model(cfg, obs, stellar_flux=stellar_flux, exp_dir=exp_dir)
+    obs, fm_fnc = build_retrieval_inputs(cfg, exp_dir)
 
     # All samplers are now self-contained - no build_prepared needed!
     t_start_2 = time.perf_counter()
@@ -221,8 +227,18 @@ def main() -> None:
         from .sampler_nessai_NS import run_nested_nessai
         samples_dict, evidence_info = run_nested_nessai(cfg, obs, fm_fnc, exp_dir)
 
+    elif engine == "blackjax_smc":
+        # BlackJAX persistent-sampling SMC driver (self-contained)
+        from .sampler_blackjax_SMC import run_smc_blackjax
+        samples_dict, evidence_info = run_smc_blackjax(cfg, obs, fm_fnc, exp_dir)
+
+    elif engine == "pocomc":
+        # pocoMC preconditioned Monte Carlo driver (self-contained)
+        from .sampler_pocomc_SMC import run_smc_pocomc
+        samples_dict, evidence_info = run_smc_pocomc(cfg, obs, fm_fnc, exp_dir)
+
     else:
-        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, ultranest, dynesty, pymultinest, nautilus, nessai")
+        raise ValueError(f"Unknown sampling.engine: {engine!r}. Options: nuts, jaxns, blackjax_ns, blackjax_smc, ultranest, dynesty, pymultinest, nautilus, nessai, pocomc")
 
     print(f"[info] Finished Sampling")
 

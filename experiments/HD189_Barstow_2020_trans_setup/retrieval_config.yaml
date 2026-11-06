@@ -114,11 +114,10 @@ sampling:
     s: 4
     k: 0
     c: null
-    shell_fraction: 0.5
-    difficult_model: false
-    parameter_estimation: true
-    gradient_guided: false
-    init_efficiency_threshold: 0.1
+    allocation_target: uniform   # uniform, evidence_improving, posterior_improving
+    replacement_width: null      # parallel chains; null = 10 * free parameters
+    checkpoint_dir: null         # e.g. jaxns_checkpoint; resumes automatically if a checkpoint exists
+    checkpoint_cadence: 3600     # minimum seconds between saves, made at the end of a pass
     verbose: true
 
     termination:
@@ -204,6 +203,45 @@ sampling:
     importance_nested_sampling: false # Use importance nested sampling
     multimodal: true                 # Enable multimodal mode detection
     const_efficiency_mode: false     # Constant efficiency mode
+
+  # nessai settings (normalising-flow proposals; needs the nessai extra)
+  nessai:
+    nlive: 2000                      # Number of live points
+    stopping: 0.1                    # dlogZ stopping criterion
+    seed: 42
+    output: nessai_run               # Output/checkpoint directory, relative to this file
+    resume: false                    # Continue from the checkpoint in output
+    checkpoint_interval: 600         # Seconds between checkpoints
+    pytorch_threads: 1               # CPU threads for flow training
+    plot: false                      # Write nessai's diagnostic plots to output
+
+  # BlackJAX persistent-sampling SMC settings
+  blackjax_smc:
+    num_particles: 1000              # Particles per temperature
+    num_mcmc_steps: 25               # Random-walk steps per particle per temperature
+    target_ess: 3.0                  # ESS target over all kept particles, as a multiple of num_particles
+    max_iterations: 200              # Upper limit on temperature steps; sets the stored array size
+    batch_size: 0                    # Particles per batch; 0 evaluates them all at once
+    posterior_samples: 5000
+    seed: 42
+    resume: false                    # Continue from checkpoint
+    checkpoint: blackjax_smc_checkpoint.npz
+    checkpoint_interval: 600         # Seconds between checkpoints
+
+  # pocoMC settings (normalising-flow preconditioning; needs the pixi pocomc environment)
+  pocomc:
+    n_effective: 512                 # Effective sample size per temperature
+    n_active: 256                    # Particles moved per iteration
+    n_total: 4096                    # Effective samples to collect at the end
+    n_evidence: 4096                 # Importance samples for logZ
+    batch_size: null                 # Likelihood batch; null = n_active
+    posterior_samples: 5000
+    seed: 42
+    output: pocomc_run               # State directory, relative to this file
+    resume: false                    # Continue from the newest state in output
+    save_every: 5                    # Iterations between state files
+    pytorch_threads: 1               # CPU threads for flow training
+    progress: false                  # tqdm bar; keep false for batch jobs
 
 # ----------------------------------------------------------------------------------
 # Runtime Section

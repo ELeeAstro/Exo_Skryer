@@ -64,6 +64,7 @@ params:
 
   # Brown dwarf physical parameters
   - { name: log_10_f_p,  dist: delta, value: 0.0,    transform: identity, init: 0.0 }
+  - { name: log_10_g,     dist: delta, value: 4.87,   transform: identity, init: 4.87 }  # M_p needs gravity; 4.87 gives R ~ 1 R_jup at 30 M_jup
   - { name: M_p,  dist: delta, value: 30.0,   transform: identity, init: 30.0 }
 
   # Modified Milne T-P profile parameters

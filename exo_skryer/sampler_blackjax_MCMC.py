@@ -74,26 +74,30 @@ def _logit_bijector(low: float, high: float) -> Bijector:
     return Bijector(forward=forward, inverse=inverse, log_abs_det_jac=log_det)
 
 
-def _whitened_log_bijector(low: float, high: float) -> Bijector:
+def _logit_log_bijector(low: float, high: float) -> Bijector:
+    """Map unbounded u onto [low, high], with a logit in log(theta).
+
+    The bounds are reached smoothly, so gradient samplers see no hard wall.
+    """
     lower = float(low)
     upper = float(high)
     if not (upper > lower > 0):
-        raise ValueError("log-whitened bounds must satisfy 0 < low < high")
+        raise ValueError("log bounds must satisfy 0 < low < high")
 
     log_low = jnp.log(lower)
-    log_high = jnp.log(upper)
-    mean = 0.5 * (log_low + log_high)
-    scale = 0.5 * (log_high - log_low)
+    width = jnp.log(upper) - log_low
 
     def forward(u):
-        return jnp.exp(mean + scale * u)
+        return jnp.exp(log_low + width * jax.nn.sigmoid(u))
 
     def inverse(theta):
-        return (jnp.log(theta) - mean) / scale
+        y = (jnp.log(theta) - log_low) / width
+        y = jnp.clip(y, 1e-12, 1 - 1e-12)
+        return jnp.log(y) - jnp.log1p(-y)
 
     def log_det(u):
-        theta = forward(u)
-        return jnp.log(jnp.abs(scale)) + jnp.log(theta)
+        s = jax.nn.sigmoid(u)
+        return jnp.log(width) + jax.nn.log_sigmoid(u) + jax.nn.log_sigmoid(-u) + log_low + width * s
 
     return Bijector(forward=forward, inverse=inverse, log_abs_det_jac=log_det)
 
@@ -122,7 +126,7 @@ def _uniform_logpdf(x, low, high):
 
 def _log_uniform_logpdf(x, low, high):
     inside = (x >= low) & (x <= high) & (x > 0)
-    norm = jnp.log(high) - jnp.log(low)
+    norm = jnp.log(jnp.log(high) - jnp.log(low))
     return jnp.where(inside, -jnp.log(x) - norm, -jnp.inf)
 
 
@@ -277,7 +281,7 @@ def _build_bijector(dist: str, param) -> Bijector:
         low = getattr(param, "low", None)
         high = getattr(param, "high", None)
         if low is not None and high is not None:
-            return _whitened_log_bijector(float(low), float(high))
+            return _logit_log_bijector(float(low), float(high))
         else:
             return _log_bijector()
     elif transform == "logit":
@@ -294,11 +298,18 @@ def _compute_init_u(param, bijector: Bijector) -> float:
     init_theta = _default_init(dist, param)
     # An init on a logit bound maps to a saturated u where the gradient
     # vanishes and the chain never moves; start just inside the bounds.
-    if _infer_transform(dist, param) == "logit":
-        low = float(getattr(param, "low"))
-        high = float(getattr(param, "high"))
-        margin = 1e-3 * (high - low)
-        clipped = min(max(init_theta, low + margin), high - margin)
+    transform = _infer_transform(dist, param)
+    low = getattr(param, "low", None)
+    high = getattr(param, "high", None)
+    if transform in ("logit", "log") and low is not None and high is not None:
+        low = float(low)
+        high = float(high)
+        if transform == "logit":
+            margin = 1e-3 * (high - low)
+            clipped = min(max(init_theta, low + margin), high - margin)
+        else:
+            margin = (high / low) ** 1e-3
+            clipped = min(max(init_theta, low * margin), high / margin)
         if clipped != init_theta:
             print(
                 f"[warn] init={init_theta} for '{getattr(param, 'name', '?')}' is on "

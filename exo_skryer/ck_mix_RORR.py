@@ -71,22 +71,27 @@ def _rom_mix_band(
             vmr_tot = vmr_tot_prev + vmr_spec
 
             # Create ROM matrix: k_rom_matrix[i,j] = (cs_mix[i] + vmr*sigma[j]) / vmr_tot
-            k_rom_matrix = (cs_mix_prev[:, None] + vmr_spec * sigma_spec[None, :]) / vmr_tot
+            k_rom_matrix = (cs_mix_prev[:, None] + vmr_spec * sigma_spec[None, :]) / jnp.maximum(vmr_tot, 1e-300)
 
             # Flatten
             k_rom_flat = k_rom_matrix.ravel()
 
             # OPTIMIZATION: Sort pairs directly instead of argsort + fancy indexing
             k_rom_sorted, w_rom_sorted = lax.sort_key_val(k_rom_flat, rom_weights)
-            k_rom_sorted = jnp.clip(k_rom_sorted, 1e-99, None)
 
             # Compute cumulative g with optimized normalization
             w_cumsum = jnp.cumsum(w_rom_sorted)
             g_rom = w_cumsum / w_cumsum[-1]
 
-            # OPTIMIZATION: Cleaner log/exp operations using 10** for clarity
-            log_k_interp = jnp.interp(g_points, g_rom, jnp.log10(k_rom_sorted))
-            cs_mix_new = vmr_tot * (10.0 ** log_k_interp)
+            # Log-linear interpolation onto g_points. Written out rather than
+            # jnp.interp so that only the bracketing k values need a log.
+            hi = jnp.clip(jnp.searchsorted(g_rom, g_points, method="scan_unrolled"), 1, g_rom.size - 1)
+            g_lo, g_hi = g_rom[hi - 1], g_rom[hi]
+            log_lo = jnp.log(jnp.maximum(k_rom_sorted[hi - 1], 1e-99))
+            log_hi = jnp.log(jnp.maximum(k_rom_sorted[hi], 1e-99))
+            frac = (g_points - g_lo) / jnp.maximum(g_hi - g_lo, 1e-300)
+            log_k = jnp.where(g_points <= g_rom[0], log_lo, log_lo + frac * (log_hi - log_lo))
+            cs_mix_new = vmr_tot * jnp.exp(log_k)
 
             return (cs_mix_new, vmr_tot), None
 

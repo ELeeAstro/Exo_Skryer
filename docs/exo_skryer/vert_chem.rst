@@ -410,26 +410,27 @@ Solver mode can be configured:
 Quenching Timescale Approximation 
 -----------------------------------
 
-.. plot::
-   :include-source:
+The FastChem grid is not part of the repository, so generate it first with
+``FastChem/Generate_FastChem_grid.py``:
+
+.. code-block:: python
 
    import numpy as np
    import matplotlib.pyplot as plt
-   from pathlib import Path
-   from exo_skryer.rate_jax import load_nasa9_cache
    from exo_skryer.vert_Tp import Modified_Milne
-   from exo_skryer.vert_chem import quench_approx
+   from exo_skryer.vert_chem import (
+       load_fastchem_grid_cache,
+       load_quench_approx_cache,
+       quench_approx,
+   )
    from exo_skryer.data_constants import bar
 
-   try:
-       root = Path(__file__).resolve().parent
-   except NameError:
-       root = Path.cwd().resolve()
-   for _ in range(5):
-       if (root / "NASA9").is_dir():
-           break
-       root = root.parent
-   load_nasa9_cache(str(root / "NASA9"))
+   load_fastchem_grid_cache(
+       "FastChem/fastchem_grid_5d_log10.npz",
+       ["H2O", "CO", "CH4", "NH3", "HCN", "CO2", "H2", "He"],
+       {"mode": "vmap"},
+   )
+   load_quench_approx_cache(["CO", "CO2", "CH4", "NH3", "HCN"])
 
    nlev = 100
    p_bot = np.log10(1000.0)

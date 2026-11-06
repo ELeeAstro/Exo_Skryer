@@ -11,6 +11,9 @@ from jax import lax
 from . import build_opacities as XS
 from .data_constants import amu, bar
 
+# exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
+_LN10 = 2.302585092994046
+
 __all__ = [
     "zero_line_opacity",
     "compute_line_opacity"
@@ -133,7 +136,7 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
         s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
         s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1  # log10 sigma
 
-        sigma_linear = 10.0 ** s_interp.astype(jnp.float64)  # (nlay, nwl) in cm^2
+        sigma_linear = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl) in cm^2
         return acc + sigma_linear * mixing_ratios[i, :, None]
 
     weighted_sigma = lax.fori_loop(
