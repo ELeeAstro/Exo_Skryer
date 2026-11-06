@@ -256,7 +256,7 @@ def main() -> None:
     from .help_io import to_inferencedata, save_inferencedata, save_observed_data_csv
     samples_np = {k: np.asarray(v) for k, v in samples_dict.items()}
     idata = to_inferencedata(samples_np, cfg, include_fixed=False)
-    out_nc = save_inferencedata(idata, exp_dir)
+    out_nc = save_inferencedata(idata, exp_dir, evidence=evidence_info or None)
     print(f"[info] ArviZ posterior -> {out_nc}")
 
     # Save a copy of the observational data to a csv in the experiment directory

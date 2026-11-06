@@ -127,13 +127,16 @@ def save_inferencedata(
     """
     Save an InferenceData object to NetCDF (and optionally summary CSV + evidence JSON).
     """
-    # Attach evidence into attrs (if provided) *before* saving
+    # Attach evidence into attrs (if provided) *before* saving. NetCDF only takes
+    # numbers and strings, and a bad value here would lose a finished run.
     if evidence is not None:
         for key, val in evidence.items():
+            if val is None:
+                continue
             try:
                 idata.attrs[key] = float(val)
-            except Exception:
-                idata.attrs[key] = val
+            except (TypeError, ValueError):
+                idata.attrs[key] = str(val)
 
     out_nc = outdir / f"{stem}.nc"
     idata.to_netcdf(out_nc)
@@ -152,7 +155,7 @@ def save_inferencedata(
     if evidence is not None:
         evid_path = outdir / "evidence.json"
         with evid_path.open("w", encoding="utf-8") as f:
-            json.dump(evidence, f, indent=2)
+            json.dump(evidence, f, indent=2, default=str)
 
     return out_nc
 

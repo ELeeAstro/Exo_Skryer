@@ -440,8 +440,17 @@ def run_nested_pymultinest(
     stats = analyzer.get_stats()
 
     # Extract evidence information
-    logZ = float(stats['nested sampling global log-evidence'])
-    logZ_err = float(stats['nested sampling global log-evidence error'])
+    logZ_ns = float(stats['nested sampling global log-evidence'])
+    logZ_ns_err = float(stats['nested sampling global log-evidence error'])
+
+    # Importance nested sampling uses every point, not just the dead ones, and is
+    # the more accurate estimate. MultiNest only reports it when that mode is on.
+    logZ_ins = stats.get('nested importance sampling global log-evidence')
+    if logZ_ins is None:
+        logZ, logZ_err = logZ_ns, logZ_ns_err
+    else:
+        logZ = float(logZ_ins)
+        logZ_err = float(stats['nested importance sampling global log-evidence error'])
 
     # Extract posterior samples (equal-weighted)
     posterior = analyzer.get_equal_weighted_posterior()
@@ -456,6 +465,8 @@ def run_nested_pymultinest(
 
     if verbose:
         print(f"[PyMultiNest] Evidence: {logZ:.3f} ± {logZ_err:.3f}")
+        if logZ_ins is not None:
+            print(f"[PyMultiNest] Evidence without importance sampling: {logZ_ns:.3f} ± {logZ_ns_err:.3f}")
         print(f"[PyMultiNest] Posterior samples: {n_samples}")
         print(f"[PyMultiNest] Best-fit log-likelihood: {best_logL:.3f}")
 
@@ -463,6 +474,8 @@ def run_nested_pymultinest(
     evidence_info: Dict[str, Any] = {
         "logZ": logZ,
         "logZ_err": logZ_err,
+        "logZ_ns": logZ_ns,
+        "logZ_ns_err": logZ_ns_err,
         "ESS": float(n_samples),  # PyMultiNest gives equal-weight samples
         "H": np.nan,  # MultiNest doesn't report H directly
         "n_like": np.nan,  # Not easily accessible from PyMultiNest
