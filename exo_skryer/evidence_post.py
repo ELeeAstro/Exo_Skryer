@@ -264,7 +264,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
     obs, fm = build_retrieval_inputs(cfg, exp_dir)
     target = build_target(cfg, obs, fm)
-    logprob = batched(target.logprob_u, args.chunk)
+    logprob = batched(target.logprob_u, args.chunk, target.runtime)
 
     sources = {}
     for item in args.posterior:

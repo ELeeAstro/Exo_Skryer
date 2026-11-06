@@ -41,6 +41,9 @@ __all__ = [
     "make_atmosphere_fn",
     "make_opacity_fn",
     "check_model_traces",
+    "attach_runtime",
+    "runtime_args_of",
+    "bind_runtime",
 ]
 
 
@@ -308,6 +311,32 @@ def check_model_traces(cfg, fn: Callable, *args, param_names=None) -> None:
             f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}). If this is a parameter, "
             "add it to cfg.params."
         ) from None
+
+
+# ---------------------------------------------------------------------------
+# Runtime arguments
+#
+# A jitted function bakes any array it captures into the compiled program as a
+# constant, so the opacity tables are handed to jit as arguments instead.
+# ---------------------------------------------------------------------------
+
+def attach_runtime(forward_model: Callable, impl: Callable, runtime_args: tuple) -> Callable:
+    """Record the jitted ``impl(params, *runtime_args)`` behind ``forward_model``."""
+    forward_model.impl = impl
+    forward_model.runtime_args = runtime_args
+    return forward_model
+
+
+def runtime_args_of(fm: Callable) -> Optional[tuple]:
+    """Arrays to pass through jit for ``fm``; None if ``fm`` has none attached."""
+    return getattr(fm, "runtime_args", None)
+
+
+def bind_runtime(fm: Callable, runtime: Optional[tuple]) -> Callable:
+    """``fm`` reading its arrays from ``runtime``, usually a jit argument."""
+    if runtime is None:
+        return fm
+    return lambda params: fm.impl(params, *runtime)
 
 
 # ---------------------------------------------------------------------------

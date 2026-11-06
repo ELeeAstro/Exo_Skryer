@@ -64,7 +64,8 @@ def run_smc_pocomc(
     n_active = int(getattr(pcfg, "n_active", 256))
     n_total = int(getattr(pcfg, "n_total", 4096))
     n_evidence = int(getattr(pcfg, "n_evidence", 4096))
-    batch_size = int(getattr(pcfg, "batch_size", None) or n_active)
+    # Absent = 32; an explicit null means n_active.
+    batch_size = int(getattr(pcfg, "batch_size", 32) or n_active)
     posterior_samples = int(getattr(pcfg, "posterior_samples", 5000))
     seed = int(getattr(pcfg, "seed", 42))
     resume = bool(getattr(pcfg, "resume", False))
@@ -78,7 +79,7 @@ def run_smc_pocomc(
     output.mkdir(parents=True, exist_ok=True)
 
     target = build_target(cfg, obs, fm)
-    loglik = batched(target.loglik_u, batch_size)
+    loglik = batched(target.loglik_u, batch_size, target.runtime)
     _active_likelihood = lambda theta: loglik(target.theta_to_u(theta))
 
     state_path = _latest_state(output) if resume else None

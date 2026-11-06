@@ -637,6 +637,7 @@ def build_config() -> dict:
             'num_live_points': st.session_state.get('blackjax_num_live_points', 500),
             'num_inner_steps': st.session_state.get('blackjax_num_inner_steps', 100),
             'num_delete': st.session_state.get('blackjax_num_delete', 1),
+            'batch_size': st.session_state.get('blackjax_batch_size', 32),
             'dlogz_stop': st.session_state.get('blackjax_dlogz_stop', 0.01),
             'seed': st.session_state.get('blackjax_seed', 42),
             'posterior_samples': st.session_state.get('blackjax_posterior_samples', 5000),
@@ -668,7 +669,7 @@ def build_config() -> dict:
             'num_mcmc_steps': st.session_state.get('blackjax_smc_num_mcmc_steps', 25),
             'target_ess': st.session_state.get('blackjax_smc_target_ess', 3.0),
             'max_iterations': st.session_state.get('blackjax_smc_max_iterations', 200),
-            'batch_size': st.session_state.get('blackjax_smc_batch_size', 0),
+            'batch_size': st.session_state.get('blackjax_smc_batch_size', 32),
             'posterior_samples': st.session_state.get('blackjax_smc_posterior_samples', 5000),
             'seed': st.session_state.get('blackjax_smc_seed', 42),
             'resume': st.session_state.get('blackjax_smc_resume', False),
@@ -682,7 +683,7 @@ def build_config() -> dict:
             'n_active': st.session_state.get('pocomc_n_active', 256),
             'n_total': st.session_state.get('pocomc_n_total', 4096),
             'n_evidence': st.session_state.get('pocomc_n_evidence', 4096),
-            'batch_size': st.session_state.get('pocomc_batch_size') or None,  # None = n_active
+            'batch_size': st.session_state.get('pocomc_batch_size', 32) or None,  # None = n_active
             'posterior_samples': st.session_state.get('pocomc_posterior_samples', 5000),
             'seed': st.session_state.get('pocomc_seed', 42),
             'output': st.session_state.get('pocomc_output', 'pocomc_run'),
@@ -1459,6 +1460,8 @@ def render_sampling_section():
             st.number_input("Num live points", min_value=50, value=1000, key="blackjax_num_live_points")
             st.number_input("Num inner steps", min_value=10, value=30, key="blackjax_num_inner_steps")
             st.number_input("Num delete", min_value=1, value=500, key="blackjax_num_delete")
+            st.number_input("Batch size", min_value=0, value=32, key="blackjax_batch_size",
+                            help="Particles evaluated together; 0 = all at once. Lower this if memory runs out.")
         with col2:
             st.number_input("dlogz stop", min_value=0.001, value=0.1, format="%.4f", key="blackjax_dlogz_stop")
             st.number_input("Posterior samples", min_value=100, value=10000, key="blackjax_posterior_samples")
@@ -1505,7 +1508,7 @@ def render_sampling_section():
             with col1:
                 st.number_input("Max temperature steps", min_value=1, value=200, key="blackjax_smc_max_iterations",
                                 help="Upper limit on temperature steps; sets the stored array size")
-                st.number_input("Batch size", min_value=0, value=0, key="blackjax_smc_batch_size",
+                st.number_input("Batch size", min_value=0, value=32, key="blackjax_smc_batch_size",
                                 help="Particles evaluated together; 0 = all at once. Lower this if memory runs out.")
             with col2:
                 st.text_input("Checkpoint file", value="blackjax_smc_checkpoint.npz", key="blackjax_smc_checkpoint",
@@ -1533,7 +1536,7 @@ def render_sampling_section():
                 st.number_input("Save state every N iterations", min_value=0, value=5, key="pocomc_save_every",
                                 help="0 = no state files")
             with col2:
-                st.number_input("Batch size (optional)", min_value=0, value=0, key="pocomc_batch_size",
+                st.number_input("Batch size", min_value=0, value=32, key="pocomc_batch_size",
                                 help="Particles per likelihood batch; 0 = Active particles")
                 st.number_input("PyTorch threads", min_value=1, value=1, key="pocomc_pytorch_threads")
                 st.checkbox("Show progress bar", value=False, key="pocomc_progress")

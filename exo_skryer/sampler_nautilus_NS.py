@@ -14,6 +14,7 @@ import jax
 import jax.numpy as jnp
 from scipy import stats as sps
 
+from .build_common import bind_runtime, runtime_args_of
 from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 try:
@@ -174,8 +175,8 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
         return d
 
     @jax.jit
-    def loglike_jax(theta_map: Dict[str, jnp.ndarray]) -> jnp.ndarray:
-        mu = fm(theta_map)
+    def _loglike_jax(theta_map: Dict[str, jnp.ndarray], runtime) -> jnp.ndarray:
+        mu = bind_runtime(fm, runtime)(theta_map)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def valid_ll(_):
@@ -200,6 +201,11 @@ def build_loglikelihood_nautilus(cfg, obs: dict, fm: Callable, param_names: List
             return jnp.where(jnp.isfinite(ll), ll, jnp.asarray(LOG_FLOOR))
 
         return jax.lax.cond(valid_mu, valid_ll, lambda _: jnp.asarray(LOG_FLOOR), operand=None)
+
+    runtime_args = runtime_args_of(fm)
+
+    def loglike_jax(theta_map):
+        return _loglike_jax(theta_map, runtime_args)
 
     theta0 = _prior_center_theta0(cfg, param_names)
     theta0_map = {name: jnp.asarray(theta0[i], dtype=y_obs.dtype) for i, name in enumerate(param_names)}

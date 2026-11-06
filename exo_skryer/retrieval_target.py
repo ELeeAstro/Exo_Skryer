@@ -15,6 +15,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
+from .build_common import runtime_args_of
 from .limb_asymmetry import jitter_param_name
 from .sampler_blackjax_MCMC import (
     LOG_FLOOR,
@@ -40,12 +41,13 @@ class RetrievalTarget:
     names: List[str]
     bijectors: List[Any]
     priors: List[Any]  # frozen scipy distributions, in the order of names
-    loglik_u: Callable[[jnp.ndarray], jnp.ndarray]
+    loglik_u: Callable[..., jnp.ndarray]  # (u, runtime=None)
     logprior_u: Callable[[jnp.ndarray], jnp.ndarray]
     fixed: Dict[str, float]  # delta parameters and the optional jitter default
+    runtime: Any = None  # forward-model arrays, to pass through jit as an argument
 
-    def logprob_u(self, u: jnp.ndarray) -> jnp.ndarray:
-        return self.loglik_u(u) + self.logprior_u(u)
+    def logprob_u(self, u: jnp.ndarray, runtime: Any = None) -> jnp.ndarray:
+        return self.loglik_u(u, runtime) + self.logprior_u(u)
 
     def theta_to_u(self, theta: np.ndarray) -> np.ndarray:
         theta = jnp.asarray(theta)
@@ -91,15 +93,16 @@ def build_target(cfg, obs: dict, fm: Callable) -> RetrievalTarget:
                                  offset_names, offset_idx, has_offsets, jitter_key),
         logprior_u=_build_logprior_u(sampled_params, bijectors, priors_tuple),
         fixed={**delta_dict, **defaults},
+        runtime=runtime_args_of(fm),
     )
 
 
-def batched(fn: Callable, chunk: int) -> Callable[[np.ndarray], np.ndarray]:
+def batched(fn: Callable, chunk: int, runtime: Any = None) -> Callable[[np.ndarray], np.ndarray]:
     """
-    Evaluate fn over rows of an array in fixed-size chunks. The last chunk is
-    padded, so the forward model compiles once for any number of rows.
+    Evaluate fn(row, runtime) over rows of an array in fixed-size chunks. The last
+    chunk is padded, so the forward model compiles once for any number of rows.
     """
-    vectorised = jax.jit(jax.vmap(fn))
+    vectorised = jax.jit(jax.vmap(fn, in_axes=(0, None)))
 
     def call(x: np.ndarray) -> np.ndarray:
         x = np.asarray(x, dtype=np.float64)
@@ -109,7 +112,7 @@ def batched(fn: Callable, chunk: int) -> Callable[[np.ndarray], np.ndarray]:
             n = rows.shape[0]
             if n < chunk:
                 rows = np.concatenate([rows, np.repeat(rows[-1:], chunk - n, axis=0)])
-            out[start:start + n] = np.asarray(vectorised(rows))[:n]
+            out[start:start + n] = np.asarray(vectorised(rows, runtime))[:n]
         return out
 
     return call

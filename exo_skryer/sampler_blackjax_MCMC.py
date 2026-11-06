@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 import blackjax
+from .build_common import bind_runtime
 from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 __all__ = [
@@ -338,7 +339,7 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_acti
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
 
-    def loglik_u(u_vec: jnp.ndarray) -> jnp.ndarray:
+    def loglik_u(u_vec: jnp.ndarray, runtime=None) -> jnp.ndarray:
         # Unpack u to theta
         theta_map = {sampled_names[i]: bijectors[i].forward(u_vec[i]) for i in range(len(sampled_names))}
         # Inject delta parameters
@@ -351,7 +352,7 @@ def _build_loglik_u(sampled_names, bijectors, delta_dict, optional_defaults_acti
             theta_map[OFFSET_VECTOR_KEY] = jnp.stack([theta_map[name] for name in offset_param_names])
 
         # Compute forward model
-        mu = fm(theta_map)
+        mu = bind_runtime(fm, runtime)(theta_map)
 
         # Apply instrument offsets if defined (offset params are in ppm)
         if has_offsets:

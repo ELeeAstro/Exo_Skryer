@@ -99,6 +99,13 @@ def main() -> None:
     platform = normalize_runtime_platform(configured_platform)
     apply_runtime_env(cfg)
 
+    # jaxns and NUTS jit the likelihood inside the library, so the opacity tables
+    # cannot be passed as arguments. This has JAX do it instead. JAX reads the flag
+    # at import, so it must be an environment variable set before then. The flag
+    # is transitional: once JAX drops it, this is the default behaviour.
+    if cfg.sampling.engine in ("jaxns", "nuts"):
+        os.environ.setdefault("JAX_USE_SIMPLIFIED_JAXPR_CONSTANTS", "true")
+
     if platform == "cuda":
         visible = str(getattr(cfg.runtime, "cuda_visible_devices", ""))
         print(f"[info] Platform: CUDA (CUDA_VISIBLE_DEVICES={visible or 'all'})")

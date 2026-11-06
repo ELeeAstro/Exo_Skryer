@@ -9,6 +9,7 @@ step, so the likelihood needs no gradients.
 """
 
 from __future__ import annotations
+from functools import partial
 from pathlib import Path
 from typing import Any, Dict, Tuple
 import os
@@ -75,7 +76,7 @@ def run_smc_blackjax(
     num_mcmc_steps = int(getattr(scfg, "num_mcmc_steps", 25))
     target_ess = float(getattr(scfg, "target_ess", 3.0))
     max_iterations = int(getattr(scfg, "max_iterations", 200))
-    batch_size = int(getattr(scfg, "batch_size", 0))
+    batch_size = int(getattr(scfg, "batch_size", 32))
     posterior_samples = int(getattr(scfg, "posterior_samples", 5000))
     seed = int(getattr(scfg, "seed", 42))
     resume = bool(getattr(scfg, "resume", False))
@@ -93,16 +94,24 @@ def run_smc_blackjax(
     print(f"[blackjax_smc] target_ess: {target_ess}")
     print(f"[blackjax_smc] checkpoint: {checkpoint}")
 
-    kernel = aps.build_kernel(
-        logprior_fn=target.logprior_u,
-        loglikelihood_fn=target.loglik_u,
-        mcmc_step_fn=_rw_step,
-        mcmc_init_fn=random_walk.init,
-        resampling_fn=systematic,
-        target_ess=target_ess,
-        batch_size=batch_size,
-    )
-    step = jax.jit(lambda key, state, params: kernel(key, state, num_mcmc_steps, params))
+    # Built inside jit so that the likelihood sees runtime as a jit argument,
+    # not as captured arrays.
+    @jax.jit
+    def step(key, state, params, runtime):
+        kernel = aps.build_kernel(
+            logprior_fn=target.logprior_u,
+            loglikelihood_fn=partial(target.loglik_u, runtime=runtime),
+            mcmc_step_fn=_rw_step,
+            mcmc_init_fn=random_walk.init,
+            resampling_fn=systematic,
+            target_ess=target_ess,
+            batch_size=batch_size,
+        )
+        return kernel(key, state, num_mcmc_steps, params)
+
+    @jax.jit
+    def init_state(positions, runtime):
+        return aps.init(positions, partial(target.loglik_u, runtime=runtime), max_iterations, batch_size)
 
     if resume and checkpoint.exists():
         state, key, scale = _load_checkpoint(checkpoint)
@@ -112,7 +121,7 @@ def run_smc_blackjax(
     else:
         rng = np.random.default_rng(seed)
         particles = jnp.asarray(target.theta_to_u(target.sample_prior_theta(num_particles, rng)))
-        state = aps.init(particles, target.loglik_u, max_iterations, batch_size)
+        state = init_state(particles, target.runtime)
         key = jax.random.PRNGKey(seed)
         scale = 2.38 / np.sqrt(ndim)
 
@@ -126,7 +135,7 @@ def run_smc_blackjax(
             )
         key, step_key = jax.random.split(key)
         params = _proposal_parameters(np.asarray(state.particles), scale)
-        state, info = step(step_key, state, params)
+        state, info = step(step_key, state, params, target.runtime)
 
         acceptance = float(jnp.mean(info.update_info.acceptance_rate))
         print(

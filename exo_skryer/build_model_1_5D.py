@@ -16,6 +16,7 @@ from jax import tree_util
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
 from .build_chem import prepare_chemistry_kernel, init_chemistry
 from .build_common import (
+    attach_runtime,
     select_model,
     validate_model,
     extract_fixed_params,
@@ -136,4 +137,4 @@ def build_forward_model_1_5d(
     def forward_model(params: Dict[str, jnp.ndarray]):
         return _forward_model_impl(params, *runtime_args)
 
-    return forward_model
+    return attach_runtime(forward_model, _forward_model_impl, runtime_args)

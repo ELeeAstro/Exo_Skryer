@@ -9,6 +9,7 @@ BlackJAX nested sampling driver with:
 """
 
 from __future__ import annotations
+from functools import partial
 from typing import Dict, Any, Tuple, List
 from pathlib import Path
 
@@ -17,8 +18,11 @@ import jax.numpy as jnp
 import numpy as np
 import tqdm
 import blackjax
+from blackjax.ns.base import init_state_strategy
+from blackjax.ns.nss import init as ns_init, live_covariance_factor
 from anesthetic import NestedSamples
 import distrax
+from .build_common import bind_runtime, runtime_args_of
 from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 __all__ = [
@@ -169,6 +173,47 @@ def build_joint_prior_distrax(cfg) -> Tuple[distrax.Distribution, List[str]]:
     return prior, param_names
 
 
+def _chunked_update(constrained_mcmc_step_fn, num_mcmc_steps, num_delete, batch_size):
+    """
+    blackjax.ns.from_mcmc.update_with_mcmc_take_last, with its vmap over the
+    replaced particles swapped for a batched lax.map to bound peak memory.
+    """
+
+    def update_function(rng_key, state, loglikelihood_0, **step_parameters):
+        choice_key, sample_key = jax.random.split(rng_key)
+        particles = state.particles
+
+        # Start from survivors
+        weights = (particles.loglikelihood > loglikelihood_0).astype(jnp.float32)
+        weights = jnp.where(weights.sum() > 0.0, weights, jnp.ones_like(weights))
+        start_idx = jax.random.choice(
+            choice_key,
+            len(weights),
+            shape=(num_delete,),
+            p=weights / weights.sum(),
+            replace=True,
+        )
+        start_state = jax.tree.map(lambda x: x[start_idx], particles)
+
+        def step(particle, key):
+            return constrained_mcmc_step_fn(
+                key, particle, loglikelihood_0=loglikelihood_0, **step_parameters
+            )
+
+        def mcmc_kernel(inputs):
+            key, particle = inputs
+            return jax.lax.scan(step, particle, jax.random.split(key, num_mcmc_steps))
+
+        sample_keys = jax.random.split(sample_key, num_delete)
+        new_particles, infos = jax.lax.map(mcmc_kernel, (sample_keys, start_state), batch_size=batch_size)
+        new_particles = new_particles._replace(
+            loglikelihood_birth=jnp.full_like(new_particles.loglikelihood_birth, loglikelihood_0)
+        )
+        return new_particles, infos
+
+    return update_function
+
+
 def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
     ns_cfg = getattr(cfg.sampling, "blackjax_ns", None)
     if ns_cfg is None:
@@ -180,6 +225,8 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     seed = int(getattr(ns_cfg, "seed", 0))
     dlogz_stop = float(getattr(ns_cfg, "dlogz_stop", 0.0))
     jit_enable = bool(getattr(ns_cfg, "jit", True))
+    # Particles evaluated together; 0 = all at once. Sets peak memory, not the result.
+    batch_size = int(getattr(ns_cfg, "batch_size", 32))
     posterior_samples = int(getattr(ns_cfg, "posterior_samples", 5000))
 
     exp_dir.mkdir(parents=True, exist_ok=True)
@@ -198,6 +245,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     print(f"[blackjax_ns] num_delete: {num_delete}")
     print(f"[blackjax_ns] dlogz_stop: {dlogz_stop}")
     print(f"[blackjax_ns] jit: {jit_enable}")
+    print(f"[blackjax_ns] batch_size: {batch_size}")
 
     if bool(getattr(cfg.opac, "full_grid", False)):
         print(
@@ -231,10 +279,10 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     y_obs = jnp.asarray(obs["y"])
     dy_obs = jnp.asarray(obs["dy"])
 
-    def loglikelihood_fn_impl(particle: Dict[str, jnp.ndarray]) -> jnp.ndarray:
+    def loglikelihood_fn_impl(particle: Dict[str, jnp.ndarray], runtime) -> jnp.ndarray:
         """Log-likelihood of one particle; BlackJAX vectorises over the live points."""
         params = with_fixed(particle)
-        mu = fm(params)
+        mu = bind_runtime(fm, runtime)(params)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def invalid_ll(_):
@@ -270,22 +318,43 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
     def logprior_fn_impl(particle: Dict[str, jnp.ndarray]) -> jnp.ndarray:
         return prior.log_prob(particle)
 
-    loglikelihood_fn = jax.jit(loglikelihood_fn_impl) if jit_enable else loglikelihood_fn_impl
-    logprior_fn = jax.jit(logprior_fn_impl) if jit_enable else logprior_fn_impl
+    # The sampler is built inside the jitted functions so that the likelihood
+    # sees runtime as a jit argument, not as captured arrays.
+    def build_sampler(runtime):
+        update = {"update_strategy": partial(_chunked_update, batch_size=batch_size)} if batch_size else {}
+        return blackjax.nss(
+            logprior_fn=logprior_fn_impl,
+            loglikelihood_fn=partial(loglikelihood_fn_impl, runtime=runtime),
+            num_delete=num_delete,
+            num_inner_steps=num_inner_steps,
+            **update,
+        )
 
-    nested_sampler = blackjax.nss(
-        logprior_fn=logprior_fn,
-        loglikelihood_fn=loglikelihood_fn,
-        num_delete=num_delete,
-        num_inner_steps=num_inner_steps,
-    )
+    def init_impl(positions, key, runtime):
+        if not batch_size:
+            return build_sampler(runtime).init(positions, key)
+        init_state = partial(
+            init_state_strategy,
+            logprior_fn=logprior_fn_impl,
+            loglikelihood_fn=partial(loglikelihood_fn_impl, runtime=runtime),
+        )
+        return ns_init(
+            positions,
+            init_state_fn=lambda p: jax.lax.map(init_state, p, batch_size=batch_size),
+            update_inner_kernel_params_fn=live_covariance_factor,
+            rng_key=key,
+        )
 
-    init_fn = jax.jit(nested_sampler.init) if jit_enable else nested_sampler.init
-    step_fn = jax.jit(nested_sampler.step) if jit_enable else nested_sampler.step
+    def step_impl(key, state, runtime):
+        return build_sampler(runtime).step(key, state)
+
+    init_fn = jax.jit(init_impl) if jit_enable else init_impl
+    step_fn = jax.jit(step_impl) if jit_enable else step_impl
+    runtime = runtime_args_of(fm)
 
     print(f"[blackjax_ns] Initializing with {num_live} live points...")
     rng_key, init_key = jax.random.split(rng_key)
-    live = init_fn(particles, init_key)
+    live = init_fn(particles, init_key, runtime)
 
     dead = []
     with tqdm.tqdm(desc="Dead points", unit=" dead points") as pbar:
@@ -299,7 +368,7 @@ def run_nested_blackjax(cfg, obs: dict, fm, exp_dir: Path) -> Tuple[Dict[str, np
                 break
 
             rng_key, subkey = jax.random.split(rng_key, 2)
-            live, dead_info = step_fn(subkey, live)
+            live, dead_info = step_fn(subkey, live, runtime)
             dead.append(dead_info)
             pbar.update(num_delete)
 

@@ -156,6 +156,7 @@ sampling:
     num_live_points: 500
     num_inner_steps: 45
     num_delete: 250
+    batch_size: 32                   # Particles evaluated together; sets peak memory, not the result. 0 = all at once
     dlogz_stop: 0.1
     seed: 42
     posterior_samples: 10000
@@ -241,7 +242,7 @@ sampling:
     num_mcmc_steps: 25               # Random-walk steps per particle per temperature
     target_ess: 3.0                  # ESS target over all kept particles, as a multiple of num_particles
     max_iterations: 200              # Upper limit on temperature steps; sets the stored array size
-    batch_size: 0                    # Particles per batch; 0 evaluates them all at once
+    batch_size: 32                   # Particles per batch; lower it if memory runs out, 0 = all at once
     posterior_samples: 5000
     seed: 42
     resume: false                    # Continue from checkpoint
@@ -254,7 +255,7 @@ sampling:
     n_active: 256                    # Particles moved per iteration
     n_total: 4096                    # Effective samples to collect at the end
     n_evidence: 4096                 # Importance samples for logZ
-    batch_size: null                 # Likelihood batch; null = n_active
+    batch_size: 32                   # Likelihood batch; lower it if memory runs out, null = n_active
     posterior_samples: 5000
     seed: 42
     output: pocomc_run               # State directory, relative to this file

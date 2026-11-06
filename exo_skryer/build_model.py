@@ -21,6 +21,7 @@ from .build_common import (
     make_atmosphere_fn,
     make_opacity_fn,
     check_model_traces,
+    attach_runtime,
 )
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
 
@@ -128,4 +129,4 @@ def build_forward_model(
     def forward_model(params: Dict[str, jnp.ndarray]) -> jnp.ndarray:
         return _forward_model_impl(params, *runtime_args)
 
-    return forward_model
+    return attach_runtime(forward_model, _forward_model_impl, runtime_args)

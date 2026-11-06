@@ -563,8 +563,11 @@ Fields not listed here may be ignored.
   ``ess, evidence_uncert, dlogZ, max_samples, max_num_likelihood_evaluations``.
 
 ``sampling.blackjax_ns``
-  Common fields: ``num_live_points, num_inner_steps, num_delete, dlogz_stop, posterior_samples, seed, jit``.
-  ``dlogz_stop`` is ``log(1 + Z_live / Z)``, as ``dlogz`` is for dynesty.
+  Common fields: ``num_live_points, num_inner_steps, num_delete, batch_size, dlogz_stop,
+  posterior_samples, seed, jit``. ``dlogz_stop`` is ``log(1 + Z_live / Z)``, as ``dlogz`` is
+  for dynesty. ``batch_size`` (default 32) is how many particles are evaluated together. It
+  sets peak memory and speed but not the result, so raise it until memory runs out;
+  ``0`` evaluates all of them at once.
 
 ``sampling.ultranest``
   Common fields: ``num_live_points, min_num_live_points, dlogz, max_iters, verbose, show_status``.
@@ -591,11 +594,13 @@ Fields not listed here may be ignored.
   sampling with a random-walk kernel, so it needs no gradients. ``target_ess`` is a multiple
   of ``num_particles``, measured over all kept particles. The reported ``logZ_err`` only
   covers importance-weight scatter and is a lower limit, so repeat seeds for a full error.
+  ``batch_size`` (default 32) works as for ``blackjax_ns``.
 
 ``sampling.pocomc``
   Common fields: ``n_effective, n_active, n_total, n_evidence, batch_size, posterior_samples,
   seed, output, resume, save_every, pytorch_threads, progress``. The likelihood is evaluated
-  in batches. Set ``resume: true`` to continue from the newest state file in ``output``.
+  in batches of ``batch_size`` (default 32; ``null`` means ``n_active``). Set ``resume: true``
+  to continue from the newest state file in ``output``.
 
 ``sampling.nuts``
   Common fields: ``backend, warmup, draws, seed, chains``.

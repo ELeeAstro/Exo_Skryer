@@ -25,6 +25,7 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
+from .build_common import bind_runtime, runtime_args_of
 from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
 try:
@@ -268,10 +269,10 @@ def build_loglikelihood_pymultinest(cfg, obs: dict, fm: Callable, param_names: L
         return d
 
     @jax.jit
-    def loglike_jax(theta_vec: jnp.ndarray) -> jnp.ndarray:
+    def _loglike_jax(theta_vec: jnp.ndarray, runtime) -> jnp.ndarray:
         params = _vec_to_theta_dict(theta_vec)
 
-        mu = fm(params)  # (N,)
+        mu = bind_runtime(fm, runtime)(params)  # (N,)
         valid_mu = jnp.all(jnp.isfinite(mu))
 
         def valid_ll(_):
@@ -300,6 +301,11 @@ def build_loglikelihood_pymultinest(cfg, obs: dict, fm: Callable, param_names: L
             return jnp.where(jnp.isfinite(ll), ll, jnp.asarray(LOG_FLOOR))
 
         return jax.lax.cond(valid_mu, valid_ll, lambda _: jnp.asarray(LOG_FLOOR), operand=None)
+
+    runtime_args = runtime_args_of(fm)
+
+    def loglike_jax(theta_vec):
+        return _loglike_jax(theta_vec, runtime_args)
 
     # Warmup compilation with prior-centered theta
     theta0 = _prior_center_theta0(cfg, param_names)
