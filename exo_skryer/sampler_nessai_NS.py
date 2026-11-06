@@ -11,11 +11,11 @@ from typing import Any, Callable, Dict, List, Tuple
 from pathlib import Path
 
 import numpy as np
-from scipy import stats as sps
 from scipy.special import logsumexp
 
 from .limb_asymmetry import jitter_param_name
 from .sampler_nautilus_NS import build_loglikelihood_nautilus
+from .retrieval_target import _prior_and_bounds
 
 try:
     from nessai.flowsampler import FlowSampler
@@ -33,33 +33,6 @@ __all__ = [
     "build_model_nessai",
     "run_nested_nessai",
 ]
-
-# nessai needs finite bounds, so unbounded priors are truncated at this many sigma.
-_TRUNCATION_SIGMA = 6.0
-
-
-def _prior_and_bounds(p) -> Tuple[Any, Tuple[float, float]]:
-    """Return the frozen prior of a parameter and the bounds nessai samples within."""
-    dist = str(getattr(p, "dist", "")).lower()
-    if dist == "uniform":
-        low, high = float(p.low), float(p.high)
-        return sps.uniform(loc=low, scale=high - low), (low, high)
-    if dist == "log_uniform":
-        low, high = float(p.low), float(p.high)
-        return sps.reciprocal(low, high), (low, high)
-    if dist in ("gaussian", "normal"):
-        mu, sigma = float(p.mu), float(p.sigma)
-        width = _TRUNCATION_SIGMA * sigma
-        return sps.norm(loc=mu, scale=sigma), (mu - width, mu + width)
-    if dist == "lognormal":
-        mu, sigma = float(p.mu), float(p.sigma)
-        width = _TRUNCATION_SIGMA * sigma
-        return sps.lognorm(s=sigma, scale=float(np.exp(mu))), (
-            float(np.exp(mu - width)),
-            float(np.exp(mu + width)),
-        )
-    raise ValueError(f"Unsupported distribution '{dist}' for parameter '{p.name}'")
-
 
 class _RetrievalModel(Model):
     """nessai model around the Exo Skryer priors and log-likelihood."""

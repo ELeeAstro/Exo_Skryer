@@ -92,6 +92,7 @@ def run_smc_blackjax(
     print(f"[blackjax_smc] num_particles: {num_particles}")
     print(f"[blackjax_smc] num_mcmc_steps: {num_mcmc_steps}")
     print(f"[blackjax_smc] target_ess: {target_ess}")
+    print(f"[blackjax_smc] batch_size: {batch_size}")
     print(f"[blackjax_smc] checkpoint: {checkpoint}")
 
     # Built inside jit so that the likelihood sees runtime as a jit argument,

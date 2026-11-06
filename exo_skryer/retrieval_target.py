@@ -9,9 +9,10 @@ logprior_u includes the Jacobian of each parameter transform.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
+from scipy import stats as sps
 import jax
 import jax.numpy as jnp
 
@@ -26,7 +27,6 @@ from .sampler_blackjax_MCMC import (
     _extract_offset_params,
     _extract_params,
 )
-from .sampler_nessai_NS import _prior_and_bounds
 
 __all__ = [
     "LOG_FLOOR",
@@ -34,6 +34,33 @@ __all__ = [
     "batched",
     "build_target",
 ]
+
+
+# Samplers such as nessai need finite bounds, so unbounded priors are truncated at this many sigma.
+_TRUNCATION_SIGMA = 6.0
+
+
+def _prior_and_bounds(p) -> Tuple[Any, Tuple[float, float]]:
+    """Return the frozen prior of a parameter and the bounds nessai samples within."""
+    dist = str(getattr(p, "dist", "")).lower()
+    if dist == "uniform":
+        low, high = float(p.low), float(p.high)
+        return sps.uniform(loc=low, scale=high - low), (low, high)
+    if dist == "log_uniform":
+        low, high = float(p.low), float(p.high)
+        return sps.reciprocal(low, high), (low, high)
+    if dist in ("gaussian", "normal"):
+        mu, sigma = float(p.mu), float(p.sigma)
+        width = _TRUNCATION_SIGMA * sigma
+        return sps.norm(loc=mu, scale=sigma), (mu - width, mu + width)
+    if dist == "lognormal":
+        mu, sigma = float(p.mu), float(p.sigma)
+        width = _TRUNCATION_SIGMA * sigma
+        return sps.lognorm(s=sigma, scale=float(np.exp(mu))), (
+            float(np.exp(mu - width)),
+            float(np.exp(mu + width)),
+        )
+    raise ValueError(f"Unsupported distribution '{dist}' for parameter '{p.name}'")
 
 
 @dataclass(frozen=True)
