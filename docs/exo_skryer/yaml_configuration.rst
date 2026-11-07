@@ -63,6 +63,7 @@ Minimal skeleton
      full_grid: false
      ck: true
      ck_mix: RORR
+     T_interp: linear
      line: []
      ray: null
      cia: []
@@ -327,6 +328,10 @@ determines which retrieval parameters (in ``params``) you must provide.
   If enabled, you must include a delta parameter ``a_sm`` (semi-major axis in AU)
   and provide Rayleigh data (``opac.ray``).
 
+  The boundary is interpolated between layer midpoints, so the ray holding it
+  is partly opaque; the cutoff moves smoothly with the atmosphere (finite
+  gradients for gradient-based samplers).
+
 ``physics.cloud_dist``
   Static cloud size-distribution selector (not sampled).
 
@@ -375,6 +380,18 @@ loaded into registries.
     (``transit_1d`` and ``transit_1_5d``).
   * ``transit_1_5d`` supports ``RORR`` and ``TRANS`` when using CK opacity, but
     does not currently support ``PRAS``.
+
+``opac.T_interp``
+  Interpolation of the line (OS and CK), CIA and H- tables along temperature.
+  Pressure is always interpolated linearly in log P (the layer grid is fixed).
+
+  *Supported values*:
+
+  * ``linear`` (default): linear in log T, as in earlier versions.
+  * ``pchip``: monotone piecewise-cubic Hermite (SciPy ``PchipInterpolator``
+    slopes) in log T. The opacity is then C1 in temperature: no overshoot
+    between grid nodes and no jump in the gradient at them, which helps
+    gradient-based samplers (NUTS) and optimisers.
 
 ``opac.line``
   List of line opacity entries. Each entry is a mapping (flow-style shown)::
@@ -604,6 +621,9 @@ Fields not listed here may be ignored.
 
 ``sampling.nuts``
   Common fields: ``backend, warmup, draws, seed, chains``.
+  NumPyro only: ``forward_mode`` (default ``false``) selects forward-mode
+  differentiation. Reverse mode is several times faster at typical parameter
+  counts.
   Note: the current BlackJAX NUTS driver supports ``chains: 1`` only.
 
 

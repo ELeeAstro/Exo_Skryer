@@ -6,6 +6,7 @@ rate_jax.py
 from __future__ import annotations
 from typing import Dict, Mapping, Tuple, Union, Optional
 import os
+from functools import partial
 
 import numpy as np
 import jax
@@ -239,6 +240,35 @@ def is_nasa9_cache_loaded() -> bool:
         True if cache is loaded, False otherwise.
     """
     return _NASA9_CACHE is not None
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(0, 4, 5, 6))
+def _poly_root_implicit(cls, A, guess, vmax, xtol, imax, kmax):
+    """Bounded polynomial root (see `RateJAX.newton_raphson_bounded`)."""
+    return cls._newton_raphson_bounded_solve(A, guess, vmax, xtol, imax, kmax)
+
+
+@_poly_root_implicit.defjvp
+def _poly_root_implicit_jvp(cls, xtol, imax, kmax, primals, tangents):
+    A, guess, vmax = primals
+    dA, _, dvmax = tangents
+    x = _poly_root_implicit(cls, A, guess, vmax, xtol, imax, kmax)
+    vmax = jnp.asarray(vmax, dtype=x.dtype)
+
+    p_val, dP_A = jax.jvp(lambda a: cls._eval_poly(a, x), (A,), (dA,))
+    dP_dx = jax.grad(lambda xx: cls._eval_poly(A, xx))(x)
+
+    # Accept x as a root when the residual is small relative to the size of the terms.
+    powers = x ** jnp.arange(A.shape[0], dtype=x.dtype)
+    scale = jnp.maximum(jnp.sum(jnp.abs(A) * powers), jnp.finfo(x.dtype).tiny)
+    is_root = jnp.abs(p_val) <= jnp.sqrt(max(xtol, float(jnp.finfo(x.dtype).eps))) * scale
+    at_upper = x >= vmax
+    usable = is_root & (jnp.abs(dP_dx) > 0.0) & (x > 0.0) & ~at_upper
+
+    dx_root = -dP_A / jnp.where(usable, dP_dx, 1.0)
+    dvmax = jnp.zeros_like(x) if dvmax is None else jnp.asarray(dvmax, dtype=x.dtype)
+    dx = jnp.where(usable, dx_root, jnp.where(at_upper, dvmax, 0.0))
+    return x, dx
 
 
 class RateJAX:
@@ -839,6 +869,30 @@ class RateJAX:
 
     @classmethod
     def newton_raphson_bounded(
+        cls,
+        A: jnp.ndarray,
+        guess: float,
+        vmax: float,
+        xtol: float = 1e-10,
+        imax: int = 80,
+        kmax: int = 10,
+    ) -> jnp.ndarray:
+        """
+        Bounded polynomial root with implicit-function derivatives.
+
+        The value comes from `_newton_raphson_bounded_solve`. Derivatives are not
+        taken through the solver iterations (its multi-start ``while_loop`` blocks
+        reverse mode); instead, at a root of P(x; A),
+
+            dx = -(dP/dA . dA) / P'(x),
+
+        a root clamped to ``vmax`` follows ``vmax``, and the non-root fallback
+        has zero derivative. This works in forward and reverse mode.
+        """
+        return _poly_root_implicit(cls, A, guess, vmax, float(xtol), int(imax), int(kmax))
+
+    @classmethod
+    def _newton_raphson_bounded_solve(
         cls,
         A: jnp.ndarray,
         guess: float,

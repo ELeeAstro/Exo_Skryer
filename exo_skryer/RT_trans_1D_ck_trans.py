@@ -162,7 +162,7 @@ def _integrate_g_points_trans(
 
     T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 300.0)) * T_prod  # (nlay, nwl)
     if refraction_mask is not None:
-        T_total = jnp.where(refraction_mask, 0.0, T_total)
+        T_total = T_total * (1.0 - refraction_mask)
     one_minus_trans = 1.0 - jnp.clip(T_total, 0.0, 1.0)               # (nlay, nwl)
 
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)     # (nwl,)

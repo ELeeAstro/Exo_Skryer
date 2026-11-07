@@ -10,7 +10,7 @@ from typing import Dict, Mapping, Tuple
 import jax.numpy as jnp
 
 from .aux_functions import safe_sqrt
-from .refraction import maybe_refraction_cutoff_mask
+from .refraction import maybe_refraction_cutoff_mask, refraction_extra_tau
 from .RT_trans_1D_os import _get_base_transit_radius
 
 __all__ = ["compute_transit_depth_1d_ck"]
@@ -162,7 +162,7 @@ def _integrate_g_points(
     dtau_v = k_eff * rho[:, None, None] * dz[:, None, None]  # (nlay, nwl, ng)
     tau_path = jnp.einsum("ij,jwg->iwg", P1D, dtau_v)  # (nlay, nwl, ng)
     if refraction_mask is not None:
-        tau_path = jnp.where(refraction_mask[:, :, None], 1.0e30, tau_path)
+        tau_path = tau_path + refraction_extra_tau(refraction_mask)[:, :, None]
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)  # (nlay, nwl, ng)
     dR2_per_g = jnp.sum(area_weight[:, None, None] * one_minus_trans, axis=0)  # (nwl, ng)

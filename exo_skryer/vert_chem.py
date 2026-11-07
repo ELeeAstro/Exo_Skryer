@@ -822,12 +822,60 @@ def _mixing_timescale(
     return tau_mix
 
 
+def _quench_position(tau_chem: jnp.ndarray, tau_mix: jnp.ndarray):
+    """Fractional layer index of the quench point (layer 0 is the bottom).
+
+    Quenching starts at the first layer where chemistry is slower than mixing.
+    Instead of snapping to that layer, the crossing of
+    d = log(tau_chem) - log(tau_mix) through zero is interpolated linearly in
+    layer index between the bracketing layers, so the quench point (and the
+    quenched abundances) move continuously with T-p, Kzz, g, ... and have
+    finite gradients.
+
+    Returns
+    -------
+    has_quench : bool array
+        Whether any layer is quenched.
+    s : float array in [-1, nlay-1]
+        Quench position: layers ``j > s`` are quenched. When the first quenched
+        layer is ``k``, ``s`` lies in [k-1, k).
+    """
+    d = jnp.log(jnp.maximum(tau_chem, 1e-300)) - jnp.log(jnp.maximum(tau_mix, 1e-300))
+    mask = d > 0.0
+    has_quench = jnp.any(mask)
+    k = jnp.argmax(mask)
+    # Bracketing pair: (k-1, k), or (0, 1) when the bottom layer is already quenched
+    # (the crossing is then extrapolated below layer 0, down to s = -1).
+    hi = jnp.where(k > 0, k, 1)
+    lo = hi - 1
+    den = d[hi] - d[lo]
+    ok = den > 0.0
+    s = lo - d[lo] / jnp.where(ok, den, 1.0)
+    s = jnp.where(ok, s, k - 1.0)
+    s = jnp.where(k > 0, s, jnp.clip(s, -1.0, 0.0))
+    return has_quench, s
+
+
+def _log_interp_at(v: jnp.ndarray, s: jnp.ndarray) -> jnp.ndarray:
+    """Profile ``v`` at fractional layer index ``s`` (log-linear, clamped to the grid)."""
+    n = v.shape[0]
+    sc = jnp.clip(s, 0.0, n - 1.0)
+    i = jnp.clip(jnp.floor(sc).astype(jnp.int32), 0, n - 2)
+    f = sc - i
+    lv = jnp.log(jnp.maximum(v, 1e-300))
+    return jnp.exp((1.0 - f) * lv[i] + f * lv[i + 1])
+
+
 def _apply_quench_single(
     vmr_eq: jnp.ndarray,
     tau_chem: jnp.ndarray,
     tau_mix: jnp.ndarray,
 ) -> jnp.ndarray:
     """Applies quenching to a single species profile.
+
+    Layers above the quench point are frozen at the equilibrium VMR
+    interpolated to the quench point (see `_quench_position`), which keeps the
+    profile continuous as the quench point moves between layers.
 
     Parameters
     ----------
@@ -843,22 +891,11 @@ def _apply_quench_single(
     `~jax.numpy.ndarray`
         The quenched VMR profile.
     """
-    # Quench where chemistry is slower than mixing
-    quench_mask = tau_chem > tau_mix
+    has_quench, s = _quench_position(tau_chem, tau_mix)
+    vmr_q = _log_interp_at(vmr_eq, s)
 
-    # Find first quenched level (returns JAX array, not Python int)
-    quench_idx = jnp.argmax(quench_mask)
-
-    # Check if any quenching occurs
-    has_quench = jnp.any(quench_mask)
-
-    # Build quenched profile: freeze VMR at quench_idx for layers >= quench_idx
     layer_indices = jnp.arange(vmr_eq.size)
-    vmr_frozen = jnp.where(
-        layer_indices >= quench_idx,
-        vmr_eq[quench_idx],  # Freeze at quench level value
-        vmr_eq,              # Below quench level: use equilibrium
-    )
+    vmr_frozen = jnp.where(layer_indices > s, vmr_q, vmr_eq)
 
     # Return equilibrium if no quenching, otherwise return frozen profile
     return jnp.where(has_quench, vmr_frozen, vmr_eq)
@@ -880,9 +917,13 @@ def _co2_quench_special(
     Region 3 — at and above CO2 quench level (low pressure):
         Frozen at the K_eq value evaluated at the CO2 quench level.
 
-        
+    Both quench levels are fractional layer positions (see `_quench_position`):
+    the layer straddling the CO quench point blends regions 1 and 2, and the
+    region-3 value is interpolated to the CO2 quench point, so the profile moves
+    continuously between layers.
+
     Wogan et al 2025 Res. Notes AAS 9 10
-    
+
     K_eq(T) = 18.3 * exp(-2376/T - (932/T)^2)
 
     If no CO2 quench level exists the CE CO2 profile is returned unchanged.
@@ -894,25 +935,21 @@ def _co2_quench_special(
         0.0, 1.0,
     )
 
-    # CO quench index
+    # CO quench position (no CO quench: region 2 starts at the bottom, as before)
     tau_chem_co = _chemical_timescale("CO", T_lay, p_lay_bar)
-    co_quench_idx = jnp.argmax(tau_chem_co > tau_mix)
+    has_co_quench, s_co = _quench_position(tau_chem_co, tau_mix)
+    s_co = jnp.where(has_co_quench, s_co, -1.0)
 
-    # CO2 quench index
+    # CO2 quench position
     tau_chem_co2 = _chemical_timescale("CO2", T_lay, p_lay_bar)
-    co2_quench_mask = tau_chem_co2 > tau_mix
-    has_co2_quench = jnp.any(co2_quench_mask)
-    co2_quench_idx = jnp.argmax(co2_quench_mask)
+    has_co2_quench, s_co2 = _quench_position(tau_chem_co2, tau_mix)
 
-    f_CO2_frozen = f_CO2_keq[co2_quench_idx]
+    f_CO2_frozen = _log_interp_at(f_CO2_keq, s_co2)
 
     layer_indices = jnp.arange(T_lay.shape[0])
-    in_keq_region = (layer_indices >= co_quench_idx) & (layer_indices < co2_quench_idx)
-    above_co2     =  layer_indices >= co2_quench_idx
-
-    profile = vmr["CO2"]
-    profile = jnp.where(in_keq_region, f_CO2_keq,    profile)
-    profile = jnp.where(above_co2,     f_CO2_frozen,  profile)
+    w_keq = jnp.clip(layer_indices - s_co, 0.0, 1.0)  # 0 in region 1, 1 in region 2
+    profile = (1.0 - w_keq) * vmr["CO2"] + w_keq * f_CO2_keq
+    profile = jnp.where(layer_indices > s_co2, f_CO2_frozen, profile)
     return jnp.where(has_co2_quench, profile, vmr["CO2"])
 
 

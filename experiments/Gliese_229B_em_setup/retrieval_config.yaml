@@ -31,18 +31,18 @@ physics:
 
 opac:
 
-  wl_master: ../../opac_data/os/wl_R20000.txt
+  wl_master: ../../opac_data/os/OS_R20000/wl_R20000.txt
   full_grid: False
   ck: False
   ck_mix: RORR
 
   line:
-    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr.zip}
-    - {species: CO, path: ../../opac_data/os/CO_R20000.zarr.zip}
-    - {species: CH4, path: ../../opac_data/os/CH4_R20000.zarr.zip}
-    - {species: NH3, path: ../../opac_data/os/NH3_R20000.zarr.zip}
-    - {species: Na, path: ../../opac_data/os/Na_R20000.zarr.zip}
-    - {species: K, path: ../../opac_data/os/K_R20000.zarr.zip}
+    - {species: H2O, path: ../../opac_data/os/OS_R20000/H2O_R20000.zarr.zip}
+    - {species: CO, path: ../../opac_data/os/OS_R20000/CO_R20000.zarr.zip}
+    - {species: CH4, path: ../../opac_data/os/OS_R20000/CH4_R20000.zarr.zip}
+    - {species: NH3, path: ../../opac_data/os/OS_R20000/NH3_R20000.zarr.zip}
+    - {species: Na, path: ../../opac_data/os/OS_R20000/Na_R20000.zarr.zip}
+    - {species: K, path: ../../opac_data/os/OS_R20000/K_R20000.zarr.zip}
 
   ray:
     - {species: H2}
@@ -110,7 +110,7 @@ quench_approx:
 
 sampling:
 
-  engine: dynesty
+  engine: pocomc
 
   nuts:
     backend: numpyro
@@ -247,21 +247,24 @@ sampling:
     checkpoint_interval: 600         # Seconds between checkpoints
 
   # pocoMC settings (normalising-flow preconditioning; needs the pixi pocomc environment)
+
   pocomc:
-    n_effective: 512                 # Effective sample size per temperature
-    n_active: 256                    # Particles moved per iteration
+    n_effective: 2048                # Effective sample size per temperature
+    n_active: 1024                   # Particles moved per iteration
     n_total: 4096                    # Effective samples to collect at the end
     n_evidence: 4096                 # Importance samples for logZ
-    batch_size: 32                   # Likelihood batch; lower it if memory runs out, null = n_active
+    batch_size: 64                   # Likelihood batch; lower it if memory runs out, null = n_active
     posterior_samples: 5000
     seed: 42
     output: pocomc_run               # State directory, relative to this file
     resume: false                    # Continue from the newest state in output
-    save_every: 5                    # Iterations between state files
-    pytorch_threads: 1               # CPU threads for flow training
+    save_every: 100                  # Iterations between state files
+    pytorch_threads: 16              # CPU threads for flow training
     progress: false                  # tqdm bar; keep false for batch jobs
 
+
 runtime:
-  platform: cuda           # cpu | cuda | rocm
-  cuda_visible_devices: 0  # or "0,1"
-  threads: 1
+  platform: rocm
+  rocm_visible_devices: "0"   # sets ROCR_VISIBLE_DEVICES; omit to see all devices
+  preallocate: false          # default false
+  mem_fraction: 1.0           # default is 0.75, not 1.0

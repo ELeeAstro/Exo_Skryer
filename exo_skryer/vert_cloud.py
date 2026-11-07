@@ -5,7 +5,7 @@ This module contains functions that compute the vertical distribution of cloud
 mass mixing ratio (q_c_lay) as a function of pressure and atmospheric conditions.
 """
 
-from typing import Dict
+from typing import Dict, Optional
 import jax.numpy as jnp
 
 from .data_constants import bar
@@ -16,6 +16,17 @@ __all__ = [
     "slab_profile",
     "const_profile",
 ]
+
+
+def _layer_overlap(p_lev: jnp.ndarray, p_top: jnp.ndarray, p_bot: jnp.ndarray) -> jnp.ndarray:
+    """Fraction of each layer's pressure range (i.e. mass) inside [p_top, p_bot].
+
+    ``p_lev`` has shape (nlay+1,), ordered from the bottom (highest pressure) up.
+    """
+    p_hi = p_lev[:-1]
+    p_lo = p_lev[1:]
+    overlap = jnp.minimum(p_hi, p_bot) - jnp.maximum(p_lo, p_top)
+    return jnp.clip(overlap / (p_hi - p_lo), 0.0, 1.0)
 
 
 def no_cloud(
@@ -59,12 +70,19 @@ def exponential_decay_profile(
     rho_lay: jnp.ndarray,
     nd_lay: jnp.ndarray,
     params: Dict[str, jnp.ndarray],
-) -> jnp.ndarray:
-    """Exponential decay cloud profile with hard base cutoff.
+    p_lev: Optional[jnp.ndarray] = None,
+    return_cover: bool = False,
+):
+    """Exponential decay cloud profile with a base cutoff.
 
     This profile follows:
         q_c(P) = q_c_0 * (P / P_base)^alpha  for P < P_base
         q_c(P) = 0                           for P >= P_base
+
+    With ``p_lev`` the layer holding the base is filled in proportion to the
+    fraction of its mass above P_base, so the base moves smoothly through the
+    grid (finite gradients in ``log_10_p_base``). Without it the layer-centre
+    cutoff is used.
 
     Parameters
     ----------
@@ -87,11 +105,17 @@ def exponential_decay_profile(
             Log₁₀ cloud pressure power-law exponent.
         - `log_10_p_base` : float
             Log₁₀ base pressure in bar (converted to dyne cm⁻² internally).
+    p_lev : `~jax.numpy.ndarray`, shape (nlay+1,), optional
+        Level pressures in dyne cm⁻², bottom first.
+    return_cover : bool, optional
+        Also return the fraction of each layer inside the cloud.
 
     Returns
     -------
     q_c_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Cloud mass mixing ratio per layer.
+    cover : `~jax.numpy.ndarray`, shape (nlay,)
+        Only with ``return_cover``: fraction of each layer inside the cloud.
     """
     # Retrieved parameters
     q_c_0 = 10.0 ** params["log_10_q_c"]
@@ -99,16 +123,17 @@ def exponential_decay_profile(
 
     p_base = 10.0 ** params["log_10_p_base"] * bar  # bar → dyne cm⁻²
 
-    # Hard cutoff: clouds only exist for P < P_base
-    cloud_mask = p_lay < p_base
+    if p_lev is None:
+        # Layer-centre cutoff: clouds only exist for P < P_base
+        cover = (p_lay < p_base).astype(p_lay.dtype)
+        p_eval = p_lay
+    else:
+        # Fraction of each layer's mass above the base
+        cover = _layer_overlap(p_lev, jnp.zeros_like(p_base), p_base)
+        p_eval = jnp.minimum(p_lay, p_base)
 
-    # Compute exponential profile
-    q_c_profile = q_c_0 * (p_lay / jnp.maximum(p_base, 1e-30)) ** alpha
-
-    # Apply hard cutoff
-    q_c_lay = jnp.where(cloud_mask, q_c_profile, 0.0)
-
-    return q_c_lay
+    q_c_lay = q_c_0 * (p_eval / jnp.maximum(p_base, 1e-30)) ** alpha * cover
+    return (q_c_lay, cover) if return_cover else q_c_lay
 
 
 def slab_profile(
@@ -118,10 +143,16 @@ def slab_profile(
     rho_lay: jnp.ndarray,
     nd_lay: jnp.ndarray,
     params: Dict[str, jnp.ndarray],
-) -> jnp.ndarray:
-    """Uniform slab cloud profile with hard pressure cutoffs.
+    p_lev: Optional[jnp.ndarray] = None,
+    return_cover: bool = False,
+):
+    """Uniform slab cloud profile.
 
     The cloud is present with constant q_c between P_top and P_bot, and zero outside.
+    With ``p_lev`` the layers holding the slab edges are filled in proportion to
+    the fraction of their mass inside the slab, so the edges move smoothly through
+    the grid (finite gradients in the slab pressures). Without it the
+    layer-centre test is used.
 
     Parameters
     ----------
@@ -144,11 +175,17 @@ def slab_profile(
             Log₁₀ pressure at the top of the slab in bar.
         - `log_10_dp_slab` : float
             Log₁₀ linear pressure width of the slab in bar (Δp = 10^log_10_dp_slab).
+    p_lev : `~jax.numpy.ndarray`, shape (nlay+1,), optional
+        Level pressures in dyne cm⁻², bottom first.
+    return_cover : bool, optional
+        Also return the fraction of each layer inside the slab.
 
     Returns
     -------
     q_c_lay : `~jax.numpy.ndarray`, shape (nlay,)
         Cloud mass mixing ratio per layer (q_c inside slab, 0 outside).
+    cover : `~jax.numpy.ndarray`, shape (nlay,)
+        Only with ``return_cover``: fraction of each layer inside the slab.
     """
     # Retrieved parameters
     q_c_slab = 10.0 ** params["log_10_q_c"]
@@ -158,11 +195,15 @@ def slab_profile(
     Delta_p = 10.0 ** params["log_10_dp_slab"] * bar   # bar → dyne cm⁻²
     P_bot = P_top + Delta_p                             # P_c,top + Δp
 
-    # Hard slab cutoff: 1 inside [P_top, P_bot], 0 outside
-    slab_mask = jnp.logical_and(p_lay >= P_top, p_lay <= P_bot)
-    q_c_lay = q_c_slab * slab_mask
+    if p_lev is None:
+        # Layer-centre test: 1 inside [P_top, P_bot], 0 outside
+        cover = jnp.logical_and(p_lay >= P_top, p_lay <= P_bot).astype(p_lay.dtype)
+    else:
+        # Fraction of each layer's mass inside [P_top, P_bot]
+        cover = _layer_overlap(p_lev, P_top, P_bot)
 
-    return q_c_lay
+    q_c_lay = q_c_slab * cover
+    return (q_c_lay, cover) if return_cover else q_c_lay
 
 
 def const_profile(

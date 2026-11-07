@@ -9,6 +9,8 @@ from typing import Dict
 
 import jax.numpy as jnp
 
+from .aux_functions import interp_table_axis, t_interp_scheme
+
 __all__ = [
     "zero_special_opacity",
     "compute_hminus_bf_opacity",
@@ -49,6 +51,7 @@ def _interpolate_logsigma_1d(
     log_temperature_grid: jnp.ndarray,
     temperature_grid: jnp.ndarray,
     layer_temperatures: jnp.ndarray,
+    t_interp: str = "linear",
 ) -> jnp.ndarray:
     """Interpolate a log10 cross-section table on a log10(T) grid.
 
@@ -68,17 +71,9 @@ def _interpolate_logsigma_1d(
     sigma_interp_log : `~jax.numpy.ndarray`, shape `(nlay, nwl)`
         Log₁₀ cross-sections interpolated to each layer temperature.
     """
-    log_t_layers = jnp.log10(layer_temperatures)
-    log_t_grid = log_temperature_grid
-
-    t_idx = jnp.searchsorted(log_t_grid, log_t_layers) - 1
-    t_idx = jnp.clip(t_idx, 0, log_t_grid.shape[0] - 2)
-    t_weight = (log_t_layers - log_t_grid[t_idx]) / (log_t_grid[t_idx + 1] - log_t_grid[t_idx])
-    t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-    s_t0 = sigma_log[t_idx, :]
-    s_t1 = sigma_log[t_idx + 1, :]
-    s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
+    s_interp = interp_table_axis(
+        jnp.log10(layer_temperatures), log_temperature_grid, lambda t_idx: sigma_log[t_idx, :], t_interp
+    )
 
     min_temp = temperature_grid[0]
     below_min = layer_temperatures < min_temp
@@ -151,7 +146,8 @@ def compute_hminus_bf_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
     log_temperature_grid = opac["hminus_log10_temperature_grid"]
     temperature_grid = opac["hminus_temperature_grid"]
     sigma_values = 10.0 ** _interpolate_logsigma_1d(
-        sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
+        sigma_log, log_temperature_grid, temperature_grid, layer_temperatures,
+        t_interp_scheme(state),
     ).astype(jnp.float64)
 
     # VMR value is already a JAX array, no need to wrap
@@ -201,7 +197,8 @@ def compute_hminus_ff_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
     log_temperature_grid = opac["hminus_log10_temperature_grid"]
     temperature_grid = opac["hminus_temperature_grid"]
     sigma_values = 10.0 ** _interpolate_logsigma_1d(
-        sigma_log, log_temperature_grid, temperature_grid, layer_temperatures
+        sigma_log, log_temperature_grid, temperature_grid, layer_temperatures,
+        t_interp_scheme(state),
     ).astype(jnp.float64)
 
     if "e-" in layer_vmr:

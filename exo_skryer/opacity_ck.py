@@ -13,6 +13,7 @@ from . import build_opacities as XS
 from .data_constants import amu, bar
 from .ck_mix_RORR import mix_k_tables_rorr
 from .ck_mix_PRAS import mix_k_tables_pras
+from .aux_functions import interp_table_axis, t_interp_scheme
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
 _LN10 = 2.302585092994046
@@ -24,7 +25,20 @@ __all__ = [
 ]
 
 
-def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures: jnp.ndarray) -> jnp.ndarray:
+def _interp_species_log(sigma_4d, log_temp_grid, p_idx, p_weight, log_t, t_interp="linear"):
+    """Interpolate one species' (nT, nP, nwl, ng) log10 k-table to one layer.
+
+    Linear in log P (the layer grid is fixed), then along log T with
+    ``t_interp`` ("linear" or "pchip"), clipped to the species' own T range.
+    """
+    def _at_t(t_idx):
+        return (1.0 - p_weight) * sigma_4d[t_idx, p_idx, :, :] + p_weight * sigma_4d[t_idx, p_idx + 1, :, :]
+
+    return interp_table_axis(log_t, log_temp_grid, _at_t, t_interp)
+
+
+def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures: jnp.ndarray,
+                           t_interp: str = "linear") -> jnp.ndarray:
     """Bilinear interpolation of correlated-k cross-sections on (log P, log T) grids.
 
     This function retrieves pre-loaded correlated-k opacity tables from the opacity
@@ -67,24 +81,7 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
         def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
-            # Temperature bracket indices and weights (species-dependent)
-            # Clip to this species' own T range: shorter grids are edge-padded, and a
-            # zero-width padded segment would give a NaN gradient above its Tmax.
-            log_t_c = jnp.clip(log_t, log_temp_grid[0], log_temp_grid[-1])
-            t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
-            t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-            t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-            t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-            # Bilinear interpolation in (logT, logP). Indices are scalars here, so outputs are (nwl, ng).
-            s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
-            s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
-            s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
-            s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
-
-            s_t0 = (1.0 - p_weight) * s_t0_p0 + p_weight * s_t0_p1
-            s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
-            return (1.0 - t_weight) * s_t0 + t_weight * s_t1
+            return _interp_species_log(sigma_4d, log_temp_grid, p_idx, p_weight, log_t, t_interp)
 
         sigma_log_layer = jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)  # (nspec, nwl, ng)
         return sigma_log_layer
@@ -228,6 +225,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
     sigma_cube = opac["ck_sigma_cube"]
     log_p_grid = opac["ck_log10_pressure_grid"]
     log_temperature_grids = opac["ck_log10_temperature_grids"]
+    t_interp = t_interp_scheme(state)
 
     log_p_layers = jnp.log10(layer_pressures / bar)
     log_t_layers = jnp.log10(layer_temperatures)
@@ -243,22 +241,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
         def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
-            # Clip to this species' own T range: shorter grids are edge-padded, and a
-            # zero-width padded segment would give a NaN gradient above its Tmax.
-            log_t_c = jnp.clip(log_t, log_temp_grid[0], log_temp_grid[-1])
-            t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
-            t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-            t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-            t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-            s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
-            s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
-            s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
-            s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
-
-            s_t0 = (1.0 - p_weight) * s_t0_p0 + p_weight * s_t0_p1
-            s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
-            return (1.0 - t_weight) * s_t0 + t_weight * s_t1
+            return _interp_species_log(sigma_4d, log_temp_grid, p_idx, p_weight, log_t, t_interp)
 
         return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
 
@@ -357,6 +340,7 @@ def compute_ck_opacity_perspecies(
     sigma_cube = opac["ck_sigma_cube"]
     log_p_grid = opac["ck_log10_pressure_grid"]
     log_temperature_grids = opac["ck_log10_temperature_grids"]
+    t_interp = t_interp_scheme(state)
 
     log_p_layers = jnp.log10(layer_pressures / bar)
     log_t_layers = jnp.log10(layer_temperatures)
@@ -369,22 +353,7 @@ def compute_ck_opacity_perspecies(
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
 
         def _interp_one_species(sigma_4d: jnp.ndarray, log_temp_grid: jnp.ndarray) -> jnp.ndarray:
-            # Clip to this species' own T range: shorter grids are edge-padded, and a
-            # zero-width padded segment would give a NaN gradient above its Tmax.
-            log_t_c = jnp.clip(log_t, log_temp_grid[0], log_temp_grid[-1])
-            t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
-            t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-            t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-            t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-            s_t0_p0 = sigma_4d[t_idx, p_idx, :, :]
-            s_t0_p1 = sigma_4d[t_idx, p_idx + 1, :, :]
-            s_t1_p0 = sigma_4d[t_idx + 1, p_idx, :, :]
-            s_t1_p1 = sigma_4d[t_idx + 1, p_idx + 1, :, :]
-
-            s_t0 = (1.0 - p_weight) * s_t0_p0 + p_weight * s_t0_p1
-            s_t1 = (1.0 - p_weight) * s_t1_p0 + p_weight * s_t1_p1
-            return (1.0 - t_weight) * s_t0 + t_weight * s_t1
+            return _interp_species_log(sigma_4d, log_temp_grid, p_idx, p_weight, log_t, t_interp)
 
         return jax.vmap(_interp_one_species)(sigma_cube, log_temperature_grids)
 

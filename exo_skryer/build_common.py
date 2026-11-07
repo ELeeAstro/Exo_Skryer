@@ -7,6 +7,7 @@ build-time validation, and the atmosphere / opacity steps of the model.
 
 from __future__ import annotations
 
+import inspect
 import traceback
 from dataclasses import dataclass, field
 from enum import IntEnum
@@ -23,6 +24,7 @@ from .opacity_ray import zero_ray_opacity
 from .opacity_cia import zero_cia_opacity
 from .opacity_special import zero_special_opacity
 from .opacity_cloud import zero_cloud_opacity
+from .aux_functions import T_INTERP_SCHEMES
 from .vert_chem import constant_vmr, constant_vmr_clr
 from .vert_mu import build_compute_mu, constant_mu
 from .RT_em_schemes import get_emission_solver
@@ -82,10 +84,12 @@ class ModelState(TypedDict, total=False):
     rho_lay: jnp.ndarray
     nd_lay: jnp.ndarray
     q_c_lay: jnp.ndarray
+    cloud_cover_lay: jnp.ndarray  # (nlay,) fraction of each layer inside the cloud
     vmr_lay: Dict[str, jnp.ndarray]
     contri_func: bool
     refraction_mode: int       # Refraction value
     ck_mix: int                # CkMix value (ck only)
+    opac_T_interp: int         # index into T_INTERP_SCHEMES (static)
     cloud_nk_n: jnp.ndarray    # only with cloud n,k data
     cloud_nk_k: jnp.ndarray
     is_brown_dwarf: bool       # 1D only
@@ -112,6 +116,7 @@ class ModelSpec:
     ck: bool
     ck_mix: Optional[CkMix]
     refraction: Refraction
+    t_interp: str
     contri_func: bool
     is_brown_dwarf: bool
     schemes: Dict[str, str] = field(default_factory=dict)  # kind -> configured name
@@ -142,6 +147,7 @@ class ModelSpec:
             "rt_kernel": fmt(self.rt),
             "ck": self.ck,
             "ck_mix_code_static": None if self.ck_mix is None else int(self.ck_mix),
+            "opac_T_interp": self.t_interp,
             "contri_func_enabled": self.contri_func,
             "refraction_mode": int(self.refraction),
         }
@@ -166,6 +172,14 @@ def _parse_ck_mix(cfg) -> CkMix:
         return CkMix[raw]
     except KeyError:
         raise ValueError(f"Unknown opac.ck_mix='{raw}'. Options: RORR | PRAS | TRANS") from None
+
+
+def _parse_t_interp(cfg) -> str:
+    raw = getattr(getattr(cfg, "opac", None), "T_interp", None)
+    s = "linear" if raw is None else str(raw).strip().lower()
+    if s not in T_INTERP_SCHEMES:
+        raise ValueError(f"Unknown opac.T_interp='{raw}'. Options: {' | '.join(T_INTERP_SCHEMES)}")
+    return s
 
 
 def _parse_refraction(phys) -> Refraction:
@@ -235,6 +249,7 @@ def select_model(cfg, geometry: str = "1d") -> ModelSpec:
         ck=ck,
         ck_mix=ck_mix,
         refraction=_parse_refraction(phys),
+        t_interp=_parse_t_interp(cfg),
         contri_func=bool(getattr(phys, "contri_func", False)),
         is_brown_dwarf=emission_mode in _BROWN_DWARF,
         schemes={k: str(v).strip().lower() for k, v in schemes.items()},
@@ -393,6 +408,31 @@ def make_mu_kernel(cfg, spec: ModelSpec, trace_species: tuple) -> Callable:
     return mu_kernel
 
 
+def _cloud_profile_caller(fn: Callable) -> Callable:
+    """Wrap a vert_cloud kernel as ``(p_lev, p_lay, ...) -> (q_c_lay, cloud_cover_lay)``.
+
+    Kernels that accept ``p_lev`` get the level grid so partial layers can be
+    filled fractionally; kernels that accept ``return_cover`` also report the
+    fraction of each layer inside the cloud. Other (user) kernels keep the plain
+    signature, and their cover is ``q_c_lay > 0``.
+    """
+    try:
+        sig_params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        sig_params = {}
+    takes_p_lev = "p_lev" in sig_params
+    takes_cover = "return_cover" in sig_params
+
+    def call(p_lev, p_lay, T_lay, mu_lay, rho_lay, nd_lay, params):
+        kw = {"p_lev": p_lev} if takes_p_lev else {}
+        if takes_cover:
+            return fn(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params, return_cover=True, **kw)
+        q_c_lay = fn(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params, **kw)
+        return q_c_lay, (q_c_lay > 0.0).astype(q_c_lay.dtype)
+
+    return call
+
+
 def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int) -> Callable:
     """Return ``atmosphere(params, wl, opac) -> (state, params)``.
 
@@ -401,6 +441,7 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
     written back as ``R_p`` so altitude kernels use the same radius as the RT.
     """
     nlev = nlay + 1
+    cloud_profile = _cloud_profile_caller(spec.cloud_profile)
 
     def atmosphere(params, wl, opac):
         if "M_p" in params:
@@ -419,7 +460,7 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
         z_lev, z_lay, dz = spec.alt(p_lev, T_lay, mu_lay, params)
         rho_lay = (mu_lay * amu * p_lay) / (kb * T_lay)
         nd_lay = p_lay / (kb * T_lay)
-        q_c_lay = spec.cloud_profile(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params)
+        q_c_lay, cloud_cover_lay = cloud_profile(p_lev, p_lay, T_lay, mu_lay, rho_lay, nd_lay, params)
 
         state: ModelState = {
             "nwl": wl.shape[0],
@@ -438,9 +479,11 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
             "rho_lay": rho_lay,
             "nd_lay": nd_lay,
             "q_c_lay": q_c_lay,
+            "cloud_cover_lay": cloud_cover_lay,
             "vmr_lay": vmr_lay,
             "contri_func": spec.contri_func,
             "refraction_mode": int(spec.refraction),
+            "opac_T_interp": T_INTERP_SCHEMES.index(spec.t_interp),
         }
         if "cloud_nk_n" in opac:
             state["cloud_nk_n"] = opac["cloud_nk_n"]

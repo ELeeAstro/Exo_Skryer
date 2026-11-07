@@ -135,6 +135,12 @@ bottom pressure :math:`p_{\rm top} + \Delta p`, where :math:`\Delta p = 10^{\log
       0,               & p > p_{\rm c, top} + \Delta p. \\
    \end{cases}
 
+In the forward model the layers holding the slab edges are filled in
+proportion to the fraction of their pressure range (mass) inside the slab, so
+the edges move smoothly through the layer grid. The exponential profile treats
+its base the same way. Calling the kernels without ``p_lev`` (as below) uses
+the layer-centre test.
+
 **Example YAML Configuration:**
 
 .. code-block:: yaml

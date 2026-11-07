@@ -19,7 +19,41 @@ from jax import lax
 from . import registry_ray as XR
 from .data_constants import AU, kb, amu
 
-__all__ = ["refraction_cutoff_mask", "maybe_refraction_cutoff_mask"]
+__all__ = ["refraction_cutoff_mask", "maybe_refraction_cutoff_mask", "refraction_extra_tau"]
+
+
+def _blocked_fraction(alpha: jnp.ndarray, theta_star: jnp.ndarray) -> jnp.ndarray:
+    """Fraction of each ray's annulus below the refractive boundary.
+
+    ``alpha`` (nlay, nwl) is the bending angle at the layer midpoints, bottom
+    first, and decreases with height. The boundary is placed where
+    log(alpha / theta_star) crosses zero, interpolated linearly in layer index
+    between the bracketing midpoints; each ray covers +-0.5 layer around its
+    midpoint. This moves the boundary continuously through the grid instead of
+    switching whole rays on and off, so gradients stay finite.
+    """
+    nlay = alpha.shape[0]
+    q = jnp.log(jnp.maximum(alpha, 1e-300)) - jnp.log(jnp.maximum(theta_star, 1e-300))
+    count = jnp.sum(q > 0.0, axis=0)                      # blocked rays per wavelength
+    k = jnp.clip(count - 1, 0, nlay - 2)
+    q_lo = jnp.take_along_axis(q, k[None, :], axis=0)[0]
+    q_hi = jnp.take_along_axis(q, (k + 1)[None, :], axis=0)[0]
+    den = q_lo - q_hi
+    ok = den > 0.0
+    s = jnp.where(ok, k + q_lo / jnp.where(ok, den, 1.0), count - 0.5)
+    j = jnp.arange(nlay, dtype=alpha.dtype)[:, None]
+    return jnp.clip(s[None, :] - j + 0.5, 0.0, 1.0)
+
+
+def refraction_extra_tau(blocked: jnp.ndarray) -> jnp.ndarray:
+    """Optical depth that makes a fraction ``blocked`` of a ray opaque.
+
+    exp(-(tau + extra)) = (1 - blocked) * exp(-tau); fully blocked rays get
+    1e30, as the hard cutoff did.
+    """
+    full = blocked >= 1.0
+    part = jnp.where(full, 0.0, blocked)
+    return jnp.where(full, 1.0e30, -jnp.log1p(-part))
 
 
 def refraction_cutoff_mask(
@@ -27,7 +61,7 @@ def refraction_cutoff_mask(
     params: Dict[str, jnp.ndarray],
     opac: Dict[str, jnp.ndarray],
 ) -> jnp.ndarray:
-    """Return a boolean mask for impact parameters blocked by refraction.
+    """Return the fraction of each ray blocked by refraction.
 
     The mask is defined on the same "impact parameter grid" used by the current
     transit RT kernels: `b ≈ R0 + z_lay` (layer midpoints).
@@ -37,11 +71,12 @@ def refraction_cutoff_mask(
 
         alpha(b, λ) ≈ (n(b, λ) - 1) * sqrt(2π b / H)
 
-    and mark a ray as blocked if:
+    A ray is blocked where
 
         alpha(b, λ) > theta_star,    theta_star = asin(R_s / a)
 
-    where `a = a_sm * AU`.
+    with `a = a_sm * AU`. The boundary is interpolated between layer midpoints,
+    so the ray holding it is partly blocked (see `_blocked_fraction`).
 
     Parameters
     ----------
@@ -55,8 +90,9 @@ def refraction_cutoff_mask(
 
     Returns
     -------
-    mask : jnp.ndarray, shape (nlay, nwl), dtype bool
-        True where refraction blocks stellar rays (treat as fully opaque).
+    blocked : jnp.ndarray, shape (nlay, nwl), float in [0, 1]
+        Fraction of each ray's annulus blocked by refraction. Add
+        `refraction_extra_tau(blocked)` to the path optical depth.
     """
     nwl = state["wl"].shape[0]
     nlay = state["nd_lay"].shape[0]
@@ -94,7 +130,7 @@ def refraction_cutoff_mask(
     # Exponential-atmosphere bending approximation
     alpha = nm1_layer * jnp.sqrt(2.0 * jnp.pi * b[:, None] / jnp.maximum(H[:, None], 1.0))
 
-    return alpha > theta_star
+    return _blocked_fraction(alpha, theta_star)
 
 
 def maybe_refraction_cutoff_mask(
@@ -102,7 +138,7 @@ def maybe_refraction_cutoff_mask(
     params: Dict[str, jnp.ndarray],
     opac: Dict[str, jnp.ndarray] | None,
 ) -> jnp.ndarray:
-    """Return a JAX-safe refraction mask or an all-false mask.
+    """Return the blocked fraction per ray, or zeros when refraction is off.
 
     This avoids Python-side branching on traced `refraction_mode` values inside
     jitted/vmapped transit kernels.
@@ -119,7 +155,7 @@ def maybe_refraction_cutoff_mask(
     else:
         nwl = int(state["nwl"])
 
-    zeros = jnp.zeros((nlay, nwl), dtype=bool)
+    zeros = jnp.zeros((nlay, nwl), dtype=jnp.float64)
 
     if opac is None:
         return zeros

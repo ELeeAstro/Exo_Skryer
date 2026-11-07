@@ -455,11 +455,14 @@ def run_nuts_numpyro(cfg, obs: dict, fm: Callable, exp_dir) -> Dict[str, jnp.nda
         u = z["u"]
         return -logprob(u)
 
-    # Create NUTS kernel
+    # Reverse mode costs a few likelihood evaluations whatever the number of
+    # parameters; forward mode scales with it (7-10x slower for emission at
+    # ~10 parameters). nuts.forward_mode: true restores the old behaviour.
+    forward_mode = bool(getattr(nuts_cfg, "forward_mode", False))
     kernel = NUTS(
         potential_fn=potential_fn,
         dense_mass=True,
-        forward_mode_differentiation=True,
+        forward_mode_differentiation=forward_mode,
     )
 
     # Setup MCMC

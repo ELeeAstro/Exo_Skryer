@@ -642,8 +642,9 @@ def grey_profile_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
     Returns
     -------
     k_cld : `~jax.numpy.ndarray`, shape (nlay, nwl)
-        Grey cloud extinction coefficient in cm² g⁻¹, set to
-        ``10**log_10_k_cld_grey`` where ``q_c_lay > 0`` and zero elsewhere.
+        Grey cloud extinction coefficient in cm² g⁻¹: ``10**log_10_k_cld_grey``
+        times the fraction of the layer inside the cloud (``cloud_cover_lay``),
+        or where ``q_c_lay > 0`` when no cover is available.
     ssa : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Single-scattering albedo (zeros; pure absorption).
     g : `~jax.numpy.ndarray`, shape (nlay, nwl)
@@ -651,10 +652,13 @@ def grey_profile_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
     """
     shape = (state["nlay"], state["nwl"])
     opacity_value = 10.0**params["log_10_k_cld_grey"]
-    q_c_lay = state["q_c_lay"]
-    cloud_mask = q_c_lay > 0.0
+    # Fraction of each layer inside the cloud (fractional at slab/base edges, so the
+    # edges move smoothly); kernels without a cover fall back to q_c_lay > 0.
+    cover = state.get("cloud_cover_lay")
+    if cover is None:
+        cover = (state["q_c_lay"] > 0.0).astype(jnp.float64)
 
-    k_cld = jnp.where(cloud_mask[:, None], opacity_value, 0.0) + jnp.zeros(shape)
+    k_cld = cover[:, None] * opacity_value + jnp.zeros(shape)
     ssa = jnp.zeros(shape)
     g = jnp.zeros(shape)
     return k_cld, ssa, g

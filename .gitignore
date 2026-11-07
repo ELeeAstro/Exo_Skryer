@@ -131,6 +131,14 @@ experiments/**/corner*.pdf
 experiments/**/diagnostic*.png
 experiments/**/trace*.png
 
+
+experiments/HD209_Barstow_2020_trans_setup_test/*
+
+experiments/**/run_exo_skryer.sh
+experiments/**/ES.err
+experiments/**/ES.out
+experiments/**/*_run
+
 # =============================================================================
 # Large Data Files - DO NOT UPLOAD TO GITHUB
 # =============================================================================
@@ -184,6 +192,7 @@ obs_data/all_observations*.txt
 # Environment variables
 .env
 .env.local
+.pixi
 
 AGENTS.md
 

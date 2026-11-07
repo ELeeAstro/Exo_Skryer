@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
+from .aux_functions import interp_table_axis, t_interp_scheme
 from .data_constants import amu, bar
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
@@ -95,6 +96,7 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
     sigma_cube = opac["line_sigma_cube"]
     log_p_grid = opac["line_log10_pressure_grid"]
     log_temperature_grids = opac["line_log10_temperature_grids"]
+    t_interp = t_interp_scheme(state)
 
     # Direct lookup - species names must match VMR keys exactly
     # VMR values are already JAX arrays, no need to wrap
@@ -119,22 +121,13 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
         sigma_3d = sigma_cube[i]  # (nT, nP, nwl) in log10(cm^2)
         log_temp_grid = log_temperature_grids[i]  # (nT,)
 
-        # Clip to this species' own T range: shorter grids are edge-padded, and a
-        # zero-width padded segment would give a NaN gradient above its Tmax.
-        log_t_c = jnp.clip(log_t_layers, log_temp_grid[0], log_temp_grid[-1])
-        t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
-        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-        t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-        t_weight = jnp.clip(t_weight, 0.0, 1.0)
+        # Linear in log P (fixed by the layer grid), then along log T with the
+        # configured scheme. The helper clips to this species' own T range.
+        def _at_t(t_idx):
+            return ((1.0 - p_weight)[:, None] * sigma_3d[t_idx, p_idx, :]
+                    + p_weight[:, None] * sigma_3d[t_idx, p_idx + 1, :])  # (nlay, nwl)
 
-        s_t0_p0 = sigma_3d[t_idx, p_idx, :]         # (nlay, nwl)
-        s_t0_p1 = sigma_3d[t_idx, p_idx + 1, :]
-        s_t1_p0 = sigma_3d[t_idx + 1, p_idx, :]
-        s_t1_p1 = sigma_3d[t_idx + 1, p_idx + 1, :]
-
-        s_t0 = (1.0 - p_weight)[:, None] * s_t0_p0 + p_weight[:, None] * s_t0_p1
-        s_t1 = (1.0 - p_weight)[:, None] * s_t1_p0 + p_weight[:, None] * s_t1_p1
-        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1  # log10 sigma
+        s_interp = interp_table_axis(log_t_layers, log_temp_grid, _at_t, t_interp)  # log10 sigma
 
         sigma_linear = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl) in cm^2
         return acc + sigma_linear * mixing_ratios[i, :, None]

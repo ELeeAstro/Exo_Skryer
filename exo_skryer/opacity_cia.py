@@ -9,6 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
+from .aux_functions import interp_table_axis, t_interp_scheme
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
 _LN10 = 2.302585092994046
@@ -115,6 +116,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
     pair_i = opac["cia_pair_species_i"]
     pair_j = opac["cia_pair_species_j"]
     log_t_layers = jnp.log10(layer_temperatures)
+    t_interp = t_interp_scheme(state)
 
     weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)
     out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float64)
@@ -129,17 +131,10 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         log_temp_grid = log_temperature_grids[i]      # (nT,)
         temp_grid = temperature_grids[i]              # (nT,)
 
-        # Clip to this species' own T range: shorter grids are edge-padded, and a
-        # zero-width padded segment would give a NaN gradient above its Tmax.
-        log_t_c = jnp.clip(log_t_layers, log_temp_grid[0], log_temp_grid[-1])
-        t_idx = jnp.searchsorted(log_temp_grid, log_t_c) - 1
-        t_idx = jnp.clip(t_idx, 0, log_temp_grid.shape[0] - 2)
-        t_weight = (log_t_c - log_temp_grid[t_idx]) / (log_temp_grid[t_idx + 1] - log_temp_grid[t_idx])
-        t_weight = jnp.clip(t_weight, 0.0, 1.0)
-
-        s_t0 = sigma_log_table[t_idx, :]
-        s_t1 = sigma_log_table[t_idx + 1, :]
-        s_interp = (1.0 - t_weight)[:, None] * s_t0 + t_weight[:, None] * s_t1
+        # The helper clips to this pair's own T range (shorter grids are edge-padded).
+        s_interp = interp_table_axis(
+            log_t_layers, log_temp_grid, lambda t_idx: sigma_log_table[t_idx, :], t_interp
+        )
 
         min_temp = temp_grid[0]
         below_min = layer_temperatures < min_temp

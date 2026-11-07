@@ -13,7 +13,18 @@ from typing import Optional, Literal
 
 
 
-__all__ = ['safe_sqrt', 'pchip_1d', 'latin_hypercube', 'simpson', 'simpson_padded']
+__all__ = ['safe_sqrt', 'pchip_1d', 'interp_table_axis', 't_interp_scheme', 'latin_hypercube', 'simpson', 'simpson_padded']
+
+T_INTERP_SCHEMES = ("linear", "pchip")  # index = code stored in state["opac_T_interp"]
+
+
+def t_interp_scheme(state) -> str:
+    """Temperature-interpolation scheme name from the static code in ``state``.
+
+    The code is a Python int (not a string) so ``state`` stays a valid JAX
+    pytree when it is returned from ``vmap`` (1.5D limbs).
+    """
+    return T_INTERP_SCHEMES[int(state.get("opac_T_interp", 0))]
 
 
 def safe_sqrt(x: jnp.ndarray) -> jnp.ndarray:
@@ -166,6 +177,108 @@ def pchip_1d(x: jnp.ndarray,
 
     y = h00 * y0 + h10 * h * m0 + h01 * y1 + h11 * h * m1
     return y
+
+
+def _pchip_harmonic_slope(d_left, d_right, h_left, h_right):
+    """Fritsch-Carlson slope at a node between two intervals (SciPy's interior rule)."""
+    w1 = 2.0 * h_right + h_left
+    w2 = h_right + 2.0 * h_left
+    same_sign = (d_left * d_right) > 0.0
+    dl = jnp.where(same_sign, d_left, 1.0)
+    dr = jnp.where(same_sign, d_right, 1.0)
+    return jnp.where(same_sign, (w1 + w2) / (w1 / dl + w2 / dr), 0.0)
+
+
+def _pchip_edge_slope(d_near, d_far, h_near, h_far):
+    """Shape-preserving one-sided slope at a grid end (SciPy's edge rule)."""
+    m = ((2.0 * h_near + h_far) * d_near - h_near * d_far) / (h_near + h_far)
+    m = jnp.where(jnp.sign(m) != jnp.sign(d_near), 0.0, m)
+    overshoot = (jnp.sign(d_near) != jnp.sign(d_far)) & (jnp.abs(m) > jnp.abs(3.0 * d_near))
+    return jnp.where(overshoot, 3.0 * d_near, m)
+
+
+def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
+    """Interpolate tabulated values along one axis with a local stencil.
+
+    Used for the temperature axis of the opacity tables, where only the
+    bracketing nodes are gathered for each layer rather than the full table.
+
+    Parameters
+    ----------
+    x : `~jax.numpy.ndarray`, scalar or shape (n,)
+        Evaluation points (e.g. log10 T per layer). Clipped to the grid range.
+    x_grid : `~jax.numpy.ndarray`, shape (N,)
+        Ascending node positions. Trailing nodes may repeat the last value
+        (edge padding of ragged per-species grids); such zero-width segments
+        are treated as absent.
+    gather : callable
+        ``gather(idx)`` returns the tabulated values at node index ``idx``
+        (same shape as ``x``), with any trailing axes (wavelength, g, ...).
+    scheme : {"linear", "pchip"}
+        ``"linear"`` reproduces the original two-node interpolation.
+        ``"pchip"`` uses monotone piecewise-cubic Hermite interpolation
+        (SciPy's ``PchipInterpolator`` slopes) from four nodes, which is C1
+        in ``x``: no overshoot between nodes and no gradient jump at them.
+
+    Returns
+    -------
+    `~jax.numpy.ndarray`
+        Interpolated values with the shape of ``gather(idx)``.
+    """
+    n = x_grid.shape[0]
+    x_c = jnp.clip(x, x_grid[0], x_grid[-1])
+    i = jnp.clip(jnp.searchsorted(x_grid, x_c) - 1, 0, n - 2)
+    x0 = x_grid[i]
+    h0 = x_grid[i + 1] - x0
+    # x_c is already inside [x0, x1], so t is in [0, 1]. No clip here: at t == 1
+    # (x exactly on a node) a clip would halve the gradient (min/max tie rule).
+    t = (x_c - x0) / h0
+
+    y0 = gather(i)
+    y1 = gather(i + 1)
+
+    def _bcast(a):
+        return jnp.reshape(a, jnp.shape(a) + (1,) * (y0.ndim - jnp.ndim(a)))
+
+    if scheme == "linear":
+        t = _bcast(t)
+        return (1.0 - t) * y0 + t * y1
+    if scheme != "pchip":
+        raise ValueError(f"Unknown interpolation scheme '{scheme}'. Options: {', '.join(T_INTERP_SCHEMES)}")
+
+    i_m = jnp.maximum(i - 1, 0)
+    i_p = jnp.minimum(i + 2, n - 1)
+    h_m = x0 - x_grid[i_m]          # 0 when there is no node below
+    h_p = x_grid[i_p] - x_grid[i + 1]  # 0 at the top or on padding
+    has_m = _bcast(h_m > 0.0)
+    has_p = _bcast(h_p > 0.0)
+    h0, h_m, h_p, t = _bcast(h0), _bcast(h_m), _bcast(h_p), _bcast(t)
+    h_m_s = jnp.where(has_m, h_m, 1.0)
+    h_p_s = jnp.where(has_p, h_p, 1.0)
+
+    y_m = gather(i_m)
+    y_p = gather(i_p)
+    d0 = (y1 - y0) / h0
+    d_m = jnp.where(has_m, (y0 - y_m) / h_m_s, 0.0)
+    d_p = jnp.where(has_p, (y_p - y1) / h_p_s, 0.0)
+
+    m0 = jnp.where(
+        has_m,
+        _pchip_harmonic_slope(d_m, d0, h_m_s, h0),
+        jnp.where(has_p, _pchip_edge_slope(d0, d_p, h0, h_p_s), d0),
+    )
+    m1 = jnp.where(
+        has_p,
+        _pchip_harmonic_slope(d0, d_p, h0, h_p_s),
+        jnp.where(has_m, _pchip_edge_slope(d0, d_m, h0, h_m_s), d0),
+    )
+
+    t2 = t * t
+    t3 = t2 * t
+    return ((2.0 * t3 - 3.0 * t2 + 1.0) * y0
+            + (t3 - 2.0 * t2 + t) * h0 * m0
+            + (-2.0 * t3 + 3.0 * t2) * y1
+            + (t3 - t2) * h0 * m1)
 
 
 def latin_hypercube(

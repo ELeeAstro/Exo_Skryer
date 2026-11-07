@@ -10,7 +10,7 @@ from typing import Dict, Mapping, Tuple
 import jax.numpy as jnp
 
 from .aux_functions import safe_sqrt
-from .refraction import maybe_refraction_cutoff_mask
+from .refraction import maybe_refraction_cutoff_mask, refraction_extra_tau
 
 __all__ = ["compute_transit_depth_1d_os"]
 
@@ -90,7 +90,7 @@ def _transit_depth_and_contrib_from_opacity(
     dtau_v = k_eff * rho[:, None] * dz[:, None]
     tau_path = jnp.matmul(P1D, dtau_v)
     if refraction_mask is not None:
-        tau_path = jnp.where(refraction_mask, 1.0e30, tau_path)
+        tau_path = tau_path + refraction_extra_tau(refraction_mask)
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)
     dR2_i = area_weight[:, None] * one_minus_trans
@@ -127,7 +127,7 @@ def _transit_depth_from_opacity(
     dtau_v = k_eff * rho[:, None] * dz[:, None]
     tau_path = jnp.matmul(P1D, dtau_v)
     if refraction_mask is not None:
-        tau_path = jnp.where(refraction_mask, 1.0e30, tau_path)
+        tau_path = tau_path + refraction_extra_tau(refraction_mask)
 
     one_minus_trans = 1.0 - jnp.exp(-tau_path)
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)

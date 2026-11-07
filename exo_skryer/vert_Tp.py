@@ -469,11 +469,21 @@ def Line(p_lev: jnp.ndarray,params: Dict[str, jnp.ndarray],) -> Tuple[jnp.ndarra
     T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
     return T_lev, T_lay
 
+# Half-width (in log10 R) of the band around the grey limit R = 1 that is bridged
+# with a cubic Hermite: there gamma_1 = gamma_2 = gamma_P = 1 and the closed form is 0/0.
+_PF_GREY_DELTA = 1.0e-3
+
+
 def picket_fence(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Generate a Parmentier & Guillot (2014,2015) picket fence T-P profile.
 
     This profile uses a picket fence approximation for radiative transfer,
     treating opacity as a combination of discrete spectral bins.
+
+    The closed form is singular (0/0) in the grey limit R = 1, and loses
+    precision just around it. For ``|log_10_R| < 1e-3`` the profile is
+    bridged by a cubic Hermite matching value and slope at ``log_10_R = +-1e-3``, which keeps
+    the value and its gradient finite (the change in T is far below a kelvin).
 
     Parameters
     ----------
@@ -501,12 +511,37 @@ def picket_fence(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jn
         Temperature at layer midpoints in Kelvin.
     """
 
-    # Parameter values are already JAX arrays, no need to wrap
+    x = jnp.asarray(params["log_10_R"])
+    delta = _PF_GREY_DELTA
+    near_grey = jnp.abs(x) < delta
+    T_far = _picket_fence_T_lev(p_lev, params, jnp.where(near_grey, delta, x))
+
+    # Cubic Hermite bridge across the band, matching value and slope at both
+    # edges so the profile stays C1 in log_10_R.
+    def _T_and_slope(x0):
+        x0 = jnp.asarray(x0, dtype=x.dtype)
+        return jax.jvp(lambda xx: _picket_fence_T_lev(p_lev, params, xx), (x0,), (jnp.ones_like(x0),))
+
+    T_lo, dT_lo = _T_and_slope(-delta)
+    T_hi, dT_hi = _T_and_slope(delta)
+    h = 2.0 * delta
+    t = jnp.clip((x + delta) / h, 0.0, 1.0)
+    t2, t3 = t * t, t * t * t
+    T_bridge = ((2.0 * t3 - 3.0 * t2 + 1.0) * T_lo + (t3 - 2.0 * t2 + t) * h * dT_lo
+                + (-2.0 * t3 + 3.0 * t2) * T_hi + (t3 - t2) * h * dT_hi)
+    T_lev = jnp.where(near_grey, T_bridge, T_far)
+
+    T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
+    return T_lev, T_lay
+
+
+def _picket_fence_T_lev(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray], log_10_R) -> jnp.ndarray:
+    """Picket-fence level temperatures for a given log10 R (eqs 76-81)."""
     T_int = params["T_int"]
     T_eq = params["T_eq"]
     k_ir = 10.0**params["log_10_k_ir"]
     gam_v = 10.0**params["log_10_gam_v"]
-    R = 10.0**params["log_10_R"]
+    R = 10.0**log_10_R
     B = params["Beta"]
     g = 10.0**params["log_10_g"]
     f = params["f_hem"]
@@ -585,10 +620,7 @@ def picket_fence(p_lev: jnp.ndarray, params: Dict[str, jnp.ndarray]) -> Tuple[jn
     # ---------- Temperature profile (eq 76): returns T^4 ----------
     T_lev = (3.0 * T_int**4 / 4.0) * (tau_ir + A_pf + B_pf * jnp.exp(-tau_ir / tau_lim)) \
         + (3.0 * T_eq**4 / 4.0) * 4.0*f * (C_pf + D_pf * jnp.exp(-tau_ir / tau_lim) + E_pf * jnp.exp(-gv * tau_ir))
-    T_lev = T_lev**0.25
-
-    T_lay = 0.5 * (T_lev[:-1] + T_lev[1:])
-    return T_lev, T_lay
+    return T_lev**0.25
 
 def dry_convective_adjustment(T_lay: jnp.ndarray, p_lay: jnp.ndarray, p_lev: jnp.ndarray, kappa: float, max_iter: int = 10, tol: float = 1e-6) -> jnp.ndarray:
     """Apply dry convective adjustment to a temperature profile.

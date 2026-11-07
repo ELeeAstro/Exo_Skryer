@@ -22,6 +22,8 @@ Kinds and signatures
 - ``vert_chem``: ``(p_lay, T_lay, params, nlay) -> vmr_lay``
 - ``vert_mu``: ``(params, vmr_lay, nlay) -> mu_lay``
 - ``vert_cloud``: ``(p_lay, T_lay, mu_lay, rho_lay, nd_lay, params) -> q_c_lay``
+  (kernels may also accept ``p_lev=`` and ``return_cover=`` keywords; see
+  ``build_common._cloud_profile_caller``)
 - ``opac_line``, ``opac_ray``, ``opac_cia``, ``opac_special``: ``(state, opac, params) -> kappa``
 - ``opac_cloud``: ``(state, params) -> (k_ext, ssa, g)``
 - ``rt``: keyed ``"<rt_scheme>/<os|ck|ck_trans>"``; 1D kernels are
