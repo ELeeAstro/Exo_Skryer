@@ -6,6 +6,7 @@ dependencies:
   - python>=3.12,<3.15
   - jaxlib=*=*cuda*
   - jax
+  - multinest
   - pip
   - pip:
     - -e ".[atmodeller]"

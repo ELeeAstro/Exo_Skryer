@@ -54,7 +54,7 @@ def run_smc_pocomc(
     global _active_likelihood
 
     if not POCOMC_AVAILABLE:
-        raise ImportError("pocomc is not installed. Use the pixi pocomc environment or: pip install pocomc")
+        raise ImportError("pocomc is not installed. Run pixi install or: pip install pocomc")
 
     pcfg = getattr(cfg.sampling, "pocomc", None)
     if pcfg is None:

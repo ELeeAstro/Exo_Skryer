@@ -67,16 +67,19 @@ The environments defined in ``pyproject.toml`` are:
 =============  ==========================================================
 Environment    Contents
 =============  ==========================================================
-``default``    CPU JAX and atmodeller (macOS arm64 and Linux x86-64)
+``default``    CPU JAX, atmodeller, pocoMC and PyMultiNest (macOS arm64 and
+               Linux x86-64)
 ``cuda``       NVIDIA GPU JAX (``jax[cuda13]``), Linux x86-64 only
 ``rocm``       AMD GPU JAX using the system ROCm, Linux x86-64 only
-``test``       pytest plus nessai and PyMultiNest
+``test``       pytest plus nessai
 ``nessai``     ``default`` plus nessai and PyTorch
-``pocomc``     ``default`` plus pocoMC and PyTorch
-``evidence``   ``pocomc`` plus harmonic, on Python 3.12 or 3.13 only
+``evidence``   ``default`` plus harmonic, on Python 3.12 or 3.13 only
 ``docs``       Sphinx documentation build
 ``py312`` …    CPU JAX pinned to Python 3.12, 3.13 or 3.14, without atmodeller
 =============  ==========================================================
+
+Every environment includes pocoMC, PyMultiNest, PyTorch and the compiled MultiNest
+library, so all of these samplers run without further setup.
 
 Select one with ``-e``, e.g. ``pixi run -e cuda exo-skryer --config …``.
 ``pixi run devices`` prints the JAX version and the devices JAX can see.
@@ -101,11 +104,11 @@ Conda / Mambaforge
 
    conda activate exo_skryer
 
-**Step 2b** — install pip:
+**Step 2b** — install pip and the MultiNest library that PyMultiNest loads:
 
 .. code-block:: bash
 
-   conda install pip
+   conda install -c conda-forge pip multinest
 
 **Step 3** — install Exo Skryer and its dependencies:
 
@@ -142,15 +145,18 @@ Python venv (alternative)
 Optional packages
 ^^^^^^^^^^^^^^^^^
 
-The conda and venv routes install the core samplers only. Add others as extras,
-for example ``python -m pip install -e ".[atmodeller]"``:
+Add further packages as extras, for example
+``python -m pip install -e ".[atmodeller]"``:
 
 * ``atmodeller``: the atmodeller chemistry backend
-* ``nessai``: the nessai sampler, which brings in PyTorch
-* ``pymultinest``: the PyMultiNest sampler, which also needs the MultiNest library
-  (the pixi ``test`` and ``docs`` environments provide it)
+* ``nessai``: the nessai sampler
 
-pocoMC has no extra: use ``python -m pip install pocomc``.
+.. note::
+
+   pip installs the PyMultiNest wrapper but cannot install the compiled MultiNest
+   library it loads. In a venv, the ``pymultinest`` engine stops with an error until
+   you `build MultiNest <https://johannesbuchner.github.io/PyMultiNest/install.html>`_.
+   All other samplers are unaffected. The pixi and conda routes include the library.
 
 GPU Installation (NVIDIA/CUDA)
 ------------------------------

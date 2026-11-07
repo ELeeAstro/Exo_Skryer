@@ -20,6 +20,7 @@ from typing import Dict, Any, Tuple, List, Callable
 from pathlib import Path
 import os
 import pickle
+import sys
 
 import numpy as np
 import jax
@@ -28,10 +29,13 @@ import jax.numpy as jnp
 from .build_common import bind_runtime, runtime_args_of
 from .limb_asymmetry import jitter_param_name, parse_offset_group_name
 
+# Without the MultiNest library, importing pymultinest calls sys.exit on Linux. On
+# macOS the import succeeds with a handle to the Python process instead, so check
+# that the library's entry point is really there.
 try:
     import pymultinest
-    PYMULTINEST_AVAILABLE = True
-except ImportError:
+    PYMULTINEST_AVAILABLE = hasattr(sys.modules["pymultinest.run"].lib, "run")
+except (ImportError, KeyError, SystemExit):
     PYMULTINEST_AVAILABLE = False
     pymultinest = None
 
@@ -341,10 +345,11 @@ def run_nested_pymultinest(
     """
     if not PYMULTINEST_AVAILABLE:
         raise ImportError(
-            "PyMultiNest is not installed. Install with:\n"
-            "  pip install pymultinest\n"
-            "Note: Requires MultiNest Fortran library to be installed separately.\n"
-            "See: https://johannesbuchner.github.io/PyMultiNest/install.html"
+            "PyMultiNest cannot load the MultiNest library, which pip does not install.\n"
+            "Use the pixi environment, which includes it, or in a conda environment run:\n"
+            "  conda install -c conda-forge multinest\n"
+            "Otherwise build it from source, see:\n"
+            "  https://johannesbuchner.github.io/PyMultiNest/install.html"
         )
 
     pmn_cfg = getattr(cfg.sampling, "pymultinest", None)

@@ -6,6 +6,13 @@ BlackJAX adaptive persistent sampling (Karamanis et al. 2025), a tempered SMC
 that keeps the particles of every temperature. Particles move with a random
 walk whose proposal covariance and scale are retuned from the ensemble at each
 step, so the likelihood needs no gradients.
+
+The forward model runs only inside ``retrieval_target.batched``, the fixed-size
+jit(vmap) chunks that pocoMC also uses. BlackJAX's own kernel would instead
+compile the forward model into one program per temperature step, nested inside
+a lax.map over particle batches and a scan over MCMC steps. Here the tempering,
+weighting and resampling still come from BlackJAX, and the Metropolis loop runs
+from Python with the same random numbers, so the results match BlackJAX's kernel.
 """
 
 from __future__ import annotations
@@ -18,33 +25,111 @@ import time
 import numpy as np
 import jax
 import jax.numpy as jnp
-from blackjax.mcmc import random_walk
-from blackjax.smc import adaptive_persistent_sampling as aps
 from blackjax.smc import persistent_sampling as ps
+from blackjax.smc import solver
 from blackjax.smc.resampling import systematic
 
-from .retrieval_target import build_target
+from .retrieval_target import batched, build_target
 
 __all__ = [
     "run_smc_blackjax",
 ]
 
 _TARGET_ACCEPTANCE = 0.234
-_additive_step = random_walk.build_additive_step()
 
 
-def _rw_step(rng_key, state, logdensity_fn, chol, scale):
-    def random_step(key, position):
-        return scale * (chol @ jax.random.normal(key, position.shape))
-
-    return _additive_step(rng_key, state, logdensity_fn, random_step)
-
-
-def _proposal_parameters(particles: np.ndarray, scale: float) -> Dict[str, jnp.ndarray]:
-    """Random-walk parameters; a leading axis of 1 shares them between particles."""
+def _proposal_parameters(particles: np.ndarray, scale: float) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Cholesky factor of the ensemble covariance, and the random-walk scale."""
     cov = np.atleast_2d(np.cov(particles, rowvar=False))
     chol = np.linalg.cholesky(cov + 1e-10 * np.eye(cov.shape[0]))
-    return {"chol": jnp.asarray(chol)[None], "scale": jnp.asarray([scale])}
+    return jnp.asarray(chol), jnp.asarray(scale)
+
+
+def _initial_state(particles: jnp.ndarray, log_likelihoods: jnp.ndarray, max_iterations: int):
+    """blackjax persistent_sampling.init, with the likelihoods already evaluated."""
+    n = max_iterations + 1
+    return ps.PersistentSMCState(
+        jnp.zeros((n, *particles.shape)).at[0].set(particles),
+        jnp.zeros((n, particles.shape[0])).at[0].set(log_likelihoods),
+        jnp.zeros(n),
+        jnp.zeros(n),
+        jnp.array(0),
+    )
+
+
+def _next_temperature(state, target_ess: float) -> jnp.ndarray:
+    """blackjax adaptive_persistent_sampling.calculate_lambda."""
+    target_val = jnp.log(state.persistent_weights.shape[1] * target_ess)
+    current = state.tempering_schedule[state.iteration]
+    max_delta = 1 - current
+
+    def ess_gap(delta):
+        log_weights, _ = ps.compute_log_persistent_weights(
+            state.persistent_log_likelihoods,
+            state.persistent_log_Z,
+            state.tempering_schedule.at[state.iteration + 1].set(current + delta),
+            state.iteration + 1,
+            normalize_to_one=True,
+        )
+        return jnp.log(ps.compute_persistent_ess(log_weights)) - target_val
+
+    # No root sets delta to 0, adding particles at this temperature before trying again.
+    delta = jnp.nan_to_num(solver.dichotomy(ess_gap, 0.0, max_delta))
+    return current + jnp.clip(delta, 0.0, max_delta)
+
+
+@partial(jax.jit, static_argnames=("num_mcmc_steps",))
+def _start_step(rng_key, state, target_ess, num_mcmc_steps: int):
+    """Pick the temperature, weight and resample the persistent ensemble."""
+    lmbda = _next_temperature(state, target_ess)
+    iteration = state.iteration + 1
+    updating_key, resampling_key = jax.random.split(rng_key, 2)
+    log_weights, log_Z = ps.compute_log_persistent_weights(
+        state.persistent_log_likelihoods,
+        state.persistent_log_Z,
+        state.tempering_schedule.at[iteration].set(lmbda),
+        iteration,
+        normalize_to_one=True,
+    )
+    particles, idx = ps.resample_from_persistent(
+        resampling_key, state.persistent_particles, jnp.exp(log_weights), systematic
+    )
+    log_likelihoods = state.persistent_log_likelihoods.reshape(-1)[idx]
+    keys = jax.random.split(updating_key, particles.shape[0])
+    step_keys = jax.vmap(lambda k: jax.random.split(k, num_mcmc_steps))(keys)
+    return lmbda, log_Z, particles, log_likelihoods, step_keys
+
+
+@jax.jit
+def _propose(keys, particles, chol, scale):
+    """Random-walk proposals, as blackjax random_walk.build_additive_step."""
+    pairs = jax.vmap(lambda k: jax.random.split(k, 2))(keys)
+    moves = jax.vmap(lambda k, x: scale * (chol @ jax.random.normal(k, x.shape)))(pairs[:, 0], particles)
+    return particles + moves, pairs[:, 1]
+
+
+@jax.jit
+def _metropolis(accept_keys, lmbda, current, proposed):
+    """Accept or reject, as blackjax build_rmh with static binomial sampling."""
+    (x, log_prior, log_like), (x_new, log_prior_new, log_like_new) = current, proposed
+    log_ratio = (log_prior_new + lmbda * log_like_new) - (log_prior + lmbda * log_like)
+    log_ratio = jnp.where(jnp.isnan(log_ratio), -jnp.inf, log_ratio)
+    p_accept = jnp.clip(jnp.exp(log_ratio), max=1)
+    accept = jax.vmap(jax.random.bernoulli)(accept_keys, p_accept)
+    keep = lambda new, old: jnp.where(accept.reshape(-1, *[1] * (new.ndim - 1)), new, old)
+    return (keep(x_new, x), keep(log_prior_new, log_prior), keep(log_like_new, log_like)), jnp.sum(p_accept)
+
+
+@jax.jit
+def _finish_step(state, lmbda, log_Z, particles, log_likelihoods):
+    iteration = state.iteration + 1
+    return ps.PersistentSMCState(
+        state.persistent_particles.at[iteration].set(particles),
+        state.persistent_log_likelihoods.at[iteration].set(log_likelihoods),
+        state.persistent_log_Z.at[iteration].set(log_Z),
+        state.tempering_schedule.at[iteration].set(lmbda),
+        iteration,
+    )
 
 
 def _save_checkpoint(path: Path, state, key, scale: float) -> None:
@@ -76,7 +161,8 @@ def run_smc_blackjax(
     num_mcmc_steps = int(getattr(scfg, "num_mcmc_steps", 25))
     target_ess = float(getattr(scfg, "target_ess", 3.0))
     max_iterations = int(getattr(scfg, "max_iterations", 200))
-    batch_size = int(getattr(scfg, "batch_size", 32))
+    # 0 evaluates all particles in one call.
+    batch_size = int(getattr(scfg, "batch_size", 32)) or num_particles
     posterior_samples = int(getattr(scfg, "posterior_samples", 5000))
     seed = int(getattr(scfg, "seed", 42))
     resume = bool(getattr(scfg, "resume", False))
@@ -85,6 +171,8 @@ def run_smc_blackjax(
 
     target = build_target(cfg, obs, fm)
     ndim = len(target.names)
+    loglik = batched(target.loglik_u, batch_size, target.runtime)
+    log_prior = jax.jit(jax.vmap(target.logprior_u))
 
     print(f"[blackjax_smc] Running persistent sampling...")
     print(f"[blackjax_smc] Free parameters: {ndim}")
@@ -95,25 +183,6 @@ def run_smc_blackjax(
     print(f"[blackjax_smc] batch_size: {batch_size}")
     print(f"[blackjax_smc] checkpoint: {checkpoint}")
 
-    # Built inside jit so that the likelihood sees runtime as a jit argument,
-    # not as captured arrays.
-    @jax.jit
-    def step(key, state, params, runtime):
-        kernel = aps.build_kernel(
-            logprior_fn=target.logprior_u,
-            loglikelihood_fn=partial(target.loglik_u, runtime=runtime),
-            mcmc_step_fn=_rw_step,
-            mcmc_init_fn=random_walk.init,
-            resampling_fn=systematic,
-            target_ess=target_ess,
-            batch_size=batch_size,
-        )
-        return kernel(key, state, num_mcmc_steps, params)
-
-    @jax.jit
-    def init_state(positions, runtime):
-        return aps.init(positions, partial(target.loglik_u, runtime=runtime), max_iterations, batch_size)
-
     if resume and checkpoint.exists():
         state, key, scale = _load_checkpoint(checkpoint)
         if state.num_particles != num_particles or state.tempering_schedule.size != max_iterations + 1:
@@ -121,8 +190,8 @@ def run_smc_blackjax(
         print(f"[blackjax_smc] Resuming at iteration {int(state.iteration)}")
     else:
         rng = np.random.default_rng(seed)
-        particles = jnp.asarray(target.theta_to_u(target.sample_prior_theta(num_particles, rng)))
-        state = init_state(particles, target.runtime)
+        particles = target.theta_to_u(target.sample_prior_theta(num_particles, rng))
+        state = _initial_state(jnp.asarray(particles), jnp.asarray(loglik(particles)), max_iterations)
         key = jax.random.PRNGKey(seed)
         scale = 2.38 / np.sqrt(ndim)
 
@@ -135,10 +204,19 @@ def run_smc_blackjax(
                 f"temperature {float(state.tempering_param):.3g}. Increase max_iterations."
             )
         key, step_key = jax.random.split(key)
-        params = _proposal_parameters(np.asarray(state.particles), scale)
-        state, info = step(step_key, state, params, target.runtime)
+        chol, step_scale = _proposal_parameters(np.asarray(state.particles), scale)
+        lmbda, log_Z, x, log_like, step_keys = _start_step(step_key, state, target_ess, num_mcmc_steps)
 
-        acceptance = float(jnp.mean(info.update_info.acceptance_rate))
+        current = (x, log_prior(x), log_like)
+        accepted = 0.0
+        for k in range(num_mcmc_steps):
+            x_new, accept_keys = _propose(step_keys[:, k], current[0], chol, step_scale)
+            proposed = (x_new, log_prior(x_new), jnp.asarray(loglik(x_new)))
+            current, p_sum = _metropolis(accept_keys, lmbda, current, proposed)
+            accepted += float(p_sum)
+        state = _finish_step(state, lmbda, log_Z, current[0], current[2])
+
+        acceptance = accepted / (num_particles * num_mcmc_steps)
         print(
             f"[blackjax_smc] iteration={int(state.iteration)} "
             f"temperature={float(state.tempering_param):.4g} "
@@ -177,7 +255,7 @@ def run_smc_blackjax(
         "logZ_err": float(np.sqrt(1.0 / ess)),
         "ESS": ess,
         "n_samples": posterior_samples,
-        "n_like": num_particles * (1 + iteration * (num_mcmc_steps + 1)),
+        "n_like": num_particles * (1 + iteration * num_mcmc_steps),
         "n_iterations": iteration,
         "sampler": "blackjax_smc",
     }

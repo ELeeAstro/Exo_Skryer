@@ -24,6 +24,8 @@ dependencies = [
   "dynesty",
   "ultranest",
   "nautilus-sampler",
+  "pocomc",
+  "pymultinest",
   "matplotlib",
   "h5py",
   "netCDF4",
@@ -49,14 +51,10 @@ rocm = [
 atmodeller = [
     "atmodeller",
 ]
-pymultinest = [
-    "pymultinest",
-]
 nessai = [
     "nessai",
 ]
 all-samplers = [
-    "pymultinest",
     "nessai",
 ]
 test = [
@@ -73,7 +71,6 @@ docs = [
     "sphinx-book-theme",
     "IPython",
     "tox",
-    "pymultinest",
 ]
 
 [project.urls]
@@ -110,6 +107,11 @@ corner = "*"
 dynesty = "*"
 ultranest = "*"
 nautilus-sampler = "*"
+# The compiled library PyMultiNest loads at runtime; pip cannot provide it.
+multinest = "*"
+# pocoMC needs PyTorch: take it from conda-forge rather than the PyPI wheels so it
+# shares the OpenMP runtime with NumPy.
+pytorch = "*"
 
 [tool.pixi.pypi-dependencies]
 exo_skryer = { path = ".", editable = true }
@@ -130,19 +132,9 @@ python = "3.13.*"
 [tool.pixi.feature.py314.dependencies]
 python = "3.14.*"
 
-[tool.pixi.feature.pymultinest.dependencies]
-multinest = "*"
-
 # conda-forge's nessai brings a PyTorch that shares the OpenMP runtime with NumPy.
 [tool.pixi.feature.nessai.dependencies]
 nessai = "*"
-
-# As for nessai, take PyTorch from conda-forge rather than from the PyPI wheels.
-[tool.pixi.feature.pocomc.dependencies]
-pytorch = "*"
-
-[tool.pixi.feature.pocomc.pypi-dependencies]
-pocomc = "*"
 
 [tool.pixi.feature.harmonic.dependencies]
 python = ">=3.12,<3.14"
@@ -160,11 +152,10 @@ wheel = ">=0.41"
 default = ["atmodeller"]
 cuda = ["gpu", "atmodeller"]
 rocm = ["rocm", "atmodeller"]
-test = ["test", "all-samplers", "pymultinest", "nessai"]
+test = ["test", "all-samplers", "nessai"]
 nessai = ["nessai", "atmodeller"]
-pocomc = ["pocomc", "atmodeller"]
-evidence = ["harmonic", "pocomc", "atmodeller"]
-docs = { features = ["docs", "pymultinest"] }
+evidence = ["harmonic", "atmodeller"]
+docs = { features = ["docs"] }
 py312 = ["py312"]
 py313 = ["py313"]
 py314 = ["py314"]
