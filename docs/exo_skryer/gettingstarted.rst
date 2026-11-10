@@ -169,7 +169,14 @@ The default will use the nautilus sampler with 250 live points which ensures dec
      - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
 
 
-After completion (around 10 minutes), the code will output both the nautilus_checkpoint.hdf5 file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results. 
+After completion (around 10 minutes), the code will output both the nautilus_checkpoint.hdf5 file and posterior.nc (ArviZ format) files which can then be used to post-process the retrieval results.
+
+For every sampler, posterior.nc holds the posterior samples in its ``posterior`` group and the log-likelihood of each sample in ``sample_stats.log_likelihood`` (same chain/draw shape), computed after sampling with the same likelihood the samplers use (Gaussian with jitter and instrument offsets). The largest value is also stored as the ``max_log_likelihood`` attribute, alongside the evidence (``logZ``) for the nested and SMC samplers::
+
+  import arviz as az
+  idata = az.from_netcdf("posterior.nc")
+  log_like = idata.sample_stats["log_likelihood"].values   # (chains, draws)
+  best = idata.attrs["max_log_likelihood"]
 
 
 The traditional corner plot can be plotted through the script::

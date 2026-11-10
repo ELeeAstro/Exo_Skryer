@@ -143,3 +143,31 @@ def batched(fn: Callable, chunk: int, runtime: Any = None) -> Callable[[np.ndarr
         return out
 
     return call
+
+
+def posterior_log_likelihood(
+    cfg, obs: dict, fm: Callable, samples: Dict[str, np.ndarray], batch_size: int = 64
+) -> np.ndarray:
+    """Log-likelihood of every posterior sample, with the samplers' shared likelihood.
+
+    Uses the same Gaussian + jitter + instrument-offset likelihood as the
+    samplers (``build_target``), so the values are comparable between engines.
+    ``samples`` maps each sampled parameter to an array of shape (draws,) or
+    (chains, draws); the result has that same shape.
+    """
+    target = build_target(cfg, obs, fm)
+    missing = [n for n in target.names if n not in samples]
+    if missing:
+        raise KeyError(f"posterior samples are missing sampled parameters {missing}")
+    if target.names:
+        shape = np.shape(samples[target.names[0]])
+    else:
+        shape = np.shape(next(iter(samples.values())))
+    theta = np.stack([np.asarray(samples[n], dtype=np.float64).reshape(-1) for n in target.names], axis=1) \
+        if target.names else np.zeros((int(np.prod(shape)), 0))
+    u = target.theta_to_u(theta) if target.names else theta
+    # Samples exactly on a logit bound map to +-inf; +-40 maps back to the bound (sigmoid saturates).
+    u = np.where(np.isposinf(u), 40.0, np.where(np.isneginf(u), -40.0, u))
+    n = theta.shape[0]
+    ll = batched(target.loglik_u, max(1, min(int(batch_size), n)), target.runtime)(u)
+    return ll.reshape(shape)

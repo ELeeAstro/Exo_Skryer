@@ -255,7 +255,27 @@ def main() -> None:
     # Output
     from .help_io import to_inferencedata, save_inferencedata, save_observed_data_csv
     samples_np = {k: np.asarray(v) for k, v in samples_dict.items()}
-    idata = to_inferencedata(samples_np, cfg, include_fixed=False)
+
+    # Log-likelihood of every posterior sample, with the shared likelihood (same for all
+    # engines), stored as sample_stats.log_likelihood in the .nc. A failure here must not
+    # lose a finished run, so it only warns.
+    sample_stats = None
+    try:
+        from .retrieval_target import posterior_log_likelihood
+        eng_cfg = getattr(cfg.sampling, str(engine), None)
+        bs = int(getattr(eng_cfg, "batch_size", 0) or 0) if eng_cfg is not None else 0
+        t_ll = time.perf_counter()
+        log_like = posterior_log_likelihood(cfg, obs, fm_fnc, samples_np, batch_size=bs if bs > 0 else 64)
+        sample_stats = {"log_likelihood": log_like}
+        print(f"[info] Posterior log-likelihood: {log_like.size} samples, max {np.max(log_like):.4f}, "
+              f"median {np.median(log_like):.4f} ({format_duration(time.perf_counter() - t_ll)})")
+    except Exception as exc:  # noqa: BLE001
+        print(f"[warn] Could not compute the posterior log-likelihood ({type(exc).__name__}: {exc}); "
+              "the .nc is saved without it.")
+    idata = to_inferencedata(samples_np, cfg, include_fixed=False, sample_stats=sample_stats)
+    if sample_stats is not None and np.isfinite(sample_stats["log_likelihood"]).any():
+        ll = sample_stats["log_likelihood"]
+        idata.attrs["max_log_likelihood"] = float(np.max(ll[np.isfinite(ll)]))
     out_nc = save_inferencedata(idata, exp_dir, evidence=evidence_info or None)
     print(f"[info] ArviZ posterior -> {out_nc}")
 

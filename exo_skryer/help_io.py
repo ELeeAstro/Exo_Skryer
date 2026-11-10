@@ -39,6 +39,7 @@ def to_inferencedata(
     samples_dict: Dict[str, np.ndarray],
     cfg,
     include_fixed: bool = False,
+    sample_stats: Dict[str, np.ndarray] | None = None,
 ) -> az.InferenceData:
     """
     Convert {param: array} mapping into ArviZ InferenceData.
@@ -54,6 +55,9 @@ def to_inferencedata(
     include_fixed : bool, default False
         If True, include delta/fixed parameters in the posterior group.
         If False, skip them.
+    sample_stats : dict, optional
+        Per-sample statistics (e.g. ``log_likelihood``), each shaped like the
+        posterior samples, written to the ``sample_stats`` group.
 
     Returns
     -------
@@ -87,7 +91,17 @@ def to_inferencedata(
     if not posterior:
         raise ValueError("No variables to export in posterior group.")
 
-    idata = az.from_dict({"posterior": posterior})
+    groups = {"posterior": posterior}
+    if sample_stats:
+        shape = next(iter(posterior.values())).shape
+        stats = {}
+        for key, val in sample_stats.items():
+            arr = _to_chains_draws(np.asarray(val, dtype=float))
+            if arr.shape != shape:
+                raise ValueError(f"sample_stats['{key}'] has shape {arr.shape}, posterior has {shape}.")
+            stats[key] = arr
+        groups["sample_stats"] = stats
+    idata = az.from_dict(groups)
 
     # attach minimal attrs for chain/draw counts
     c, d = next(iter(posterior.values())).shape
