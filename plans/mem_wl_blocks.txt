@@ -1,0 +1,102 @@
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[mem] fwd  B=1   temp=     89.1 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.2 s  call=    72.2 ms
+[mem] grad B=1   temp=    752.9 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=   222.8 ms
+[mem] fwd  B=8   temp=    712.0 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   583.3 ms
+[mem] grad B=8   temp=   6060.3 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=  1674.6 ms
+[mem] fwd temp slope: 88.97 MB per particle
+[mem] grad temp slope: 758.19 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 0.00e+00, max rel gradient diff 0.00e+00
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.wl_block=4096 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[info] wavelength blocks: 4096 wavelengths per block, 5 blocks
+[mem] fwd  B=1   temp=     99.5 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    91.7 ms
+[mem] grad B=1   temp=    234.1 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.2 s  call=   382.0 ms
+[mem] fwd  B=8   temp=    193.0 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.4 s  call=   675.0 ms
+[mem] grad B=8   temp=   1363.3 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.0 s  call=  2281.0 ms
+[mem] fwd temp slope: 13.35 MB per particle
+[mem] grad temp slope: 161.31 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 0.00e+00, max rel gradient diff 1.58e-13
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.wl_block=2048 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[info] wavelength blocks: 2048 wavelengths per block, 10 blocks
+[mem] fwd  B=1   temp=     49.8 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    92.4 ms
+[mem] grad B=1   temp=    117.1 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.0 s  call=   372.9 ms
+[mem] fwd  B=8   temp=     97.1 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   642.7 ms
+[mem] grad B=8   temp=    682.6 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.0 s  call=  2209.2 ms
+[mem] fwd temp slope: 6.75 MB per particle
+[mem] grad temp slope: 80.79 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 0.00e+00, max rel gradient diff 3.35e-13
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.wl_block=1000 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[info] wavelength blocks: 1000 wavelengths per block, 19 blocks
+[mem] fwd  B=1   temp=     24.4 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    86.5 ms
+[mem] grad B=1   temp=     57.3 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.0 s  call=   283.3 ms
+[mem] fwd  B=8   temp=     48.0 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   596.6 ms
+[mem] grad B=8   temp=    334.2 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.0 s  call=  2334.9 ms
+[mem] fwd temp slope: 3.37 MB per particle
+[mem] grad temp slope: 39.56 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 0.00e+00, max rel gradient diff 2.54e-13
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.wl_block=64 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[info] wavelength blocks: 64 wavelengths per block, 291 blocks
+[mem] fwd  B=1   temp=      1.7 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    97.6 ms
+[mem] grad B=1   temp=      3.9 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.2 s  call=   302.9 ms
+[mem] fwd  B=8   temp=     11.4 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.4 s  call=   646.5 ms
+[mem] grad B=8   temp=     23.0 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.2 s  call=  1988.3 ms
+[mem] fwd temp slope: 1.39 MB per particle
+[mem] grad temp slope: 2.73 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 0.00e+00, max rel gradient diff 2.65e-13
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.interp_precision=float32 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[mem] fwd  B=1   temp=     89.1 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    73.4 ms
+[mem] grad B=1   temp=    679.4 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=   210.8 ms
+[mem] fwd  B=8   temp=    712.0 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   584.0 ms
+[mem] grad B=8   temp=   5472.0 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=  1547.9 ms
+[mem] fwd temp slope: 88.97 MB per particle
+[mem] grad temp slope: 684.65 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 7.37e-06, max rel gradient diff 4.14e-05
+== --config experiments/_tmp_os_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.interp_precision=float32 --set opac.wl_block=2048 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/os_ref_eaa.npz
+[info] wavelength blocks: 2048 wavelengths per block, 10 blocks
+[mem] fwd  B=1   temp=     49.8 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    91.9 ms
+[mem] grad B=1   temp=    109.0 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.1 s  call=   370.1 ms
+[mem] fwd  B=8   temp=     97.1 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   640.9 ms
+[mem] grad B=8   temp=    617.7 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.0 s  call=  2151.8 ms
+[mem] fwd temp slope: 6.75 MB per particle
+[mem] grad temp slope: 72.68 MB per particle
+[check] vs os_ref_eaa.npz: max rel spectrum diff 7.37e-06, max rel gradient diff 3.83e-05
+== --config experiments/_tmp_ck_em/retrieval_config.yaml --batches 1 8 --time 2 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/ck_ref_retrieval_config_eaa.npz
+[mem] fwd  B=1   temp=     14.7 MB  args=   273.9 MB  out=   0.02 MB  compile=   0.5 s  call=   381.9 ms
+[mem] grad B=1   temp=   1141.7 MB  args=   273.9 MB  out=   0.00 MB  compile=   1.9 s  call=  1175.4 ms
+[mem] fwd  B=8   temp=    117.8 MB  args=   273.9 MB  out=   0.19 MB  compile=   0.7 s  call=  1843.8 ms
+[mem] grad B=8   temp=   9141.8 MB  args=   273.9 MB  out=   0.00 MB  compile=   1.7 s  call=  7561.8 ms
+[mem] fwd temp slope: 14.72 MB per particle
+[mem] grad temp slope: 1142.87 MB per particle
+[check] vs ck_ref_retrieval_config_eaa.npz: max rel spectrum diff 1.33e-15, max rel gradient diff 9.74e-12
+== --config experiments/_tmp_ck_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.wl_block=100 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/ck_ref_retrieval_config_eaa.npz
+[info] wavelength blocks: 100 wavelengths per block, 5 blocks
+[mem] fwd  B=1   temp=     61.6 MB  args=   273.9 MB  out=   0.02 MB  compile=   1.0 s  call=  1052.6 ms
+[mem] grad B=1   temp=    302.2 MB  args=   273.9 MB  out=   0.00 MB  compile=   3.3 s  call=  3552.3 ms
+[mem] fwd  B=8   temp=     78.9 MB  args=   273.9 MB  out=   0.19 MB  compile=   1.1 s  call=  2709.8 ms
+[mem] grad B=8   temp=   2000.8 MB  args=   273.9 MB  out=   0.00 MB  compile=   3.1 s  call= 10984.3 ms
+[mem] fwd temp slope: 2.47 MB per particle
+[mem] grad temp slope: 242.66 MB per particle
+[check] vs ck_ref_retrieval_config_eaa.npz: max rel spectrum diff 1.33e-15, max rel gradient diff 9.08e-11
+== --config experiments/_tmp_ck_em/retrieval_config.yaml --batches 1 8 --time 2 --set opac.interp_precision=float32 --check /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/ck_ref_retrieval_config_eaa.npz
+[mem] fwd  B=1   temp=     14.7 MB  args=   273.9 MB  out=   0.02 MB  compile=   0.5 s  call=   380.0 ms
+[mem] grad B=1   temp=   1105.7 MB  args=   273.9 MB  out=   0.00 MB  compile=   1.8 s  call=  1110.7 ms
+[mem] fwd  B=8   temp=    117.8 MB  args=   273.9 MB  out=   0.19 MB  compile=   0.6 s  call=  1987.8 ms
+[mem] grad B=8   temp=   8853.7 MB  args=   273.9 MB  out=   0.00 MB  compile=   1.8 s  call=  7367.5 ms
+[mem] fwd temp slope: 14.72 MB per particle
+[mem] grad temp slope: 1106.86 MB per particle
+[check] vs ck_ref_retrieval_config_eaa.npz: max rel spectrum diff 6.43e-05, max rel gradient diff 1.40e-03
+== hires OS 
+[hires] hires  max rel diff 0.00e+00  shape (5, 18570)
+[hires] binned max rel diff 0.00e+00  shape (5, 2962)
+[hires] cf     max rel diff 0.00e+00  shape (5, 99, 18570)
+== hires OS --set opac.wl_block=1000
+[hires] hires  max rel diff 0.00e+00  shape (5, 18570)
+[hires] binned max rel diff 0.00e+00  shape (5, 2962)
+[hires] cf     max rel diff 0.00e+00  shape (5, 99, 18570)
+== hires CK 
+[hires] hires  max rel diff 0.00e+00  shape (5, 464)
+[hires] binned max rel diff 0.00e+00  shape (5, 2962)
+[hires] cf     max rel diff 0.00e+00  shape (5, 99, 464)
+== hires CK --set opac.wl_block=100
+[hires] hires  max rel diff 0.00e+00  shape (5, 464)
+[hires] binned max rel diff 0.00e+00  shape (5, 2962)
+[hires] cf     max rel diff 0.00e+00  shape (5, 99, 464)

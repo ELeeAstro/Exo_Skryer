@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
-from .aux_functions import interp_table_axis, t_interp_scheme
+from .aux_functions import interp_table_axis, t_interp_scheme, interp_dtype
 from .data_constants import amu, bar
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
@@ -113,6 +113,8 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
     p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
     p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
     p_weight = jnp.clip(p_weight, 0.0, 1.0)
+    cdt = interp_dtype(state)
+    p_weight = p_weight.astype(cdt)
 
     n_species = sigma_cube.shape[0]
     n_wl = sigma_cube.shape[-1]
@@ -127,7 +129,7 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
             return ((1.0 - p_weight)[:, None] * sigma_3d[t_idx, p_idx, :]
                     + p_weight[:, None] * sigma_3d[t_idx, p_idx + 1, :])  # (nlay, nwl)
 
-        s_interp = interp_table_axis(log_t_layers, log_temp_grid, _at_t, t_interp)  # log10 sigma
+        s_interp = interp_table_axis(log_t_layers, log_temp_grid, _at_t, t_interp, dtype=cdt)  # log10 sigma
 
         sigma_linear = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl) in cm^2
         return acc + sigma_linear * mixing_ratios[i, :, None]

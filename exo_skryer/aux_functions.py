@@ -13,7 +13,7 @@ from typing import Optional, Literal
 
 
 
-__all__ = ['safe_sqrt', 'pchip_1d', 'interp_table_axis', 't_interp_scheme', 'latin_hypercube', 'simpson', 'simpson_padded']
+__all__ = ['safe_sqrt', 'pchip_1d', 'interp_table_axis', 't_interp_scheme', 'interp_dtype', 'latin_hypercube', 'simpson', 'simpson_padded']
 
 T_INTERP_SCHEMES = ("linear", "pchip")  # index = code stored in state["opac_T_interp"]
 
@@ -25,6 +25,20 @@ def t_interp_scheme(state) -> str:
     pytree when it is returned from ``vmap`` (1.5D limbs).
     """
     return T_INTERP_SCHEMES[int(state.get("opac_T_interp", 0))]
+
+
+INTERP_PRECISIONS = ("float64", "float32")  # index = code stored in state["opac_interp_f32"]
+
+
+def interp_dtype(state):
+    """Arithmetic dtype of the opacity-table interpolation (``opac.interp_precision``).
+
+    The tables are stored as float32. With "float64" (the default) the
+    interpolation weights are float64 and the result is float64; with
+    "float32" the whole interpolation runs in float32. The exponentiation of
+    the interpolated log10 cross sections and everything after it stay float64.
+    """
+    return jnp.float32 if int(state.get("opac_interp_f32", 0)) else jnp.float64
 
 
 def safe_sqrt(x: jnp.ndarray) -> jnp.ndarray:
@@ -197,7 +211,7 @@ def _pchip_edge_slope(d_near, d_far, h_near, h_far):
     return jnp.where(overshoot, 3.0 * d_near, m)
 
 
-def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
+def interp_table_axis(x, x_grid, gather, scheme: str = "linear", dtype=None):
     """Interpolate tabulated values along one axis with a local stencil.
 
     Used for the temperature axis of the opacity tables, where only the
@@ -219,6 +233,9 @@ def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
         ``"pchip"`` uses monotone piecewise-cubic Hermite interpolation
         (SciPy's ``PchipInterpolator`` slopes) from four nodes, which is C1
         in ``x``: no overshoot between nodes and no gradient jump at them.
+    dtype : dtype, optional
+        Arithmetic dtype of the interpolation (the gathered values and the
+        weights are cast to it). ``None`` keeps NumPy promotion.
 
     Returns
     -------
@@ -233,6 +250,11 @@ def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
     # x_c is already inside [x0, x1], so t is in [0, 1]. No clip here: at t == 1
     # (x exactly on a node) a clip would halve the gradient (min/max tie rule).
     t = (x_c - x0) / h0
+
+    if dtype is not None:
+        _gather = gather
+        gather = lambda idx: _gather(idx).astype(dtype)  # noqa: E731
+        t = t.astype(dtype)
 
     y0 = gather(i)
     y1 = gather(i + 1)
@@ -253,6 +275,8 @@ def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
     has_m = _bcast(h_m > 0.0)
     has_p = _bcast(h_p > 0.0)
     h0, h_m, h_p, t = _bcast(h0), _bcast(h_m), _bcast(h_p), _bcast(t)
+    if dtype is not None:
+        h0, h_m, h_p = h0.astype(dtype), h_m.astype(dtype), h_p.astype(dtype)
     h_m_s = jnp.where(has_m, h_m, 1.0)
     h_p_s = jnp.where(has_p, h_p, 1.0)
 

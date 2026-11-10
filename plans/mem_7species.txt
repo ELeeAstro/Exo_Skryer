@@ -1,0 +1,14 @@
+== ck_trans_lazy=false
+[mem] fwd  B=1   temp=     91.9 MB  args=   350.4 MB  out=   0.00 MB  compile=   0.3 s  call=    16.3 ms
+[mem] grad B=1   temp=    596.1 MB  args=   350.4 MB  out=   0.00 MB  compile=   0.9 s  call=    81.9 ms
+[mem] fwd  B=8   temp=    735.4 MB  args=   350.4 MB  out=   0.01 MB  compile=   0.3 s  call=   126.0 ms
+[mem] grad B=8   temp=   4628.1 MB  args=   350.4 MB  out=   0.00 MB  compile=   0.9 s  call=   630.8 ms
+[mem] fwd temp slope: 91.93 MB per particle
+[mem] grad temp slope: 575.99 MB per particle
+== ck_trans_lazy=true
+[mem] fwd  B=1   temp=     15.0 MB  args=   350.4 MB  out=   0.00 MB  compile=   0.3 s  call=    12.7 ms
+[mem] grad B=1   temp=     77.0 MB  args=   350.4 MB  out=   0.00 MB  compile=   0.9 s  call=    64.8 ms
+[mem] fwd  B=8   temp=    120.0 MB  args=   350.4 MB  out=   0.01 MB  compile=   0.3 s  call=    89.5 ms
+[mem] grad B=8   temp=    616.0 MB  args=   350.4 MB  out=   0.00 MB  compile=   0.8 s  call=   478.9 ms
+[mem] fwd temp slope: 15.00 MB per particle
+[mem] grad temp slope: 77.00 MB per particle

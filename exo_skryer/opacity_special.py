@@ -9,7 +9,7 @@ from typing import Dict
 
 import jax.numpy as jnp
 
-from .aux_functions import interp_table_axis, t_interp_scheme
+from .aux_functions import interp_table_axis, t_interp_scheme, interp_dtype
 
 __all__ = [
     "zero_special_opacity",
@@ -52,6 +52,7 @@ def _interpolate_logsigma_1d(
     temperature_grid: jnp.ndarray,
     layer_temperatures: jnp.ndarray,
     t_interp: str = "linear",
+    dtype=None,
 ) -> jnp.ndarray:
     """Interpolate a log10 cross-section table on a log10(T) grid.
 
@@ -72,7 +73,8 @@ def _interpolate_logsigma_1d(
         Log₁₀ cross-sections interpolated to each layer temperature.
     """
     s_interp = interp_table_axis(
-        jnp.log10(layer_temperatures), log_temperature_grid, lambda t_idx: sigma_log[t_idx, :], t_interp
+        jnp.log10(layer_temperatures), log_temperature_grid, lambda t_idx: sigma_log[t_idx, :], t_interp,
+        dtype=dtype,
     )
 
     min_temp = temperature_grid[0]
@@ -147,7 +149,7 @@ def compute_hminus_bf_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
     temperature_grid = opac["hminus_temperature_grid"]
     sigma_values = 10.0 ** _interpolate_logsigma_1d(
         sigma_log, log_temperature_grid, temperature_grid, layer_temperatures,
-        t_interp_scheme(state),
+        t_interp_scheme(state), interp_dtype(state),
     ).astype(jnp.float64)
 
     # VMR value is already a JAX array, no need to wrap
@@ -198,7 +200,7 @@ def compute_hminus_ff_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp
     temperature_grid = opac["hminus_temperature_grid"]
     sigma_values = 10.0 ** _interpolate_logsigma_1d(
         sigma_log, log_temperature_grid, temperature_grid, layer_temperatures,
-        t_interp_scheme(state),
+        t_interp_scheme(state), interp_dtype(state),
     ).astype(jnp.float64)
 
     if "e-" in layer_vmr:

@@ -64,6 +64,8 @@ Minimal skeleton
      ck: true
      ck_mix: RORR
      T_interp: linear
+     interp_precision: float64
+     wl_block: 0
      line: []
      ray: null
      cia: []
@@ -392,6 +394,34 @@ loaded into registries.
     slopes) in log T. The opacity is then C1 in temperature: no overshoot
     between grid nodes and no jump in the gradient at them, which helps
     gradient-based samplers (NUTS) and optimisers.
+
+``opac.interp_precision``
+  Arithmetic precision of the line, CIA and H- table interpolation. The
+  cross sections are stored as float32 either way; the interpolated log10
+  cross sections are exponentiated, and the RT is solved, in float64.
+
+  *Supported values*:
+
+  * ``float64`` (default): float64 interpolation weights and result.
+  * ``float32``: the whole interpolation in float32. Spectra change by about
+    1e-5 relative (OS) to 1e-4 (CK), well below typical data uncertainties.
+    It saves little memory, and no time on CPU; it may help on GPUs with slow
+    float64.
+
+``opac.wl_block``
+  Number of wavelengths computed together. With a value above 0 the
+  opacities and radiative transfer run one block of wavelengths at a time, so
+  each likelihood evaluation's working memory scales with the block size
+  rather than with the number of wavelengths. The spectrum is identical; the
+  call is somewhat slower (about 10% forward and 30% for gradients on CPU,
+  for OS R10000 with blocks of 2048).
+
+  Use it when batched samplers (BlackJAX NSS/SMC, pocoMC, NUTS) run out of
+  memory at high resolution or with many wavelengths. The block size need
+  not divide the number of wavelengths.
+
+  *Type*: integer, default ``0`` (the whole grid in one block).
+  Currently only for ``physics.rt_scheme: emission_1d``.
 
 ``opac.line``
   List of line opacity entries. Each entry is a mapping (flow-style shown)::

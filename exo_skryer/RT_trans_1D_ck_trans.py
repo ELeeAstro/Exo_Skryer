@@ -16,14 +16,16 @@ fast transmission-only approximation.
 
 from __future__ import annotations
 
-from typing import Dict, Mapping, Tuple
+from typing import Callable, Dict, Mapping, Tuple
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 
 from .aux_functions import safe_sqrt
 from .refraction import maybe_refraction_cutoff_mask
 from .RT_trans_1D_os import _get_base_transit_radius
+from .opacity_ck import make_ck_species_kappa
 
 __all__ = ["compute_transit_depth_1d_ck_trans"]
 
@@ -93,83 +95,70 @@ def _sum_opacity_components_2d(
     return jnp.sum(components, axis=0)
 
 
-def _integrate_g_points_trans(
-    sigma_perspecies: jnp.ndarray,  # (n_species, nlay, nwl, ng)
+def _species_transmission(
+    kappa_of: Callable[[jnp.ndarray], jnp.ndarray],
+    nspec: int,
     vmr_perspecies: jnp.ndarray,    # (n_species, nlay)
-    other_opacity_2d: jnp.ndarray,  # (nlay, nwl) - rayleigh, CIA, etc.
-    g_points: jnp.ndarray,          # (ng,)
     g_weights: jnp.ndarray,         # (ng,)
     state: Dict[str, jnp.ndarray],
-    geometry: tuple[jnp.ndarray, jnp.ndarray],
-    refraction_mask: jnp.ndarray | None,
-    want_contrib: bool,
-) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Integrate transit depth using RO transmission-function multiplication.
+    P1D: jnp.ndarray,               # (nlay, nlay) slant path lengths
+    nwl: int,
+) -> jnp.ndarray:
+    """Product over species of the g-averaged slant transmission, (nlay, nwl).
 
-    This computes the slant-path transmission per impact parameter and wavelength as:
-        T_total = exp(-tau_cont) * Π_s <exp(-tau_s)>_g
-    where <...>_g is the g-quadrature average at fixed (impact parameter, wavelength).
+    T_prod = Π_s Σ_g w_g exp(-tau_s(g)), at each impact parameter and wavelength.
+    ``kappa_of(s)`` interpolates species s's mass opacity (nlay, nwl, ng) on demand,
+    so only one species is held at a time. The loop body is checkpointed: under
+    reverse-mode AD it is recomputed instead of storing its (nlay, nwl, ng)
+    intermediates for every species.
     """
-    R_base = _get_base_transit_radius(state)
-    R_s = state["R_s"]
-    rho = state["rho_lay"]
-    dz = state["dz"]
-    P1D, area_weight = geometry
+    scale = state["rho_lay"] * state["dz"]  # (nlay,)
+    nlay = scale.shape[0]
 
-    nlay = state["rho_lay"].shape[0]
-    nwl = other_opacity_2d.shape[1]
-
-    del g_points
-
-    if want_contrib:
-        raise NotImplementedError(
-            "Contribution functions are not implemented for ck_mix=TRANS "
-            "(RO transmission-product approximation)."
-        )
-
-    scale = rho * dz  # (nlay,)
-
-    # Continuum-like opacity (2D) -> slant optical depth (nlay, nwl)
-    k_cont = jnp.maximum(other_opacity_2d, 0.0)
-    dtau_v_cont = k_cont * scale[:, None]  # (nlay, nwl)
-    tau_path_cont = jnp.einsum("ij,jw->iw", P1D, dtau_v_cont)  # (nlay, nwl)
-
-    nspec = sigma_perspecies.shape[0]
-    ng = sigma_perspecies.shape[-1]
-    w = g_weights[:ng].astype(sigma_perspecies.dtype)
-
-    # Multiply mean transmissions over species at each (impact parameter, wavelength)
-    T_prod0 = jnp.ones((nlay, nwl), dtype=sigma_perspecies.dtype)
-
-    def _body(spec_idx: int, T_prod: jnp.ndarray) -> jnp.ndarray:
-        kappa_s = sigma_perspecies[spec_idx]  # (nlay, nwl, ng)
-        vmr_s = vmr_perspecies[spec_idx]      # (nlay,)
+    def _body(spec_idx, T_prod):
+        kappa_s = kappa_of(spec_idx)                                      # (nlay, nwl, ng)
+        vmr_s = vmr_perspecies[spec_idx]                                  # (nlay,)
+        w = g_weights[: kappa_s.shape[-1]].astype(kappa_s.dtype)
 
         dtau_v_s = kappa_s * vmr_s[:, None, None] * scale[:, None, None]  # (nlay, nwl, ng)
         tau_path_s = jnp.einsum("ij,jwg->iwg", P1D, dtau_v_s)             # (nlay, nwl, ng)
         tau_path_s = jnp.clip(tau_path_s, 0.0, 300.0)
-        T_s_g = jnp.exp(-tau_path_s)                                      # (nlay, nwl, ng)
-        T_s = jnp.sum(T_s_g * w[None, None, :], axis=-1)                  # (nlay, nwl)
+        T_s = jnp.sum(jnp.exp(-tau_path_s) * w[None, None, :], axis=-1)   # (nlay, nwl)
         return T_prod * jnp.clip(T_s, 1e-99, 1.0)
 
-    # Important: when nspec==0 (e.g. continuum-only diagnostics), tracing a fori_loop
-    # would still stage `_body` and attempt `sigma_perspecies[0]`, which is invalid
-    # for a zero-length leading dimension.
-    if nspec == 0:
-        T_prod = T_prod0
-    else:
-        T_prod = lax.fori_loop(0, nspec, _body, T_prod0)  # (nlay, nwl)
+    _body = jax.checkpoint(_body)
 
-    T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 300.0)) * T_prod  # (nlay, nwl)
+    T_prod0 = jnp.ones((nlay, nwl), dtype=scale.dtype)
+    # With nspec == 0 (continuum-only diagnostics) tracing the loop would index an
+    # empty leading dimension, so skip it.
+    if nspec == 0:
+        return T_prod0
+    return lax.fori_loop(0, nspec, _body, T_prod0)
+
+
+def _transit_depth_from_transmission(
+    T_prod: jnp.ndarray,            # (nlay, nwl) species transmission product
+    other_opacity_2d: jnp.ndarray,  # (nlay, nwl) - rayleigh, CIA, cloud, etc.
+    state: Dict[str, jnp.ndarray],
+    geometry: tuple[jnp.ndarray, jnp.ndarray],
+    refraction_mask: jnp.ndarray | None,
+) -> jnp.ndarray:
+    """Transit depth with the continuum added: T_total = exp(-tau_cont) * T_prod."""
+    R_base = _get_base_transit_radius(state)
+    R_s = state["R_s"]
+    P1D, area_weight = geometry
+
+    scale = state["rho_lay"] * state["dz"]
+    dtau_v_cont = jnp.maximum(other_opacity_2d, 0.0) * scale[:, None]  # (nlay, nwl)
+    tau_path_cont = jnp.einsum("ij,jw->iw", P1D, dtau_v_cont)          # (nlay, nwl)
+
+    T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 300.0)) * T_prod
     if refraction_mask is not None:
         T_total = T_total * (1.0 - refraction_mask)
     one_minus_trans = 1.0 - jnp.clip(T_total, 0.0, 1.0)               # (nlay, nwl)
 
     dR2 = jnp.sum(area_weight[:, None] * one_minus_trans, axis=0)     # (nwl,)
-    D_net = (R_base**2 + dR2) / (R_s**2)
-
-    layer_dR2 = jnp.zeros((nlay, nwl), dtype=D_net.dtype)
-    return D_net, dR2, layer_dR2
+    return (R_base**2 + dR2) / (R_s**2)
 
 
 def compute_transit_depth_1d_ck_trans(
@@ -180,9 +169,15 @@ def compute_transit_depth_1d_ck_trans(
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute 1D transit depth using transmission multiplication random overlap.
 
-    This function expects per-species opacities in opacity_components:
-    - 'line_perspecies': (n_species, nlay, nwl, ng) per-species mass opacities
-    - 'vmr_perspecies': (n_species, nlay) volume mixing ratios
+    Expects 'vmr_perspecies' (n_species, nlay) in ``opacity_components``. Each
+    species' opacity is interpolated from the k-tables in ``opac`` inside the
+    species loop, so only one species' (nlay, nwl, ng) opacities are held at a
+    time. A species with zero VMR contributes a transmission of exactly 1 (used
+    to isolate single species for component spectra).
+
+    The species transmission product does not depend on the cloud, so it is
+    computed once and shared by the cloudy and clear columns when 'f_cloud' is
+    present.
 
     Parameters
     ----------
@@ -191,85 +186,52 @@ def compute_transit_depth_1d_ck_trans(
     params : dict
         Parameter dictionary (may contain 'f_cloud').
     opacity_components : dict
-        Opacity components including 'line_perspecies', 'vmr_perspecies',
-        and optionally 'rayleigh', 'cia', 'special', 'cloud'.
+        Opacity components, see above, plus optionally 'rayleigh', 'cia',
+        'special', 'cloud'.
+    opac : dict
+        Runtime opacity tables (k-tables and g-quadrature).
 
     Returns
     -------
     D_net : array, shape (nwl,)
         Transit depth spectrum.
     contrib_func : array, shape (nlay, nwl)
-        Normalized contribution function.
+        Zeros: contribution functions are not implemented for ck_mix=TRANS.
     """
-    contri_func = state.get("contri_func", False)
+    if state.get("contri_func", False):
+        raise NotImplementedError(
+            "Contribution functions are not implemented for ck_mix=TRANS "
+            "(RO transmission-product approximation)."
+        )
     refraction_mask = maybe_refraction_cutoff_mask(state, params, opac)
 
     geometry = _build_transit_geometry(state)
-    g_points, g_weights = _get_ck_quadrature(opac)
+    _, g_weights = _get_ck_quadrature(opac)
 
-    # Get per-species opacities
-    sigma_perspecies = opacity_components.get("line_perspecies")
     vmr_perspecies = opacity_components.get("vmr_perspecies")
-
-    if sigma_perspecies is None or vmr_perspecies is None:
+    if vmr_perspecies is None:
         raise ValueError(
-            "compute_transit_depth_1d_ck_trans requires 'line_perspecies' and "
-            "'vmr_perspecies' in opacity_components. Use ck_mix: trans in config."
+            "compute_transit_depth_1d_ck_trans requires 'vmr_perspecies' in "
+            "opacity_components. Use ck_mix: trans in config."
         )
+    nspec = vmr_perspecies.shape[0]
+    kappa_of = make_ck_species_kappa(state, opac)
 
-    # Sum 2D opacity components
     other_opacity_2d = _sum_opacity_components_2d(state, opacity_components)
+    nwl = other_opacity_2d.shape[1]
 
-    # Handle cloud fraction if present
+    T_prod = _species_transmission(
+        kappa_of, nspec, vmr_perspecies, g_weights, state, geometry[0], nwl
+    )
+
     if "f_cloud" in params and "cloud" in opacity_components:
         f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
-        cloud_component = opacity_components["cloud"]
-
-        # With clouds
-        other_with_cloud = other_opacity_2d
-
-        # Without clouds
-        other_no_cloud = jnp.maximum(other_opacity_2d - cloud_component, 0.0)
-
-        if contri_func:
-            D_cloud, dR2_cloud, layer_dR2_cloud = _integrate_g_points_trans(
-                sigma_perspecies, vmr_perspecies, other_with_cloud,
-                g_points, g_weights, state, geometry, refraction_mask, want_contrib=True
-            )
-            D_clear, dR2_clear, layer_dR2_clear = _integrate_g_points_trans(
-                sigma_perspecies, vmr_perspecies, other_no_cloud,
-                g_points, g_weights, state, geometry, refraction_mask, want_contrib=True
-            )
-
-            D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
-            dR2 = f_cloud * dR2_cloud + (1.0 - f_cloud) * dR2_clear
-            layer_dR2 = f_cloud * layer_dR2_cloud + (1.0 - f_cloud) * layer_dR2_clear
-            contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
-        else:
-            D_cloud, _, _ = _integrate_g_points_trans(
-                sigma_perspecies, vmr_perspecies, other_with_cloud,
-                g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
-            )
-            D_clear, _, _ = _integrate_g_points_trans(
-                sigma_perspecies, vmr_perspecies, other_no_cloud,
-                g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
-            )
-
-            D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
-            contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
+        other_no_cloud = jnp.maximum(other_opacity_2d - opacity_components["cloud"], 0.0)
+        D_cloud = _transit_depth_from_transmission(T_prod, other_opacity_2d, state, geometry, refraction_mask)
+        D_clear = _transit_depth_from_transmission(T_prod, other_no_cloud, state, geometry, refraction_mask)
+        D_net = f_cloud * D_cloud + (1.0 - f_cloud) * D_clear
     else:
-        # No cloud fraction handling
-        if contri_func:
-            D_net, dR2, layer_dR2 = _integrate_g_points_trans(
-                sigma_perspecies, vmr_perspecies, other_opacity_2d,
-                g_points, g_weights, state, geometry, refraction_mask, want_contrib=True
-            )
-            contrib_func_norm = layer_dR2 / jnp.maximum(dR2[None, :], 1e-30)
-        else:
-            D_net, _, _ = _integrate_g_points_trans(
-                sigma_perspecies, vmr_perspecies, other_opacity_2d,
-                g_points, g_weights, state, geometry, refraction_mask, want_contrib=False
-            )
-            contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
+        D_net = _transit_depth_from_transmission(T_prod, other_opacity_2d, state, geometry, refraction_mask)
 
+    contrib_func_norm = jnp.zeros((state["dz"].shape[0], D_net.shape[0]), dtype=D_net.dtype)
     return D_net, contrib_func_norm

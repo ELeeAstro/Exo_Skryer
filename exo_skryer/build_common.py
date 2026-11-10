@@ -19,12 +19,12 @@ import jax.numpy as jnp
 
 from .data_constants import kb, amu, R_jup, R_sun, bar, G, M_jup
 from .opacity_line import zero_line_opacity
-from .opacity_ck import zero_ck_opacity, compute_ck_opacity_perspecies
+from .opacity_ck import zero_ck_opacity, ck_vmr_perspecies
 from .opacity_ray import zero_ray_opacity
 from .opacity_cia import zero_cia_opacity
 from .opacity_special import zero_special_opacity
 from .opacity_cloud import zero_cloud_opacity
-from .aux_functions import T_INTERP_SCHEMES
+from .aux_functions import T_INTERP_SCHEMES, INTERP_PRECISIONS
 from .vert_chem import constant_vmr, constant_vmr_clr
 from .vert_mu import build_compute_mu, constant_mu
 from .RT_em_schemes import get_emission_solver
@@ -90,6 +90,7 @@ class ModelState(TypedDict, total=False):
     refraction_mode: int       # Refraction value
     ck_mix: int                # CkMix value (ck only)
     opac_T_interp: int         # index into T_INTERP_SCHEMES (static)
+    opac_interp_f32: int       # index into INTERP_PRECISIONS (static)
     cloud_nk_n: jnp.ndarray    # only with cloud n,k data
     cloud_nk_k: jnp.ndarray
     is_brown_dwarf: bool       # 1D only
@@ -119,6 +120,7 @@ class ModelSpec:
     t_interp: str
     contri_func: bool
     is_brown_dwarf: bool
+    interp_precision: str = "float64"
     schemes: Dict[str, str] = field(default_factory=dict)  # kind -> configured name
     cache: Dict[str, tuple] = field(default_factory=dict)  # kind -> required cache keys
 
@@ -148,6 +150,7 @@ class ModelSpec:
             "ck": self.ck,
             "ck_mix_code_static": None if self.ck_mix is None else int(self.ck_mix),
             "opac_T_interp": self.t_interp,
+            "opac_interp_precision": self.interp_precision,
             "contri_func_enabled": self.contri_func,
             "refraction_mode": int(self.refraction),
         }
@@ -179,6 +182,14 @@ def _parse_t_interp(cfg) -> str:
     s = "linear" if raw is None else str(raw).strip().lower()
     if s not in T_INTERP_SCHEMES:
         raise ValueError(f"Unknown opac.T_interp='{raw}'. Options: {' | '.join(T_INTERP_SCHEMES)}")
+    return s
+
+
+def _parse_interp_precision(cfg) -> str:
+    raw = getattr(getattr(cfg, "opac", None), "interp_precision", None)
+    s = "float64" if raw is None else str(raw).strip().lower()
+    if s not in INTERP_PRECISIONS:
+        raise ValueError(f"Unknown opac.interp_precision='{raw}'. Options: {' | '.join(INTERP_PRECISIONS)}")
     return s
 
 
@@ -252,6 +263,7 @@ def select_model(cfg, geometry: str = "1d") -> ModelSpec:
         t_interp=_parse_t_interp(cfg),
         contri_func=bool(getattr(phys, "contri_func", False)),
         is_brown_dwarf=emission_mode in _BROWN_DWARF,
+        interp_precision=_parse_interp_precision(cfg),
         schemes={k: str(v).strip().lower() for k, v in schemes.items()},
         cache={kind: k.cache for kind, k in kernels.items() if k.cache},
     )
@@ -484,6 +496,7 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
             "contri_func": spec.contri_func,
             "refraction_mode": int(spec.refraction),
             "opac_T_interp": T_INTERP_SCHEMES.index(spec.t_interp),
+            "opac_interp_f32": INTERP_PRECISIONS.index(spec.interp_precision),
         }
         if "cloud_nk_n" in opac:
             state["cloud_nk_n"] = opac["cloud_nk_n"]
@@ -511,9 +524,8 @@ def make_opacity_fn(spec: ModelSpec) -> Callable:
         }
         if spec.line is not None:
             if spec.ck_mix is CkMix.TRANS:
-                # Per-species tables; mixing happens in the RT.
-                comps["line_perspecies"], comps["vmr_perspecies"] = compute_ck_opacity_perspecies(
-                    state, opac, params)
+                # Species are interpolated one at a time and mixed inside the RT.
+                comps["vmr_perspecies"] = ck_vmr_perspecies(state)
             else:
                 comps["line"] = spec.line(state, opac, params)
         for key, kernel in (("rayleigh", spec.ray), ("cia", spec.cia), ("special", spec.special)):

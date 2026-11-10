@@ -1,0 +1,15 @@
+== eaa
+eaa: [mem] fwd  B=1   temp=     89.1 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    72.7 ms
+eaa: [mem] grad B=1   temp=    752.9 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.9 s  call=   235.2 ms
+== toon89
+toon89: [mem] fwd  B=1   temp=    369.0 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=   122.7 ms
+toon89: [mem] grad B=1   temp=   1174.1 MB  args=   392.9 MB  out=   0.00 MB  compile=   1.3 s  call=   430.5 ms
+== dda
+dda: [mem] fwd  B=1   temp=    148.0 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.4 s  call=   136.6 ms
+dda: [mem] grad B=1   temp=    897.2 MB  args=   392.9 MB  out=   0.00 MB  compile=   2.0 s  call=   830.1 ms
+== ad
+ad: [mem] fwd  B=1   temp=    208.9 MB  args=   392.9 MB  out=   0.02 MB  compile=   1.8 s  call= 14059.0 ms
+ad: [mem] grad B=1   temp=   2121.8 MB  args=   392.9 MB  out=   0.00 MB  compile=   9.5 s  call= 94673.1 ms
+== sc_ric
+sc_ric: [mem] fwd  B=1   temp=    821.7 MB  args=   392.9 MB  out=   0.02 MB  compile=   5.0 s  call=  2454.2 ms
+sc_ric: [mem] grad B=1   temp=   3110.5 MB  args=   392.9 MB  out=   0.00 MB  compile=  18.4 s  call=  9191.4 ms

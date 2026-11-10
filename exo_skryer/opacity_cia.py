@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
-from .aux_functions import interp_table_axis, t_interp_scheme
+from .aux_functions import interp_table_axis, t_interp_scheme, interp_dtype
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
 _LN10 = 2.302585092994046
@@ -117,6 +117,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
     pair_j = opac["cia_pair_species_j"]
     log_t_layers = jnp.log10(layer_temperatures)
     t_interp = t_interp_scheme(state)
+    cdt = interp_dtype(state)
 
     weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)
     out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float64)
@@ -133,7 +134,7 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
 
         # The helper clips to this pair's own T range (shorter grids are edge-padded).
         s_interp = interp_table_axis(
-            log_t_layers, log_temp_grid, lambda t_idx: sigma_log_table[t_idx, :], t_interp
+            log_t_layers, log_temp_grid, lambda t_idx: sigma_log_table[t_idx, :], t_interp, dtype=cdt
         )
 
         min_temp = temp_grid[0]

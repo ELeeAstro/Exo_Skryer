@@ -193,6 +193,7 @@ obs_data/all_observations*.txt
 .env
 .env.local
 .pixi
+.ruff_cache
 
 AGENTS.md
 

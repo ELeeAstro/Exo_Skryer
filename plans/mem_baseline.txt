@@ -1,0 +1,9 @@
+[mem] fwd  B=1   temp=     40.3 MB  args=   151.0 MB  out=   0.00 MB  compile=   0.3 s  call=     9.0 ms
+[mem] grad B=1   temp=    299.5 MB  args=   151.0 MB  out=   0.00 MB  compile=   1.0 s  call=    62.4 ms
+[mem] fwd  B=8   temp=    322.6 MB  args=   151.0 MB  out=   0.01 MB  compile=   0.4 s  call=    55.6 ms
+[mem] grad B=8   temp=   2274.9 MB  args=   151.0 MB  out=   0.00 MB  compile=   0.8 s  call=   466.2 ms
+[mem] fwd  B=32  temp=   1290.5 MB  args=   151.0 MB  out=   0.03 MB  compile=   0.4 s  call=   237.1 ms
+[mem] grad B=32  temp=   9100.5 MB  args=   151.0 MB  out=   0.00 MB  compile=   1.0 s  call=  1674.2 ms
+[mem] fwd temp slope: 40.33 MB per particle
+[mem] grad temp slope: 283.90 MB per particle
+[check] saved reference to /private/tmp/claude-503/-Users-elspeth-Exo-Skryer/488ae2f2-669b-42ab-9937-4430144440a0/scratchpad/ref_eager.npz

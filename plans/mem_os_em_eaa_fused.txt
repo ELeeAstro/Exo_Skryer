@@ -1,0 +1,9 @@
+[mem] fwd  B=1   temp=     89.1 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    72.0 ms
+[mem] grad B=1   temp=    752.9 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=   232.5 ms
+[mem] fwd  B=4   temp=    356.0 MB  args=   392.9 MB  out=   0.09 MB  compile=   0.3 s  call=   295.3 ms
+[mem] grad B=4   temp=   3030.8 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=   843.5 ms
+[mem] fwd  B=8   temp=    712.0 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   583.5 ms
+[mem] grad B=8   temp=   6060.3 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=  1700.0 ms
+[mem] fwd temp slope: 88.97 MB per particle
+[mem] grad temp slope: 758.19 MB per particle
+[check] vs ref_os_eaa.npz: max rel spectrum diff 1.30e-07, max rel gradient diff 1.63e-08

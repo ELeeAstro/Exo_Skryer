@@ -1,12 +1,16 @@
 """
 RT_em_1D_ck.py
 ==============
+
+Correlated-k emission spectrum: the RT solver is run per g-point and the
+fluxes summed with the g weights.
 """
 
 from __future__ import annotations
 
 from typing import Dict, Mapping, Tuple
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 
@@ -23,33 +27,6 @@ def _get_ck_weights(opac: Dict[str, jnp.ndarray]) -> jnp.ndarray:
     return g_weights
 
 
-def _sum_opacity_components_ck(
-    state: Dict[str, jnp.ndarray],
-    opacity_components: Mapping[str, jnp.ndarray],
-    opac: Dict[str, jnp.ndarray],
-) -> jnp.ndarray:
-    nlay = state["rho_lay"].shape[0]
-    nwl = state["wl"].shape[0]
-
-    if not opacity_components:
-        g_weights = _get_ck_weights(opac)
-        ng = g_weights.shape[-1]
-        return jnp.zeros((nlay, nwl, ng))
-
-    line_opacity = opacity_components.get("line")
-    if line_opacity is None:
-        g_weights = _get_ck_weights(opac)
-        ng = g_weights.shape[-1]
-        line_opacity = jnp.zeros((nlay, nwl, ng))
-
-    zeros_2d = jnp.zeros((nlay, nwl), dtype=line_opacity.dtype)
-    component_keys_2d = ("rayleigh", "cia", "special", "cloud")
-    components_2d = jnp.stack([opacity_components.get(k, zeros_2d) for k in component_keys_2d], axis=0)
-    summed_2d = jnp.sum(components_2d, axis=0)
-
-    return line_opacity + summed_2d[:, :, None]
-
-
 def _planck_lambda(wavelength_cm: jnp.ndarray, temperature: jnp.ndarray) -> jnp.ndarray:
     exponent = (h * c_light) / (wavelength_cm * kb * jnp.maximum(temperature, 1.0))
     expm1 = jnp.expm1(jnp.clip(exponent, None, 80.0))
@@ -57,41 +34,19 @@ def _planck_lambda(wavelength_cm: jnp.ndarray, temperature: jnp.ndarray) -> jnp.
     return prefactor / jnp.maximum(expm1, 1e-300)
 
 
-def _layer_optical_depth_ck(k_tot: jnp.ndarray, rho: jnp.ndarray, dz: jnp.ndarray) -> jnp.ndarray:
-    return k_tot * rho[:, None, None] * dz[:, None, None]
-
-
-def _compute_scattering_properties(
-    opacity_components: Mapping[str, jnp.ndarray],
-    state: Dict[str, jnp.ndarray],
-    k_tot: jnp.ndarray,
+def _scattering_2d(
+    k_ray: jnp.ndarray,
+    k_cloud_ext: jnp.ndarray,
+    cloud_ssa: jnp.ndarray,
+    cloud_g: jnp.ndarray,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    nlay, nwl = k_tot.shape[:2]
-
-    def _get_component(name, shape):
-        arr = opacity_components.get(name)
-        if arr is None:
-            return jnp.zeros(shape)
-        return arr
-
-    base_shape = (nlay, nwl)
-    k_ray = _get_component("rayleigh", base_shape)
-    k_cloud_ext = _get_component("cloud", base_shape)
-    cloud_ssa = _get_component("cloud_ssa", base_shape)
-    cloud_g = _get_component("cloud_g", base_shape)
-
+    """Scattering opacity and scattering-weighted asymmetry, (nlay, nwl); same for every g-point."""
     # Clamped because MADT can give a slightly negative Q_sca.
     k_cloud_scat = jnp.maximum(cloud_ssa * k_cloud_ext, 0.0)
     k_tot_scat = k_ray + k_cloud_scat
-    k_tot_safe = jnp.maximum(k_tot, 1.0e-30)
-
-    # Scattering-weighted asymmetry; Rayleigh contributes g = 0.
+    # Rayleigh contributes g = 0.
     g = k_cloud_scat * cloud_g / jnp.maximum(k_tot_scat, 1.0e-30)
-    g = jnp.broadcast_to(g[:, :, None], k_tot.shape)
-
-    k_tot_scat = k_tot_scat[:, :, None]
-    ssa = jnp.clip(k_tot_scat / k_tot_safe, 0.0, 0.99)
-    return ssa, g
+    return k_tot_scat, g
 
 
 def _scale_flux_ratio(
@@ -131,81 +86,69 @@ def compute_emission_spectrum_1d_ck(
     else:
         be_internal = jnp.zeros_like(be_levels[-1])
 
+    # Loop over g-points, building each g-point's (nlay, nwl) optical depth and
+    # single-scattering albedo inside the step from the line slice and the 2D
+    # continuum/cloud terms, so no (nlay, nwl, ng) arrays beyond the line opacity
+    # itself are formed. With f_cloud, the cloudy and clear columns share the step.
+    # jax.checkpoint stores only the carry per g-point under reverse-mode AD
+    # (rather than every g-point's solver intermediates).
+    nlay, nwl = rho_lay.shape[0], wl_cm.shape[0]
+    g_weights = _get_ck_weights(opac)
+    line = opacity_components.get("line")
+    if line is None:
+        line = jnp.zeros((nlay, nwl, g_weights.shape[-1]), dtype=dtype)
+    line_by_g = jnp.moveaxis(line, -1, 0)
+    g_weights = g_weights[: line_by_g.shape[0]]
+
+    zeros_2d = jnp.zeros((nlay, nwl), dtype=line.dtype)
+
+    def _comp(name):
+        arr = opacity_components.get(name)
+        return zeros_2d if arr is None else arr
+
+    k_2d = jnp.sum(jnp.stack([_comp(k) for k in ("rayleigh", "cia", "special", "cloud")], axis=0), axis=0)
+    k_ray = _comp("rayleigh")
+    cloud_ext = _comp("cloud")
+    k_scat_cloud, g_cloud = _scattering_2d(k_ray, cloud_ext, _comp("cloud_ssa"), _comp("cloud_g"))
+    two_column = "f_cloud" in params and "cloud" in opacity_components
+    if two_column:
+        k_scat_clear, g_clear = _scattering_2d(k_ray, zeros_2d, zeros_2d, zeros_2d)
+
+    def _column(k_tot, k_scat, g_eff):
+        ssa = jnp.clip(k_scat / jnp.maximum(k_tot, 1.0e-30), 0.0, 0.99)
+        dtau = k_tot * rho_lay[:, None] * dz[:, None]
+        olr_g, contrib_g = emission_solver(
+            be_levels, dtau, ssa, g_eff, be_internal, return_layer_contrib=bool(contri_func)
+        )
+        return (olr_g, contrib_g) if contri_func else (olr_g,)
+
+    @jax.checkpoint
+    def _g_step(acc, x):
+        line_g, weight = x
+        k_tot = line_g + k_2d
+        out = _column(k_tot, k_scat_cloud, g_cloud)
+        if two_column:
+            out = out + _column(k_tot - cloud_ext, k_scat_clear, g_clear)
+        weight = weight.astype(dtype)
+        return tuple(a + weight * b for a, b in zip(acc, out)), None
+
+    n_out = (2 if contri_func else 1) * (2 if two_column else 1)
+    acc0 = tuple(jnp.zeros((nlay, nwl), dtype=dtype) if (contri_func and i % 2) else jnp.zeros_like(be_levels[0])
+                 for i in range(n_out))
+    acc, _ = lax.scan(_g_step, acc0, (line_by_g, g_weights))
+
+    zero_contrib = jnp.zeros((nlay, nwl), dtype=be_levels.dtype)
     if contri_func:
-        def _olr_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-            ssa_ck, g_ck = _compute_scattering_properties(
-                components,
-                state,
-                k_tot_local,
-            )
-            dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
-            g_weights = _get_ck_weights(opac)
-            dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
-            ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
-            g_by_g = jnp.moveaxis(g_ck, -1, 0)
-            g_weights = g_weights[: dtau_by_g.shape[0]]
-
-            def _scan_body(carry, inputs):
-                olr_accum, contrib_accum = carry
-                dtau_slice, ssa_slice, g_slice, weight = inputs
-                olr_g, layer_contrib_g = emission_solver(
-                    be_levels, dtau_slice, ssa_slice, g_slice, be_internal,
-                    return_layer_contrib=True
-                )
-                weight_lw = weight.astype(olr_accum.dtype)
-                weight_cf = weight.astype(contrib_accum.dtype)
-                olr_accum = olr_accum + weight_lw * olr_g
-                contrib_accum = contrib_accum + weight_cf * layer_contrib_g
-                return (olr_accum, contrib_accum), None
-
-            olr_init = jnp.zeros_like(be_levels[0])
-            contrib_init = jnp.zeros((state["dz"].shape[0], state["wl"].shape[0]), dtype=be_levels.dtype)
-            (olr_out, contrib_out), _ = lax.scan(
-                _scan_body, (olr_init, contrib_init), (dtau_by_g, ssa_by_g, g_by_g, g_weights)
-            )
-            return olr_out, contrib_out
+        olr_cloud, layer_contrib_cloud = acc[0], acc[1]
     else:
-        def _olr_for_components(components: Mapping[str, jnp.ndarray], k_tot_local: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-            ssa_ck, g_ck = _compute_scattering_properties(
-                components,
-                state,
-                k_tot_local,
-            )
-            dtau_ck = _layer_optical_depth_ck(k_tot_local, rho_lay, dz)
-            g_weights = _get_ck_weights(opac)
-            dtau_by_g = jnp.moveaxis(dtau_ck, -1, 0)
-            ssa_by_g = jnp.moveaxis(ssa_ck, -1, 0)
-            g_by_g = jnp.moveaxis(g_ck, -1, 0)
-            g_weights = g_weights[: dtau_by_g.shape[0]]
+        olr_cloud, layer_contrib_cloud = acc[0], zero_contrib
 
-            def _scan_body(olr_accum, inputs):
-                dtau_slice, ssa_slice, g_slice, weight = inputs
-                olr_g, _ = emission_solver(
-                    be_levels, dtau_slice, ssa_slice, g_slice, be_internal,
-                    return_layer_contrib=False
-                )
-                return olr_accum + weight.astype(olr_accum.dtype) * olr_g, None
-
-            olr_init = jnp.zeros_like(be_levels[0])
-            olr_out, _ = lax.scan(_scan_body, olr_init, (dtau_by_g, ssa_by_g, g_by_g, g_weights))
-            contrib_out = jnp.zeros((state["dz"].shape[0], state["wl"].shape[0]), dtype=be_levels.dtype)
-            return olr_out, contrib_out
-
-    k_tot_cloud = _sum_opacity_components_ck(state, opacity_components, opac)
-    olr_cloud, layer_contrib_cloud = _olr_for_components(opacity_components, k_tot_cloud)
-
-    if "f_cloud" in params and "cloud" in opacity_components:
+    if two_column:
         f_cloud = jnp.clip(params["f_cloud"], 0.0, 1.0)
-        cloud_ext = opacity_components["cloud"]
-        k_tot_clear = k_tot_cloud - cloud_ext[:, :, None]
-
-        zeros = jnp.zeros_like(cloud_ext)
-        opacity_clear = dict(opacity_components)
-        opacity_clear["cloud"] = zeros
-        opacity_clear["cloud_ssa"] = zeros
-        opacity_clear["cloud_g"] = zeros
-
-        olr_clear, layer_contrib_clear = _olr_for_components(opacity_clear, k_tot_clear)
+        if contri_func:
+            olr_clear, layer_contrib_clear = acc[2], acc[3]
+        else:
+            olr_clear, layer_contrib_clear = acc[1], zero_contrib
         olr = f_cloud * olr_cloud + (1.0 - f_cloud) * olr_clear
         layer_contrib_flux = f_cloud * layer_contrib_cloud + (1.0 - f_cloud) * layer_contrib_clear
     else:

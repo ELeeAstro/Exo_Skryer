@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Tuple
 
 import numpy as np
+import jax
 import jax.numpy as jnp
 from jax import lax
 
@@ -170,14 +171,14 @@ def solve_dda(
     dtau = (1.0 - w0 * f) * dtau
     w0 = w0 * (1.0 - f) / (1.0 - w0 * f)
 
-    # Bottom-first: the top of layer k is level k + 1
-    R, T, Eu, Ed = _layer_rt(dtau, w0, be[1:], be[:-1], chi)
-
     # Upward adding from the bottom; lower boundary I_up = I_down + B_int in every stream.
-    # Rb: reflection of the slab below, Su: upward intensity it emits.
+    # Rb: reflection of the slab below, Su: upward intensity it emits. Each layer's
+    # R, T and sources are built inside its step (bottom-first: the top of layer k
+    # is level k + 1), so only one layer's exist at a time; the step is checkpointed.
+    @jax.checkpoint
     def add(carry, x):
         Rb, Su = carry
-        R_k, T_k, Eu_k, Ed_k = x
+        R_k, T_k, Eu_k, Ed_k = _layer_rt(*x)
         I_RR = _mm(Rb, R_k)
         A = _mm(T_k, _inv((1.0 - I_RR[0], -I_RR[1], -I_RR[2], 1.0 - I_RR[3])))
         src = _add(Eu_k, _mv(A, _mv(Rb, Ed_k)))
@@ -186,7 +187,8 @@ def solve_dda(
 
     one, zero = jnp.ones_like(be[0]), jnp.zeros_like(be[0])
     b_int = jnp.broadcast_to(jnp.asarray(be_internal, dtype=dtype), be[0].shape)
-    (_, Su_top), per_layer = lax.scan(add, ((one, zero, zero, one), (b_int, b_int)), (R, T, Eu, Ed))
+    xs = (dtau, w0, be[1:], be[:-1], chi)
+    (_, Su_top), per_layer = lax.scan(add, ((one, zero, zero, one), (b_int, b_int)), xs)
 
     # No incident intensity at the top, so I_up(TOA) = Su_top
     wmu = tuple(2.0 * np.pi * w * m for w, m in zip(_W, _MU))

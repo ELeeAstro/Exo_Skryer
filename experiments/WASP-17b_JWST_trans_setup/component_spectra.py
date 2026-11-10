@@ -788,10 +788,11 @@ def compute_component_spectra(
 
         # Pick the CK transit kernel and prepare line opacities.
         if ck_mix == "TRANS":
-            from exo_skryer.opacity_ck import compute_ck_opacity_perspecies
+            # The TRANS RT interpolates each species itself; it only needs the VMRs.
+            from exo_skryer.opacity_ck import ck_vmr_perspecies
             from exo_skryer.RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans as _rt_ck
 
-            sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac_ck, full_params)
+            vmr_ps = ck_vmr_perspecies(state)
             ck_species = XS.ck_species_names()
         else:
             from exo_skryer.opacity_ck import compute_ck_opacity_perspecies, compute_ck_opacity
@@ -807,10 +808,7 @@ def compute_component_spectra(
 
         def _empty_line_components():
             if ck_mix == "TRANS":
-                return {
-                    "line_perspecies": jnp.zeros((0, nlay, nwl, ng), dtype=jnp.float64),
-                    "vmr_perspecies": jnp.zeros((0, nlay), dtype=jnp.float64),
-                }
+                return {"vmr_perspecies": jnp.zeros((0, nlay), dtype=jnp.float64)}
             return {}
 
         def _rt_one(opacity_components: dict) -> jnp.ndarray:
@@ -821,10 +819,9 @@ def compute_component_spectra(
         line_depths = {}
         for i, name in enumerate(ck_species):
             if ck_mix == "TRANS":
-                comps = {
-                    "line_perspecies": sigma_ps[i : i + 1],
-                    "vmr_perspecies": vmr_ps[i : i + 1],
-                }
+                # Isolate species i: zero-VMR species transmit exactly 1.
+                only_i = jnp.zeros((vmr_ps.shape[0], 1), dtype=vmr_ps.dtype).at[i].set(1.0)
+                comps = {"vmr_perspecies": vmr_ps * only_i}
             else:
                 kappa_i = sigma_ps[i] * vmr_ps[i][:, None, None]
                 comps = {"line": kappa_i}
@@ -860,7 +857,6 @@ def compute_component_spectra(
         # Total spectrum: line mixing is non-linear, so compute via the RT kernel.
         comps_total = _empty_line_components()
         if ck_mix == "TRANS":
-            comps_total["line_perspecies"] = sigma_ps
             comps_total["vmr_perspecies"] = vmr_ps
         else:
             comps_total["line"] = line_total

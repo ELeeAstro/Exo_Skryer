@@ -1,0 +1,4 @@
+toon89: [mem] fwd  B=1   temp=    500.1 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.3 s  call=    94.8 ms
+dda: [mem] fwd  B=1   temp=    501.1 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.4 s  call=   139.5 ms
+ad: [mem] fwd  B=1   temp=   1606.2 MB  args=   392.9 MB  out=   0.02 MB  compile=   1.5 s  call=  9299.2 ms
+sc_ric: [mem] fwd  B=1   temp=   2274.5 MB  args=   392.9 MB  out=   0.02 MB  compile=   3.1 s  call=  1489.8 ms

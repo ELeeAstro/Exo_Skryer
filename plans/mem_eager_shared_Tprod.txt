@@ -1,0 +1,9 @@
+[mem] fwd  B=1   temp=     40.3 MB  args=   151.0 MB  out=   0.00 MB  compile=   0.2 s  call=     7.8 ms
+[mem] grad B=1   temp=    280.1 MB  args=   151.0 MB  out=   0.00 MB  compile=   0.9 s  call=    38.4 ms
+[mem] fwd  B=8   temp=    322.6 MB  args=   151.0 MB  out=   0.01 MB  compile=   0.3 s  call=    56.0 ms
+[mem] grad B=8   temp=   2119.4 MB  args=   151.0 MB  out=   0.00 MB  compile=   0.8 s  call=   275.7 ms
+[mem] fwd  B=32  temp=   1290.5 MB  args=   151.0 MB  out=   0.03 MB  compile=   0.3 s  call=   207.9 ms
+[mem] grad B=32  temp=   8478.6 MB  args=   151.0 MB  out=   0.00 MB  compile=   0.9 s  call=  1281.8 ms
+[mem] fwd temp slope: 40.33 MB per particle
+[mem] grad temp slope: 264.47 MB per particle
+[check] vs ref_eager.npz: max rel spectrum diff 0.00e+00, max rel gradient diff 5.47e-15

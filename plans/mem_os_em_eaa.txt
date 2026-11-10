@@ -1,0 +1,9 @@
+[info] Cut grid:    N=18570, range=[0.59989, 5.10329]
+[mem] fwd  B=1   temp=    368.6 MB  args=   392.9 MB  out=   0.02 MB  compile=   0.2 s  call=    57.7 ms
+[mem] grad B=1   temp=   1803.0 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=   207.0 ms
+[mem] fwd  B=4   temp=   1474.3 MB  args=   392.9 MB  out=   0.09 MB  compile=   0.3 s  call=   254.8 ms
+[mem] grad B=4   temp=   7443.0 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=   845.4 ms
+[mem] fwd  B=8   temp=   2948.7 MB  args=   392.9 MB  out=   0.19 MB  compile=   0.3 s  call=   519.9 ms
+[mem] grad B=8   temp=  14885.3 MB  args=   392.9 MB  out=   0.00 MB  compile=   0.8 s  call=  4376.2 ms
+[mem] fwd temp slope: 368.58 MB per particle
+[mem] grad temp slope: 1868.90 MB per particle

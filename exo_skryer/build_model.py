@@ -24,10 +24,28 @@ from .build_common import (
     attach_runtime,
 )
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
+from .wl_blocks import check_wavelength_axes, map_wavelength_blocks, slice_block, slice_opac
 
 __all__ = [
     'build_forward_model'
 ]
+
+
+def _parse_wl_block(cfg, spec, nwl: int) -> int:
+    """``opac.wl_block``: wavelengths per block, 0 (default) = the whole grid at once."""
+    raw = getattr(getattr(cfg, "opac", None), "wl_block", None)
+    block = 0 if raw in (None, "None", "none") else int(raw)
+    if block < 0:
+        raise ValueError(f"opac.wl_block must be >= 0, got {block}.")
+    if block == 0:
+        return 0
+    if spec.rt_scheme != "emission_1d":
+        raise NotImplementedError("opac.wl_block is only implemented for rt_scheme: emission_1d so far.")
+    if block >= nwl:
+        print(f"[info] opac.wl_block={block} >= nwl={nwl}: running the whole grid as one block")
+        return 0
+    print(f"[info] wavelength blocks: {block} wavelengths per block, {-(-nwl // block)} blocks")
+    return block
 
 
 def build_forward_model(
@@ -102,6 +120,9 @@ def build_forward_model(
     atmosphere = make_atmosphere_fn(spec, chem, mu, nlay)
     opacities = make_opacity_fn(spec)
     fixed_params = extract_fixed_params(cfg)
+    wl_block = _parse_wl_block(cfg, spec, int(wl_hi.shape[0]))
+    if wl_block:
+        check_wavelength_axes(opac_cache, int(wl_hi.shape[0]))
 
     @jax.jit
     def _forward_model_impl(params, wl, stellar_flux_runtime, has_stellar_flux_runtime, opac, bandpass):
@@ -110,9 +131,29 @@ def build_forward_model(
         state["stellar_flux"] = stellar_flux_runtime
         state["has_stellar_flux"] = has_stellar_flux_runtime
 
-        components = opacities(state, full_params, opac)
-        # RT kernels return (spectrum, contrib_func); contrib_func is zeros when off.
-        D_hires, contrib_func = spec.rt(state, full_params, components, opac)
+        if wl_block:
+            # Opacities + RT one block of wavelengths at a time (see wl_blocks.py).
+            def column(start):
+                state_b = {
+                    **state,
+                    "wl": slice_block(wl, start, wl_block, 0),
+                    "nwl": wl_block,
+                    "stellar_flux": slice_block(stellar_flux_runtime, start, wl_block, 0),
+                }
+                opac_b = slice_opac(opac, start, wl_block)
+                if "cloud_nk_n" in opac_b:
+                    state_b["cloud_nk_n"] = opac_b["cloud_nk_n"]
+                    state_b["cloud_nk_k"] = opac_b["cloud_nk_k"]
+                D_b, cf_b = spec.rt(state_b, full_params, opacities(state_b, full_params, opac_b), opac_b)
+                return (D_b, cf_b) if spec.contri_func else (D_b,)
+
+            outs = map_wavelength_blocks(column, wl.shape[0], wl_block)
+            D_hires = outs[0]
+            contrib_func = outs[1] if spec.contri_func else None
+        else:
+            components = opacities(state, full_params, opac)
+            # RT kernels return (spectrum, contrib_func); contrib_func is zeros when off.
+            D_hires, contrib_func = spec.rt(state, full_params, components, opac)
         D_bin = apply_response_functions_cached(D_hires, bandpass)
 
         if return_highres:

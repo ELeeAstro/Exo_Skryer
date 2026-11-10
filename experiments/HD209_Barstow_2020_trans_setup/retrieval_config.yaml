@@ -236,7 +236,7 @@ fastchem_grid_jax:
 sampling:
   # Active engine: dynesty | jaxns | nuts | blackjax_ns | ultranest | nautilus | pymultinest | nessai | blackjax_smc | pocomc
   # Only the section matching 'engine' below is used at runtime.
-  engine: nautilus
+  engine: pocomc
 
   # NUTS / HMC settings
   nuts:
