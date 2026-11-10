@@ -276,6 +276,17 @@ def _mu_dynamic(params, vmr_lay, nlay):
     return compute_mu(vmr_lay)
 
 
+# User-supplied profiles (profile_io.py): data loaded by init_profiles at setup.
+from . import profile_io as _profile  # noqa: E402
+
+_PROFILE_SETUP = (_profile.init_profiles,)
+register("vert_Tp", "file", _profile.file_tp_kernel, setup=_PROFILE_SETUP)
+register("vert_mu", "file", _profile.file_mu_kernel, setup=_PROFILE_SETUP)
+register("vert_chem", "file", _profile.file_chem_kernel, setup=_PROFILE_SETUP)
+register("vert_cloud", "file", _profile.file_cloud_profile_kernel, setup=_PROFILE_SETUP)
+register("opac_cloud", "file", _profile.file_cloud_opacity_kernel, setup=_PROFILE_SETUP,
+         cache=_profile.CLOUD_CACHE_KEYS)
+
 register("vert_mu", "auto", _mu_auto)
 register("vert_mu", "constant", _mu_constant, aliases=("fixed",))
 register("vert_mu", "dynamic", _mu_dynamic, aliases=("variable", "vmr"))

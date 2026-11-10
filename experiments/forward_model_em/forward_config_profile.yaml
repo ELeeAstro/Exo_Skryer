@@ -1,0 +1,92 @@
+data:
+
+  obs: None
+  obs_east: None
+  obs_west: None
+  stellar: None
+
+physics:
+
+  nlay: 99                 # replaced by the number of layers in profile.tp_file
+
+  vert_Tp: file            # T from profile.tp_file (its pressures are the model layers)
+  vert_alt: hypsometric_variable_g_pref
+  vert_chem: file          # VMRs from profile.vmr_file
+  vert_mu: file            # mu from the mu_amu column of profile.tp_file
+  vert_cloud: file         # total condensate q_c from profile.cloud_file
+
+  opac_line: ck
+  opac_ray: ck
+  opac_cia: ck
+  opac_cloud: file         # per-species cloud optics from profile.cloud_file
+  opac_special: None
+  cloud_dist: mono
+
+  rt_scheme: emission_1d   # transit_1d | transit_1_5d | emission_1d
+  emission_mode: brown_dwarf
+  em_scheme: eaa
+  contri_func: False
+  refraction: None
+
+opac:
+
+  wl_master: ../../opac_data/ck/wl_ck_R250.txt
+  full_grid: True
+  ck: True
+  ck_mix: RORR
+
+  line:
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+    - {species: CO, path: ../../opac_data/ck/CO_ck_R250.zarr.zip}
+    - {species: CH4, path: ../../opac_data/ck/CH4_ck_R250.zarr.zip}
+    - {species: NH3, path: ../../opac_data/ck/NH3_ck_R250.zarr.zip}
+    - {species: Na, path: ../../opac_data/ck/Na_ck_R250.zarr.zip}
+    - {species: K, path: ../../opac_data/ck/K_ck_R250.zarr.zip}
+  ray:
+    - {species: H2}
+    - {species: He}
+  cia:
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
+  special: None
+  cloud:                   # cloud species: bulk density (g cm^-3) and n,k file
+    - {species: Mg2SiO4, path: ../../nk_data/Mg2SiO4_amorph.txt, rho: 3.27}
+    - {species: Fe,      path: ../../nk_data/Fe.txt,             rho: 7.87}
+
+profile:
+  tp_file: profiles/example_TpmuKzz.txt     # p_bar  T_K  mu_amu  Kzz_cm2s, one row per layer
+  vmr_file: profiles/example_vmr.txt        # p_bar  <species>..., one row per layer
+  cloud_file: profiles/example_clouds.txt   # p_bar  species  q_c  reff_um  sigma, one row per layer and species
+  cloud_method: lxmie      # lxmie | madt | f18
+  cloud_dist: lognormal    # lognormal | mono
+  cloud_sigma: 2.0         # width where the cloud file has no sigma column
+  cloud_nr: 400            # radii in the lognormal efficiency table
+  f18: {Q0: 20.0, Q1: 1.0, a: 4.0}   # used with cloud_method: f18
+
+params:
+
+  # System parameters (R_s = 0 for brown dwarf, D = distance in parsecs)
+  - { name: R_s,          dist: delta, value: 0.0,    transform: identity, init: 0.0 }
+  - { name: D,            dist: delta, value: 10.0,   transform: identity, init: 10.0 }
+  # p_bot / p_top are not used with vert_Tp: file (the file sets the pressure grid)
+  - { name: p_bot,        dist: delta, value: 1000.0, transform: identity, init: 1000.0 }
+  - { name: p_top,        dist: delta, value: 1e-4,   transform: identity, init: 1e-4 }
+  - { name: log_10_p_ref, dist: delta, value: 1.0,    transform: identity, init: 1.0 }
+  - { name: R_p,          dist: delta, value: 1.0,    transform: identity, init: 1.0 }
+  - { name: s_dilute,     dist: delta, value: 1.0,    transform: identity, init: 1.0 }
+
+  # Brown dwarf physical parameters
+  - { name: log_10_g,     dist: delta, value: 4.87,   transform: identity, init: 4.87 }  # M_p needs gravity; 4.87 gives R ~ 1 R_jup at 30 M_jup
+  - { name: M_p,  dist: delta, value: 30.0,   transform: identity, init: 30.0 }
+
+  # Internal temperature: sets the internal flux at the lower boundary (emission)
+  - { name: T_int,        dist: delta, value: 1000.0, transform: identity, init: 1000.0 }
+
+  # Modified Milne T-P profile parameters
+
+  # Gas abundances (log10 VMR)
+
+runtime:
+  platform: cpu
+  cuda_visible_devices: 0
+  threads: 1

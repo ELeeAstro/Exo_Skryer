@@ -1008,7 +1008,8 @@ def quench_approx(
 
     metallicity = params["M_to_H"]
     co_ratio = params["C_to_O"]
-    Kzz = 10.0 ** params["log_10_Kzz"]
+    # Kzz profile from a user T-p-mu-Kzz file, else the log_10_Kzz parameter
+    Kzz = params["Kzz_lay"] if "Kzz_lay" in params else 10.0 ** params["log_10_Kzz"]
     g = 10.0 ** params["log_10_g"]
     p_lay_bar = p_lay / bar
 

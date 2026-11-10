@@ -209,3 +209,9 @@ docs/api/
 # setuptools-scm generated version file (auto-generated from git tags)
 exo_skryer/version.py
 **/version.py
+
+# =============================================================================
+# Local working notes and scratch experiments - DO NOT COMMIT
+# =============================================================================
+plans/
+experiments/_tmp_*/

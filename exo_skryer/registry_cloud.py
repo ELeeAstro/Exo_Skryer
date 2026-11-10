@@ -252,6 +252,16 @@ def cloud_nk_k() -> jnp.ndarray:
 def load_cloud_nk_data(path: str | Path, wl_master: np.ndarray) -> None:
     """Load a refractive index table from disk, interpolate to wl_master, and cache.
 
+    See :func:`read_cloud_nk` for the file format and extrapolation.
+    """
+    n_i, k_i, conducting = read_cloud_nk(path, wl_master)
+    set_cloud_nk_data(jnp.asarray(np.asarray(wl_master, dtype=np.float64)), jnp.asarray(n_i), jnp.asarray(k_i))
+    _CLOUD_NK_DATA["conducting"] = jnp.asarray(1 if conducting else 0, dtype=jnp.int32)
+
+
+def read_cloud_nk(path: str | Path, wl_master: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
+    """Read a refractive index table and interpolate it to wl_master; returns (n, k, conducting).
+
     Expected file format::
 
         wavelength[um]  n  k
@@ -340,8 +350,8 @@ def load_cloud_nk_data(path: str | Path, wl_master: np.ndarray) -> None:
     # Within range
     if np.any(mask_mid):
         xlog = np.log10(wl)
-        nlog = np.log10(n)
-        klog = np.log10(k)
+        nlog = np.log10(np.maximum(n, 1e-99))
+        klog = np.log10(np.maximum(k, 1e-99))  # some tables have k = 0 (transparent)
         x_m = np.log10(wl_master[mask_mid])
         n_i[mask_mid] = 10.0 ** np.interp(x_m, xlog, nlog)
         k_i[mask_mid] = 10.0 ** np.interp(x_m, xlog, klog)
@@ -367,8 +377,7 @@ def load_cloud_nk_data(path: str | Path, wl_master: np.ndarray) -> None:
     n_i = np.maximum(n_i, 1e-99)
     k_i = np.maximum(k_i, 1e-99)
 
-    set_cloud_nk_data(jnp.asarray(wl_master), jnp.asarray(n_i), jnp.asarray(k_i))
-    _CLOUD_NK_DATA["conducting"] = jnp.asarray(1 if conducting else 0, dtype=jnp.int32)
+    return n_i, k_i, conducting
 
 
 def runtime_cache() -> dict:

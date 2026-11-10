@@ -79,6 +79,8 @@ def build_forward_model(
         )
 
     spec = select_model(cfg, "1d")
+    # Setup loaders first: user profiles set nlay and add cloud tables to the cache.
+    init_chemistry(cfg, exp_dir)
     opac_cache = XS.runtime_opacity_cache()
     validate_model(cfg, spec, opac_cache)
 
@@ -96,7 +98,6 @@ def build_forward_model(
         stellar_flux_arr = jnp.zeros_like(wl_hi, dtype=jnp.float64)
     bandpass_cache = get_bandpass_cache()
 
-    init_chemistry(cfg, exp_dir)
     chem, trace_species = prepare_chemistry_kernel(cfg, spec.chem, spec.opacity_schemes())
     mu = make_mu_kernel(cfg, spec, trace_species)
     atmosphere = make_atmosphere_fn(spec, chem, mu, nlay)
@@ -117,6 +118,13 @@ def build_forward_model(
 
         if return_highres:
             result = {"hires": D_hires, "binned": D_bin}
+            # The atmosphere and cloud optics the RT used, for checking against inputs
+            atm = {k: state[k] for k in ("p_lev", "T_lev", "p_lay", "T_lay", "mu_lay", "q_c_lay", "Kzz_lay")
+                   if k in state}
+            atm["vmr"] = {k: v for k, v in state["vmr_lay"].items() if not k.startswith("__")}
+            result["atm"] = atm
+            if spec.cloud is not None:
+                result["cloud_optics"] = {k: components[k] for k in ("cloud", "cloud_ssa", "cloud_g")}
             if spec.contri_func:
                 result["contrib_func"] = contrib_func
                 result["p_lay"] = state["p_lay"]

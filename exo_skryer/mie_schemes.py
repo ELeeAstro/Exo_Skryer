@@ -8,6 +8,8 @@ index k, and size parameter x.
 """
 
 from typing import Tuple
+import math
+
 import jax.numpy as jnp
 
 __all__ = [
@@ -58,6 +60,11 @@ def rayleigh(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarra
     g_ray = 0.0
 
     return Q_ext_ray, Q_sca_ray, g_ray
+
+
+# Series coefficients of the MADT absorption term for small z = 4 k x (z^1 .. z^8):
+# c_n = 2 (-1)^(n+1) (n+1) / (n+2)!
+_MADT_QABS_SERIES = tuple(2.0 * (-1) ** (n + 1) * (n + 1) / math.factorial(n + 2) for n in range(1, 9))
 
 
 def madt(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -114,7 +121,19 @@ def madt(n: jnp.ndarray, k: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, j
     z_safe = jnp.maximum(z, 1e-30)
     exp_z = jnp.exp(jnp.clip(-z_safe, -80.0, 80.0))
 
-    Q_abs_madt = 1.0 + 2.0 * (exp_z / z_safe) + 2.0 * ((exp_z - 1.0) / (z_safe * z_safe))
+    # Closed form 1 + 2 e^-z / z + 2 (e^-z - 1) / z^2 cancels catastrophically for
+    # small z (terms ~2/z cancel), giving garbage Q_abs and so Q_sca >> Q_ext for
+    # weakly absorbing materials (k -> 0). Below z = 0.05 use its series
+    # sum_n c_n z^n, c_n = 2 (-1)^(n+1) (n+1) / (n+2)!, through z^8 (both forms
+    # are then accurate to ~1e-13 or better).
+    small = z_safe < 0.05
+    z_big = jnp.where(small, 1.0, z_safe)
+    exp_zb = jnp.where(small, 1.0, exp_z)
+    Q_abs_closed = 1.0 + 2.0 * (exp_zb / z_big) + 2.0 * ((exp_zb - 1.0) / (z_big * z_big))
+    zs = jnp.where(small, z_safe, 0.0)
+    c = _MADT_QABS_SERIES
+    Q_abs_series = zs * (c[0] + zs * (c[1] + zs * (c[2] + zs * (c[3] + zs * (c[4] + zs * (c[5] + zs * (c[6] + zs * c[7])))))))
+    Q_abs_madt = jnp.where(small, Q_abs_series, Q_abs_closed)
 
     C1 = 0.25 * (1.0 + jnp.exp(-1167.0 * k_eff)) * (1.0 - Q_abs_madt)
 

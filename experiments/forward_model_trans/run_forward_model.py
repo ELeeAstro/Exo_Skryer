@@ -306,6 +306,27 @@ def main() -> None:
             )
             print(f"[info] Binned spectrum saved to: {binned_path}")
 
+    # Save the atmosphere the RT used (1D; layers bottom first)
+    if "atm" in result:
+        atm = result["atm"]
+        cols = {"p_bar": np.asarray(atm["p_lay"]) / 1.0e6, "T_K": np.asarray(atm["T_lay"]),
+                "mu_amu": np.asarray(atm["mu_lay"])}
+        if "Kzz_lay" in atm:
+            cols["Kzz_cm2s"] = np.asarray(atm["Kzz_lay"])
+        cols["q_c"] = np.asarray(atm["q_c_lay"])
+        nlay = cols["p_bar"].shape[0]
+        for sp, v in atm["vmr"].items():
+            cols[sp] = np.broadcast_to(np.asarray(v), (nlay,))
+        prof_path = exp_dir / f"{args.output_prefix}_profile_used.txt"
+        np.savetxt(prof_path, np.column_stack(list(cols.values())), header="  ".join(cols), fmt="%.8e")
+        print(f"[info] Atmosphere used saved to: {prof_path}")
+    if "cloud_optics" in result:
+        co = result["cloud_optics"]
+        optics_path = exp_dir / f"{args.output_prefix}_cloud_optics.npz"
+        np.savez(optics_path, wl_um=cut_grid, p_bar=np.asarray(result["atm"]["p_lay"]) / 1.0e6,
+                 k_ext=np.asarray(co["cloud"]), ssa=np.asarray(co["cloud_ssa"]), g=np.asarray(co["cloud_g"]))
+        print(f"[info] Cloud optical properties saved to: {optics_path}")
+
     t_end = time.perf_counter()
     print(f"[info] Total runtime: {t_end - t_start:.1f} s")
 

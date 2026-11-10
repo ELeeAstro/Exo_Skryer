@@ -274,7 +274,10 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
 
 def runtime_opacity_cache() -> dict:
     """Merged device-array cache from every loaded opacity registry."""
+    from . import profile_io
+
     cache: dict = {}
-    for registry in (registry_ck, registry_line, registry_cia, registry_ray, registry_cloud, registry_special):
+    for registry in (registry_ck, registry_line, registry_cia, registry_ray, registry_cloud, registry_special,
+                     profile_io):
         cache.update(registry.runtime_cache())
     return cache

@@ -440,6 +440,13 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
     profile. With ``M_p`` the radius follows from mass and gravity and is
     written back as ``R_p`` so altitude kernels use the same radius as the RT.
     """
+    from . import profile_io
+
+    file_grid = spec.schemes.get("vert_Tp") == "file"
+    if file_grid:
+        p_lev_file, p_lay_file = profile_io.profile_grid()
+        nlay = int(p_lay_file.shape[0])
+    kzz_file = profile_io.profile_kzz() if file_grid and profile_io.has_kzz_profile() else None
     nlev = nlay + 1
     cloud_profile = _cloud_profile_caller(spec.cloud_profile)
 
@@ -452,10 +459,16 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
         else:
             R0 = params["R_p"] * R_jup
 
-        p_lev = jnp.logspace(jnp.log10(params["p_bot"] * bar), jnp.log10(params["p_top"] * bar), nlev)
-        p_lay = (p_lev[1:] - p_lev[:-1]) / jnp.log(p_lev[1:] / p_lev[:-1])
+        if file_grid:
+            # Layers (and derived levels) of the user T-p-mu-Kzz file
+            p_lev, p_lay = p_lev_file, p_lay_file
+        else:
+            p_lev = jnp.logspace(jnp.log10(params["p_bot"] * bar), jnp.log10(params["p_top"] * bar), nlev)
+            p_lay = (p_lev[1:] - p_lev[:-1]) / jnp.log(p_lev[1:] / p_lev[:-1])
         T_lev, T_lay = spec.tp(p_lev, params)
-        vmr_lay = chem(p_lay, T_lay, params, nlay)
+        # A Kzz profile from the file reaches chemistry (quench_approx) as params["Kzz_lay"]
+        chem_params = params if kzz_file is None else {**params, "Kzz_lay": kzz_file}
+        vmr_lay = chem(p_lay, T_lay, chem_params, nlay)
         mu_lay = mu(params, vmr_lay, nlay)
         z_lev, z_lay, dz = spec.alt(p_lev, T_lay, mu_lay, params)
         rho_lay = (mu_lay * amu * p_lay) / (kb * T_lay)
@@ -488,6 +501,11 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
         if "cloud_nk_n" in opac:
             state["cloud_nk_n"] = opac["cloud_nk_n"]
             state["cloud_nk_k"] = opac["cloud_nk_k"]
+        if kzz_file is not None:
+            state["Kzz_lay"] = kzz_file
+        for key in profile_io.CLOUD_CACHE_KEYS:
+            if key in opac:
+                state[key] = opac[key]
         if spec.ck_mix is not None:
             state["ck_mix"] = int(spec.ck_mix)
         return state, params

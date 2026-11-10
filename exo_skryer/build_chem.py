@@ -484,6 +484,18 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
     elif chemistry_kernel is constant_vmr_clr:
         use_log10_vmr = validate_clr_params(cfg, trace_species)
         chemistry_kernel = constant_vmr_clr(trace_species, use_log10_vmr=use_log10_vmr)
+    else:
+        from .profile_io import file_chem_kernel, vmr_species
+        if chemistry_kernel is file_chem_kernel:
+            have = set(vmr_species())
+            missing = [s for s in trace_species if s not in have]
+            if need_atomic_h and "H" not in have:
+                missing.append("H")
+            if missing:
+                raise ValueError(
+                    f"vert_chem: file: the VMR file has no column for {missing}, which the configured "
+                    "opacities need."
+                )
 
     return chemistry_kernel, trace_species
 
@@ -796,10 +808,12 @@ def init_quench_approx(cfg: Any, exp_dir: Path) -> None:
         )
 
     param_names = _cfg_param_base_names(cfg)
-    if "log_10_Kzz" not in param_names:
+    from .profile_io import has_kzz_profile
+    if "log_10_Kzz" not in param_names and not has_kzz_profile():
         raise ValueError(
             "quench_approx requires parameter 'log_10_Kzz' in cfg.params "
-            "or an explicit transit_1_5d variant with _joint, _east, or _west suffix."
+            "(or an explicit transit_1_5d variant with _joint, _east, or _west suffix), "
+            "or a Kzz_cm2s column in the profile.tp_file with vert_Tp: file."
         )
     if "log_10_g" not in param_names and "M_p" not in param_names:
         raise ValueError(
@@ -813,22 +827,31 @@ def init_quench_approx(cfg: Any, exp_dir: Path) -> None:
 
 
 def init_chemistry(cfg: Any, exp_dir: Path | None = None) -> None:
-    """Run the setup loaders the configured ``physics.vert_chem`` kernel declares.
+    """Run the setup loaders the configured vertical and cloud kernels declare.
 
-    Loaders are idempotent; unknown or missing schemes are left to the builder
-    to report.
+    Covers ``vert_Tp``, ``vert_mu``, ``vert_chem``, ``vert_cloud`` and
+    ``opac_cloud`` (in that order, each loader once). Loaders are idempotent;
+    unknown or missing schemes are left to the builder to report.
     """
     from . import kernel_registry as KR
 
-    name = getattr(getattr(cfg, "physics", None), "vert_chem", None)
-    if name is None:
-        return
-    try:
-        entry = KR.get("vert_chem", name)
-    except ValueError:
-        return
-    for setup in entry.setup:
-        setup(cfg, exp_dir)
+    phys = getattr(cfg, "physics", None)
+    done = []
+    for kind in ("vert_Tp", "vert_mu", "vert_chem", "vert_cloud", "opac_cloud"):
+        name = getattr(phys, kind, None)
+        if name is None:
+            continue
+        try:
+            entry = KR.get(kind, name)
+        except ValueError:
+            continue
+        for setup in entry.setup:
+            if setup not in done:
+                setup(cfg, exp_dir)
+                done.append(setup)
+
+
+init_vertical = init_chemistry
 
 
 # Pre-registry entry points; each now runs the full chemistry setup.

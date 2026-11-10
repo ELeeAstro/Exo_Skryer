@@ -148,6 +148,9 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``Modified_Milne`` (aliases: ``milne_2``, ``milne_modified``, ``modified_milne``)
   * ``picket_fence``
   * ``MandS`` (alias: ``mands``)
+  * ``file``: temperatures from ``profile.tp_file`` (see `profile`_). The file's
+    pressures become the model layers, so ``physics.nlay``, ``p_bot`` and
+    ``p_top`` are not used.
 
   *Typical required parameters* (see :doc:`vert_Tp` for full details):
 
@@ -188,6 +191,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``easychem_jax`` (alias: ``easychem``)
   * ``quench_approx`` (aliases: ``quench``)
   * ``atmodeller``
+  * ``file``: VMRs from ``profile.vmr_file`` (see `profile`_)
 
   Notes:
 
@@ -222,6 +226,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``dynamic`` (aliases: ``variable``, ``vmr``): compute from VMR each layer
   * ``constant`` (aliases: ``fixed``): requires parameter ``mu``
   * ``auto``: use ``mu`` if present, else compute from VMR
+  * ``file``: the ``mu_amu`` column of ``profile.tp_file`` (needs ``vert_Tp: file``)
 
 ``physics.vert_cloud`` (vertical cloud mass profile)
   *Supported values*:
@@ -230,6 +235,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``exponential_decay_profile`` (aliases: ``exponential``, ``exp_decay``)
   * ``slab_profile`` (alias: ``slab``)
   * ``const_profile`` (aliases: ``const``, ``constant``)
+  * ``file``: total condensate q_c from ``profile.cloud_file`` (see `profile`_)
 
   *Typical required parameters* (see :doc:`vert_cloud`):
 
@@ -258,6 +264,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   *Supported values*:
 
   * ``None`` (disable cloud opacity)
+  * ``file``: per-species clouds from ``profile.cloud_file`` (see `profile`_)
   * ``grey_const``: grey opacity in every layer
   * ``grey_profile``: grey opacity only where ``vert_cloud`` gives ``q_c_lay > 0`` (alias: ``grey_slab``)
   * ``deck_and_powerlaw`` (alias: ``powerlaw``)
@@ -456,6 +463,111 @@ loaded into registries.
       - {path: ../../opac_data/nk/silicate_nk.txt}
 
   The file format is documented in ``exo_skryer/registry_cloud.py``.
+
+  With ``opac_cloud: file``, ``opac.cloud`` lists every species in the cloud
+  file, each with its bulk density ``rho`` (g cm\ :sup:`-3`) and, for
+  ``cloud_method: lxmie`` or ``madt``, its n,k ``path``. With ``f18`` an entry
+  may set its own ``Q0``, ``Q1``, ``a``::
+
+    cloud:
+      - {species: Mg2SiO4, path: ../../nk_data/Mg2SiO4_amorph.txt, rho: 3.27}
+      - {species: Fe,      path: ../../nk_data/Fe.txt,             rho: 7.87}
+
+
+profile
+=======
+
+User-supplied atmospheric profiles, used by the ``file`` options of
+``physics.vert_Tp``, ``vert_mu``, ``vert_chem``, ``vert_cloud`` and
+``opac_cloud``. Each option is independent, e.g. a file T-p with
+``vert_chem: fastchem_grid_jax``, or file clouds on an analytic T-p.
+
+All files are whitespace-separated text with a header line naming the columns
+(it may start with ``#``; other ``#`` lines are comments), pressure in bar, rows
+in any order. Profiles are interpolated onto the model layers in log p (VMRs
+and q_c in log value, zeros kept). Beyond a file's pressure range the VMRs
+keep their end values; clouds are zero there.
+
+``profile.tp_file``
+  T-p-mu-Kzz profile, one row per layer::
+
+    p_bar      T_K       mu_amu    Kzz_cm2s
+    1.0e-6     850.0     2.33      1.0e10
+
+  ``mu_amu`` (mean molecular weight, g mol\ :sup:`-1`) and ``Kzz_cm2s`` (eddy
+  diffusion, cm\ :sup:`2` s\ :sup:`-1`) are optional. With ``vert_Tp: file``
+  the file's pressures are the model layers; levels are placed at the
+  geometric means between layers (the two end levels half a layer beyond the
+  end layers in log p), with temperatures from a monotone cubic (PCHIP) in
+  log p, extrapolated linearly at the two end levels. Emission at short
+  wavelengths (the Wien tail) is sensitive to these level temperatures: a
+  profile given only at layers gives spectra within ~1% there of the same
+  analytic profile evaluated at the exact levels. ``mu_amu`` is used
+  with ``vert_mu: file``. ``Kzz_cm2s`` is passed to ``quench_approx`` in place
+  of ``log_10_Kzz``.
+
+``profile.vmr_file``
+  Volume mixing ratios, one row per layer::
+
+    p_bar      H2O       CO        CH4       NH3
+
+  Every opacity species needs a column. Without ``H2``/``He`` columns the
+  remainder ``1 - sum(VMR)`` is filled with H2 + He at the solar ratio, as
+  ``constant_vmr`` does.
+
+``profile.cloud_file``
+  Condensate clouds in long format, one row per layer and species::
+
+    p_bar      species    q_c        reff_um   sigma
+    1.0e-2     Mg2SiO4    1.2e-6     0.85      2.0
+    1.0e-2     Fe         3.0e-7     1.40      2.0
+
+  ``q_c`` is the condensate mass per mass of gas, ``reff_um`` the effective
+  radius (µm) and ``sigma`` the lognormal geometric width (optional, default
+  ``profile.cloud_sigma``). A species absent at a pressure has no condensate
+  there. The optical properties are computed once at setup; species are
+  combined by summing extinction and taking scattering-weighted single
+  scattering albedo and asymmetry.
+
+``profile.cloud_method``
+  ``lxmie`` (default; Lorenz-Mie), ``madt`` (Rayleigh + MADT blend) or
+  ``f18`` (Fisher & Heng 2018, coefficients from ``profile.f18``).
+
+``profile.cloud_dist``
+  ``lognormal`` (default; r_g = r_eff exp(-2.5 ln\ :sup:`2` sigma)) or
+  ``mono`` (single radius r_eff).
+
+``profile.cloud_sigma``
+  Width used where the cloud file has no ``sigma`` column (default 2.0).
+
+``profile.cloud_nr``
+  Radii in the log-radius efficiency table (default 400). For
+  ``lognormal`` the size integral is a quadrature over these table radii,
+  which resolves the Mie ripples at large size parameter much better than the
+  41 fixed nodes of the ``lxmie``/``madt_rayleigh`` schemes (at 400 radii,
+  within ~0.3% of a converged integral; 800 gives ~1e-4). The table is
+  computed once at setup; LX-MIE costs about 26 s per species at 1154
+  wavelengths with 400 radii, scaling with the number of wavelengths. For
+  ``mono`` the efficiencies are computed at each layer's radius exactly.
+
+``profile.f18``
+  ``{Q0, Q1, a}`` for ``cloud_method: f18`` (default ``{Q0: 20.0, Q1: 1.0, a: 4.0}``).
+
+Example::
+
+  physics:
+    vert_Tp: file
+    vert_mu: file
+    vert_chem: file
+    vert_cloud: file
+    opac_cloud: file
+
+  profile:
+    tp_file: ../../profiles/my_bd_TpmuKzz.txt
+    vmr_file: ../../profiles/my_bd_vmr.txt
+    cloud_file: ../../profiles/my_bd_clouds.txt
+    cloud_method: lxmie
+    cloud_dist: lognormal
 
 
 params
