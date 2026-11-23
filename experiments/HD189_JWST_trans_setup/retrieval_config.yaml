@@ -25,7 +25,7 @@ physics:
   vert_mu: dynamic
 
   # Cloud vertical profile. Options: none | exponential | slab | constant
-  vert_cloud: exponential_decay_profile
+  vert_cloud: f_sed
 
   # Line opacity mode. Options: os (opacity sampling) | ck (correlated-k) | None (off)
   # Note: 'ck' here must match opac.ck: True below.
@@ -105,7 +105,7 @@ params:
   - {name: log_10_q_c,       dist: uniform, low: -12, high:  0, transform: logit, init: 0}   # cloud mass mixing ratio [log10]
   - {name: log_10_p_base,    dist: uniform, low:  -8, high:  3, transform: logit, init: 0}   # cloud base pressure [log10 bar]
   - {name: log_10_cld_r,     dist: uniform, low:  -3, high:  2, transform: logit, init: 0}   # particle radius [log10 micron]
-  - {name: log_10_alpha_cld, dist: uniform, low:  -2, high:  2, transform: logit, init: 0}   # cloud scale height factor [log10]
+  - {name: log_10_f_sed, dist: uniform, low:  -2, high:  2, transform: logit, init: 0}   # sedimentation efficiency f_sed [log10]
 
   - {name: cld_rho,   dist: delta,   value: 1.0,  transform: identity, init: 1.0  }   # particle density [g/cm^3]
   - {name: cld_Q0,    dist: uniform, low: 1.0, high: 65.0, transform: logit, init: 20.0}

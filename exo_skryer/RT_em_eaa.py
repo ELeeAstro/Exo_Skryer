@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Tuple
 
 import jax.numpy as jnp
+from jax import lax
 
 from .RT_em_common import _MU_NODES, _MU_WEIGHTS, _sweep, _layer_contrib
 
@@ -63,9 +64,34 @@ def solve_alpha_eaa(
     eps = jnp.sqrt(jnp.maximum((1.0 - w_in) * (1.0 - g_in * w_in), 0.0))
     dtau_a = eps * dtau
 
-    # Layer axis leads, angles are an inner batch axis: (nlay, nmu, nwl).
-    mu = jnp.asarray(_MU_NODES, dtype=be_levels.dtype)[None, :, None]
     w_q = jnp.asarray(_MU_WEIGHTS, dtype=be_levels.dtype)
+
+    if not return_layer_contrib:
+        # One bottom-up scan with the exact lower boundary I_up = I_down + B_int (net flux = F_int):
+        #   I_top = U + (I_down_bot + B_int) * Q
+        # U is the upward sweep started from zero; I_down_bot = sum_i S_down_i * prod_{j>i} T_j is
+        # accumulated with Q = transmission of the layers already passed, and Q at the end is the
+        # column transmission. Each step forms its layer's coefficients from (dtau_a, B_top, B_bot),
+        # so no (nlay, nmu, nwl) array is stored (~3.4x less temporary memory than precomputing them).
+        mu1 = jnp.asarray(_MU_NODES, dtype=be_levels.dtype)[:, None]          # (nmu, 1)
+
+        def step(carry, x):
+            I_dn, Q, U = carry
+            d_i, B_top, B_bot = x                                              # (nwl,) each
+            T_i, p0, pu = _eaa_layer_coeffs(d_i[None, :], mu1)                 # (nmu, nwl)
+            S_dn = pu * B_top + p0 * B_bot
+            S_up = p0 * B_top + pu * B_bot
+            return (I_dn + S_dn * Q, Q * T_i, U * T_i + S_up), None
+
+        z = jnp.zeros((mu1.shape[0], be_levels.shape[1]), dtype=be_levels.dtype)
+        (I_dn, Q, U), _ = lax.scan(step, (z, jnp.ones_like(z), z),
+                                   (dtau_a, be_levels[:-1], be_levels[1:]), reverse=True)
+        olr = jnp.pi * (w_q @ (U + (I_dn + be_internal) * Q))
+        return olr, jnp.zeros((nlay, be_levels.shape[1]), dtype=be_levels.dtype)
+
+    # Contribution functions need every layer's upward source, so form the coefficients for all
+    # layers at once: layer axis leads, angles are an inner batch axis: (nlay, nmu, nwl).
+    mu = jnp.asarray(_MU_NODES, dtype=be_levels.dtype)[None, :, None]
     T, psi_0, psi_u = _eaa_layer_coeffs(dtau_a[:, None], mu)
     src_down = psi_u * be_levels[:-1, None] + psi_0 * be_levels[1:, None]
     src_up = psi_0 * be_levels[:-1, None] + psi_u * be_levels[1:, None]
@@ -74,7 +100,4 @@ def solve_alpha_eaa(
     # boundary F_int = F_up - F_down, then the upward sweep to TOA.
     I_bot = _sweep(jnp.zeros_like(src_down[0]), T, src_down)
     olr = jnp.pi * (w_q @ _sweep(I_bot + be_internal, T, src_up, reverse=True))
-
-    if return_layer_contrib:
-        return olr, jnp.pi * _layer_contrib(w_q, src_up, dtau_a, mu)[::-1]
-    return olr, jnp.zeros((nlay, be_levels.shape[1]), dtype=be_levels.dtype)
+    return olr, jnp.pi * _layer_contrib(w_q, src_up, dtau_a, mu)[::-1]

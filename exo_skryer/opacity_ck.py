@@ -31,6 +31,9 @@ def _interp_species_log(sigma_4d, log_temp_grid, p_idx, p_weight, log_t, t_inter
     Linear in log P (the layer grid is fixed), then along log T with
     ``t_interp`` ("linear" or "pchip"), clipped to the species' own T range.
     """
+    # Interpolate in the table's precision (float32): the weight takes its dtype.
+    p_weight = jnp.asarray(p_weight).astype(sigma_4d.dtype)
+
     def _at_t(t_idx):
         return (1.0 - p_weight) * sigma_4d[t_idx, p_idx, :, :] + p_weight * sigma_4d[t_idx, p_idx + 1, :, :]
 
@@ -75,7 +78,7 @@ def _interpolate_sigma_log(layer_pressures_bar: jnp.ndarray, layer_temperatures:
 
     def _interp_one_layer(log_p: jnp.ndarray, log_t: jnp.ndarray) -> jnp.ndarray:
         # Pressure bracket indices and weights (shared across species)
-        p_idx = jnp.searchsorted(log_p_grid, log_p) - 1
+        p_idx = jnp.searchsorted(log_p_grid, log_p, method="compare_all") - 1
         p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
         p_weight = (log_p - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
@@ -235,7 +238,7 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
     n_g = sigma_cube.shape[-1]
 
     def _interp_sigma_log_layer(log_p: jnp.ndarray, log_t: jnp.ndarray) -> jnp.ndarray:
-        p_idx = jnp.searchsorted(log_p_grid, log_p) - 1
+        p_idx = jnp.searchsorted(log_p_grid, log_p, method="compare_all") - 1
         p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
         p_weight = (log_p - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
@@ -261,7 +264,8 @@ def compute_ck_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarra
             )[0]
         else:
             mixed = mix_k_tables_rorr(
-                jnp.exp(_LN10 * sigma_log_layer[:, None, :, :].astype(jnp.float64)),
+                # exp in table precision; the RORR mixing itself stays float64
+                jnp.exp(_LN10 * sigma_log_layer[:, None, :, :]).astype(jnp.float64),
                 vmr_layer[:, None],
                 g_points,
                 g_weights,
@@ -347,7 +351,7 @@ def compute_ck_opacity_perspecies(
 
     def _interp_sigma_log_layer(log_p: jnp.ndarray, log_t: jnp.ndarray) -> jnp.ndarray:
         """Interpolate cross-sections for all species at one layer."""
-        p_idx = jnp.searchsorted(log_p_grid, log_p) - 1
+        p_idx = jnp.searchsorted(log_p_grid, log_p, method="compare_all") - 1
         p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
         p_weight = (log_p - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
         p_weight = jnp.clip(p_weight, 0.0, 1.0)
@@ -363,7 +367,8 @@ def compute_ck_opacity_perspecies(
     sigma_log_all = jnp.transpose(sigma_log_all, (1, 0, 2, 3))
 
     # Convert from log10 to linear space
-    sigma_linear = jnp.exp(_LN10 * sigma_log_all.astype(jnp.float64))
+    # exp in table precision, then float64 for the RT
+    sigma_linear = jnp.exp(_LN10 * sigma_log_all).astype(jnp.float64)
 
     # Convert to mass opacity (cm² / g)
     # sigma_linear is cross-section (cm² molecule⁻¹)

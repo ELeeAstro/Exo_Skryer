@@ -23,6 +23,11 @@ __all__ = [
     "cloud_nk_n",
     "cloud_nk_k",
     "load_cloud_nk_data",
+    "CLOUD_OPTICS_CACHE",
+    "has_cloud_optics_data",
+    "clear_cloud_optics_data",
+    "read_cloud_optics_grid",
+    "load_cloud_optics_grid",
 ]
 
 
@@ -380,11 +385,122 @@ def read_cloud_nk(path: str | Path, wl_master: np.ndarray) -> tuple[np.ndarray, 
     return n_i, k_i, conducting
 
 
+# ============================================================================
+# Precomputed cloud optics grid (size-distribution-averaged, e.g. LX-MIE HDF5)
+# ============================================================================
+
+# Cache keys read by opacity_cloud.optics_grid_cloud.
+CLOUD_OPTICS_CACHE = (
+    "cloud_optics_log10_r_g",   # (nr,)   log10 median radius [um]
+    "cloud_optics_sigma_g",     # (ns,)   geometric standard deviation
+    "cloud_optics_table",       # (3, nr, ns, nwl_tab): log10(C_ext/<V>), log10(C_sca/<V>), g
+    "cloud_optics_wl_idx",      # (nwl,)  left table index for each model wavelength
+    "cloud_optics_wl_w",        # (nwl,)  right-hand weight (linear in log wavelength)
+)
+
+_CLOUD_OPTICS_DATA: Dict[str, jnp.ndarray] = {}
+
+_OPTICS_LOG_FLOOR = 1e-300
+
+
+def has_cloud_optics_data() -> bool:
+    """Return True if a cloud optics grid has been loaded."""
+    return bool(_CLOUD_OPTICS_DATA)
+
+
+def clear_cloud_optics_data() -> None:
+    _CLOUD_OPTICS_DATA.clear()
+
+
+def read_cloud_optics_grid(path: str | Path, wl_master: np.ndarray) -> Dict[str, np.ndarray]:
+    """Read an optics-grid HDF5 file and prepare it for the forward-model hot path.
+
+    Expected datasets (as written by the LX-MIE grid generator)::
+
+        r_g_micron (nr,), sigma_g (ns,), wavelength_micron (nwl_tab,)
+        c_ext_cm2, c_sca_cm2, asymmetry_parameter   (nr, ns, nwl_tab)
+        mean_particle_volume_cm3                    (nr, ns)
+
+    Cross sections are divided by the mean particle volume, so the bulk density
+    (``cld_rho``) can stay a free parameter: k_ext = q_c * C_ext / (rho_d <V>).
+
+    The radius/sigma interpolation happens per call on the coarse table; only the
+    wavelength mapping (indices and weights onto ``wl_master``, linear in log
+    wavelength) is precomputed here. The table is cut to the wavelengths that
+    bracket ``wl_master``. Model wavelengths outside the table are held at the
+    edge values.
+    """
+    import h5py
+
+    resolved = Path(path).expanduser().resolve()
+    with h5py.File(resolved, "r") as f:
+        r_g = np.asarray(f["r_g_micron"][()], dtype=np.float64)
+        sig = np.asarray(f["sigma_g"][()], dtype=np.float64)
+        wl_tab = np.asarray(f["wavelength_micron"][()], dtype=np.float64)
+        c_ext = np.asarray(f["c_ext_cm2"][()], dtype=np.float64)
+        c_sca = np.asarray(f["c_sca_cm2"][()], dtype=np.float64)
+        g = np.asarray(f["asymmetry_parameter"][()], dtype=np.float64)
+        vol = np.asarray(f["mean_particle_volume_cm3"][()], dtype=np.float64)
+
+    nr, ns, nwl_tab = r_g.size, sig.size, wl_tab.size
+    for name, arr in (("c_ext_cm2", c_ext), ("c_sca_cm2", c_sca), ("asymmetry_parameter", g)):
+        if arr.shape != (nr, ns, nwl_tab):
+            raise ValueError(f"{resolved}: {name} has shape {arr.shape}, expected {(nr, ns, nwl_tab)} "
+                             "(r_g_micron, sigma_g, wavelength_micron).")
+    if vol.shape != (nr, ns):
+        raise ValueError(f"{resolved}: mean_particle_volume_cm3 has shape {vol.shape}, expected {(nr, ns)}.")
+    for name, ax in (("r_g_micron", r_g), ("sigma_g", sig), ("wavelength_micron", wl_tab)):
+        if ax.size < 2 or not np.all(np.diff(ax) > 0):
+            raise ValueError(f"{resolved}: {name} must be strictly increasing with at least 2 points.")
+
+    wl_master = np.asarray(wl_master, dtype=np.float64)
+    if wl_master.min() < wl_tab[0] or wl_master.max() > wl_tab[-1]:
+        print(f"[warn] cloud optics grid covers {wl_tab[0]:.3g}-{wl_tab[-1]:.3g} um but the model grid spans "
+              f"{wl_master.min():.3g}-{wl_master.max():.3g} um; edge values are used outside.")
+
+    # Keep only the table wavelengths needed to bracket wl_master.
+    lo = max(int(np.searchsorted(wl_tab, wl_master.min(), side="right")) - 1, 0)
+    hi = min(int(np.searchsorted(wl_tab, wl_master.max(), side="left")) + 1, nwl_tab)
+    hi = max(hi, lo + 2)
+    wl_tab = wl_tab[lo:hi]
+    sl = np.s_[:, :, lo:hi]
+
+    # Linear interpolation in log wavelength, clamped at the table edges.
+    x_tab = np.log10(wl_tab)
+    x = np.clip(np.log10(wl_master), x_tab[0], x_tab[-1])
+    idx = np.clip(np.searchsorted(x_tab, x, side="right") - 1, 0, x_tab.size - 2)
+    w = (x - x_tab[idx]) / (x_tab[idx + 1] - x_tab[idx])
+
+    table = np.stack([
+        np.log10(np.maximum(c_ext[sl] / vol[:, :, None], _OPTICS_LOG_FLOOR)),
+        np.log10(np.maximum(c_sca[sl] / vol[:, :, None], _OPTICS_LOG_FLOOR)),
+        g[sl],
+    ])
+    return {
+        "cloud_optics_log10_r_g": np.log10(r_g),
+        "cloud_optics_sigma_g": sig,
+        "cloud_optics_table": table,
+        "cloud_optics_wl_idx": idx.astype(np.int32),
+        "cloud_optics_wl_w": w,
+    }
+
+
+def load_cloud_optics_grid(path: str | Path, wl_master: np.ndarray) -> None:
+    """Read an optics-grid HDF5 file (see :func:`read_cloud_optics_grid`) and cache it on device."""
+    data = read_cloud_optics_grid(path, wl_master)
+    _CLOUD_OPTICS_DATA.clear()
+    _CLOUD_OPTICS_DATA.update({k: jnp.asarray(v) for k, v in data.items()})
+    _, nr, ns, nwl_tab = data["cloud_optics_table"].shape
+    r = 10.0 ** data["cloud_optics_log10_r_g"]
+    s = data["cloud_optics_sigma_g"]
+    print(f"[cloud_optics] {nr} r_g ({r[0]:.3g}-{r[-1]:.3g} um) x {ns} sigma_g ({s[0]:.3g}-{s[-1]:.3g}) "
+          f"x {nwl_tab} wavelengths -> {len(data['cloud_optics_wl_idx'])} model wavelengths")
+
+
 def runtime_cache() -> dict:
     """Device arrays the opacity kernels read, keyed for the forward-model cache."""
-    if not has_cloud_nk_data():
-        return {}
-    return {
-        "cloud_nk_n": cloud_nk_n(),
-        "cloud_nk_k": cloud_nk_k(),
-    }
+    cache = dict(_CLOUD_OPTICS_DATA)
+    if has_cloud_nk_data():
+        cache["cloud_nk_n"] = cloud_nk_n()
+        cache["cloud_nk_k"] = cloud_nk_k()
+    return cache

@@ -109,10 +109,13 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
     log_p_layers = jnp.log10(layer_pressures_bar)
     log_t_layers = jnp.log10(layer_temperatures)
 
-    p_idx = jnp.searchsorted(log_p_grid, log_p_layers) - 1
+    p_idx = jnp.searchsorted(log_p_grid, log_p_layers, method="compare_all") - 1
     p_idx = jnp.clip(p_idx, 0, log_p_grid.shape[0] - 2)
     p_weight = (log_p_layers - log_p_grid[p_idx]) / (log_p_grid[p_idx + 1] - log_p_grid[p_idx])
     p_weight = jnp.clip(p_weight, 0.0, 1.0)
+    # Interpolate and exponentiate in the table's precision (float32); only the
+    # VMR weighting and the species sum are float64.
+    p_weight = p_weight.astype(sigma_cube.dtype)
 
     n_species = sigma_cube.shape[0]
     n_wl = sigma_cube.shape[-1]
@@ -129,14 +132,14 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
 
         s_interp = interp_table_axis(log_t_layers, log_temp_grid, _at_t, t_interp)  # log10 sigma
 
-        sigma_linear = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl) in cm^2
-        return acc + sigma_linear * mixing_ratios[i, :, None]
+        sigma_linear = jnp.exp(_LN10 * s_interp)  # (nlay, nwl) in cm^2, table precision
+        return acc + sigma_linear.astype(acc.dtype) * mixing_ratios[i, :, None]
 
-    weighted_sigma = lax.fori_loop(
-        0,
-        n_species,
-        _accumulate_one,
-        jnp.zeros((layer_count, n_wl), dtype=jnp.float64),
-    )
+    # Unrolled at trace time (n_species is static, so each species is a static slice).
+    # The barrier keeps species sequential: without it XLA materialises every
+    # species' (nlay, nwl) term at once (~2.5x the temp memory) and is slower.
+    weighted_sigma = jnp.zeros((layer_count, n_wl), dtype=jnp.float64)
+    for i in range(n_species):
+        weighted_sigma = lax.optimization_barrier(_accumulate_one(i, weighted_sigma))
 
     return weighted_sigma / (layer_mu[:, None] * amu)

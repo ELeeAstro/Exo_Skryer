@@ -13,7 +13,7 @@ physics:
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic
-  vert_cloud: exponential_decay_profile
+  vert_cloud: f_sed
 
   opac_line: os
   opac_ray: os
@@ -92,7 +92,7 @@ params:
   - {name: log_10_q_c, dist: uniform, low: -12, high: 0, transform: logit, init: 0}
   - {name: log_10_p_base, dist: uniform, low: -8, high: 3, transform: logit, init: 0}
   - {name: log_10_cld_r, dist: uniform, low: -3, high: 2, transform: logit, init: 0}
-  - {name: log_10_alpha_cld, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
+  - {name: log_10_f_sed, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
 
   - {name: cld_rho,  dist: delta,   value: 2.5,  transform: identity, init: 2.5 }   # particle bulk density [g/cm^3]
 

@@ -19,5 +19,5 @@ log_10_f_CO: {label: "$\\log_{10} {\\mathrm{CO}}$", order: 13}
 log_10_f_CH4: {label: "$\\log_{10} {\\mathrm{CH_4}}$", order: 14}
 log_10_q_c: {label: "$\\log_{10} q_{\\rm c, base}$ [g g$^{-1}$]", order: 15}
 log_10_p_base: {label: "$\\log_{10} p_{\\rm c, base}$ [bar]" , order: 16}
-log_10_alpha_cld: {label: "$\\log_{10} \\alpha_{\\rm c}$ [-]", order: 17}
+log_10_f_sed: {label: "$\\log_{10} f_{\\rm sed}$ [-]", order: 17}
 log_10_cld_r: {label: "$\\log_{10} r_{\\mathrm{g}}$ [$\\mu$m]", order: 18}

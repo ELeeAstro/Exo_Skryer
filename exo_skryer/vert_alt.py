@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
-import jax
 import jax.numpy as jnp
 
 from .data_constants import amu, kb, R_jup, bar
@@ -132,26 +131,20 @@ def hypsometric_variable_g(
 
     dlnp = jnp.log(p_lev[:-1] / p_lev[1:])
 
-    def step(z_i, inputs):
-        T_i, mu_i, dlnp_i = inputs
-
-        # Let A = mu*amu*g_ref*R0^2/(kb*T). Then:
-        #   dlnp = A * ( 1/(R0+z_i) - 1/(R0+z_{i+1}) )
-        # => 1/(R0+z_{i+1}) = 1/(R0+z_i) - dlnp/A
-        A = (mu_i * amu * g_ref * (R0 * R0)) / (kb * T_i)
-        inv_i = 1.0 / (R0 + z_i)
-        inv_next = inv_i - (dlnp_i / A)
-
-        # Guard against pathological inputs that would make inv_next <= 0.
-        inv_next = jnp.maximum(inv_next, jnp.finfo(p_lev.dtype).tiny)
-
-        z_next = (1.0 / inv_next) - R0
-        dz_i = z_next - z_i
-        return z_next, dz_i
-
-    z0 = jnp.zeros((), dtype=p_lev.dtype)
-    _, dz = jax.lax.scan(step, z0, (T_lay, mu_lay, dlnp))
-    z_lev = jnp.concatenate([jnp.zeros((1,), dtype=dz.dtype), jnp.cumsum(dz)])
+    # Per layer, with A_i = mu_i amu g_ref R0^2 / (kb T_i):
+    #   dlnp_i = A_i * ( 1/(R0+z_i) - 1/(R0+z_{i+1}) )
+    # The 1/r drops add up, so the profile is one cumulative sum anchored at the bottom level
+    # (z = 0, r = R0), with no layer loop:  1/r_j = 1/R0 - C_j,  C_j = sum_{i<j} dlnp_i / A_i.
+    inv_A = (kb * T_lay) / (mu_lay * amu * g_ref * R0 * R0)              # (nlay,)
+    seg = dlnp * inv_A                                                   # 1/r drop across each layer
+    C = jnp.concatenate([jnp.zeros((1,), dtype=seg.dtype), jnp.cumsum(seg)])   # (nlev,)
+    inv_r = 1.0 / R0 - C
+    # Guard against pathological (unbound) inputs that would make 1/r <= 0.
+    inv_r = jnp.maximum(inv_r, jnp.finfo(p_lev.dtype).tiny)
+    # Cancellation-free forms (not 1/inv_r - R0 and differences of z):
+    #   z = r - R0 = R0 C / inv_r,   dz_i = r_{i+1} - r_i = seg_i / (inv_r_i inv_r_{i+1})
+    z_lev = R0 * C / inv_r
+    dz = seg / (inv_r[:-1] * inv_r[1:])
     z_lay = 0.5 * (z_lev[:-1] + z_lev[1:])
     return z_lev, z_lay, dz
 
@@ -187,52 +180,24 @@ def hypsometric_variable_g_pref(
     p_ref = jnp.clip(p_ref, p_lev[-1], p_lev[0])
 
     # bracket index k such that p[k] >= p_ref >= p[k+1]
-    k = jnp.searchsorted(-p_lev, -p_ref, side="right") - 1
+    k = jnp.searchsorted(-p_lev, -p_ref, side="right", method="compare_all") - 1
     k = jnp.clip(k, 0, nlev - 2)
 
-    def step_exact(layer_idx, z_start, delta_ln, direction):
-        T = jnp.take(T_lay, layer_idx, mode="clip")
-        mu = jnp.take(mu_lay, layer_idx, mode="clip")
-
-        # Let A = mu*amu*g_ref*R0^2/(kb*T). Then:
-        #   dlnp = A * ( 1/(R0+z_start) - 1/(R0+z_end) )
-        # For direction=+1 (upward): inv_end = inv_start - dlnp/A
-        # For direction=-1 (downward): inv_end = inv_start + dlnp/A
-        A = (mu * amu * g_ref * (R0 * R0)) / (kb * T)
-        inv_start = 1.0 / (R0 + z_start)
-        inv_end = inv_start - direction * (delta_ln / A)
-
-        # Guard against pathological inputs that would make inv_end <= 0.
-        inv_end = jnp.maximum(inv_end, jnp.finfo(p_lev.dtype).tiny)
-        return (1.0 / inv_end) - R0
-
-    z_lev = jnp.zeros_like(p_lev)
-
-    # partial steps from p_ref to the bracketing levels
-    d_dn = jnp.log(p_lev[k] / p_ref)       # >= 0
-    d_up = jnp.log(p_ref / p_lev[k + 1])   # >= 0
-
-    z_lev = z_lev.at[k].set(step_exact(k, 0.0, d_dn, -1.0))
-    z_lev = z_lev.at[k + 1].set(step_exact(k, 0.0, d_up, +1.0))
-
-    # upward integration: i = k+1 .. nlev-2 updates level i+1
-    def up_body(i, z):
-        z_next = step_exact(i, z[i], dlnp[i], +1.0)
-        do = i >= (k + 1)
-        return z.at[i + 1].set(jnp.where(do, z_next, z[i + 1]))
-
-    z_lev = jax.lax.fori_loop(0, nlev - 1, up_body, z_lev)
-
-    # downward integration: i = k-1 .. 0 updates level i
-    def down_body(ii, z):
-        i = (k - 1) - ii
-        z_next = step_exact(i, z[i + 1], dlnp[i], -1.0)
-        do = i >= 0
-        i_safe = jnp.maximum(i, 0)
-        return z.at[i_safe].set(jnp.where(do, z_next, z[i_safe]))
-
-    z_lev = jax.lax.fori_loop(0, nlev - 1, down_body, z_lev)
-
-    dz = z_lev[1:] - z_lev[:-1]
+    # Per layer, with g = g_ref (R0/r)^2 and constant T, mu, the hypsometric step is exact in 1/r:
+    #   dlnp = A_i * (1/r_low - 1/r_up),  A_i = mu_i amu g_ref R0^2 / (kb T_i).
+    # The 1/r drops therefore add up, so the whole profile is one cumulative sum (no level loop):
+    #   1/r_j = 1/R0 - (C_j - C_ref),  C_j = sum_{i<j} dlnp_i / A_i,
+    # with C_ref the partial sum up to p_ref inside the bracketing layer k (using layer k's T, mu).
+    inv_A = (kb * T_lay) / (mu_lay * amu * g_ref * R0 * R0)              # (nlay,)
+    seg = dlnp * inv_A                                                   # 1/r drop across each layer
+    C = jnp.concatenate([jnp.zeros((1,), dtype=seg.dtype), jnp.cumsum(seg)])   # (nlev,), bottom level = 0
+    C_ref = C[k] + jnp.log(p_lev[k] / p_ref) * inv_A[k]
+    inv_r = 1.0 / R0 - (C - C_ref)
+    # Guard against pathological (unbound) inputs that would make 1/r <= 0.
+    inv_r = jnp.maximum(inv_r, jnp.finfo(p_lev.dtype).tiny)
+    # Cancellation-free forms (not 1/inv_r - R0 and differences of z, which lose ~R0/dz digits):
+    #   z = r - R0 = R0 (C - C_ref) / inv_r,   dz_i = r_{i+1} - r_i = seg_i / (inv_r_i inv_r_{i+1})
+    z_lev = R0 * (C - C_ref) / inv_r
+    dz = seg / (inv_r[:-1] * inv_r[1:])
     z_lay = 0.5 * (z_lev[:-1] + z_lev[1:])
     return z_lev, z_lay, dz

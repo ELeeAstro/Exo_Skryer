@@ -13,7 +13,7 @@ physics:
   vert_alt: p_ref
   vert_chem: constant_vmr_clr
   vert_mu: dynamic
-  vert_cloud: exponential_decay_profile
+  vert_cloud: f_sed
 
   opac_line: ck
   opac_ray: ck
@@ -87,7 +87,7 @@ params:
   - {name: cld_a_east,   dist: uniform, low: 3.0,  high: 7.0,  transform: logit, init: 4.0  }
   - {name: log_10_q_c_east,  dist: uniform, low: -12, high: 0,  transform: logit, init: 0   }  # cloud mass mixing ratio [log10]
   - {name: log_10_p_base_east, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_alpha_cld_east, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
+  - {name: log_10_f_sed_east, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
 
   # --- West limb ---
   - { name: R_p_west,       dist: uniform, low: 1.00, high: 1.50, transform: logit, init: 1.25 }
@@ -112,7 +112,7 @@ params:
   - {name: cld_a_west,   dist: uniform, low: 3.0,  high: 7.0,  transform: logit, init: 4.0  }
   - {name: log_10_q_c_west,  dist: uniform, low: -12, high: 0,  transform: logit, init: 0   }  # cloud mass mixing ratio [log10]
   - {name: log_10_p_base_west, dist: uniform, low: -6, high: 1, transform: logit, init: 0}
-  - {name: log_10_alpha_cld_west, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
+  - {name: log_10_f_sed_west, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
 
 sampling:
 

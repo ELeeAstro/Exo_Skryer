@@ -51,6 +51,8 @@ from .registry_cloud import (
     has_cloud_nk_data,
     load_cloud_nk_data,
     clear_cloud_nk_data,
+    load_cloud_optics_grid,
+    clear_cloud_optics_data,
 )
 from .registry_special import (
     has_special_data,
@@ -211,6 +213,7 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
     reset_ray_registry()
     reset_special_registry()
     clear_cloud_nk_data()
+    clear_cloud_optics_data()
 
     # Read the master wavelength grid and calculate the observationally cut grid
     lam_master_full = read_master_wl(cfg, obs, exp_dir=exp_dir)
@@ -268,8 +271,13 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
                 if exp_dir is None:
                     raise ValueError("cfg.opac.cloud path is relative but exp_dir was not provided.")
                 path = (exp_dir / path).resolve()
-            print(f"[cloud_nk] loading n,k from file: {path}")
-            load_cloud_nk_data(path, wl_master=lam_master_cut)
+            if path.suffix.lower() in (".h5", ".hdf5"):
+                # Precomputed size-averaged optics grid (opac_cloud: optics_grid).
+                print(f"[cloud_optics] loading optics grid from file: {path}")
+                load_cloud_optics_grid(path, wl_master=lam_master_cut)
+            else:
+                print(f"[cloud_nk] loading n,k from file: {path}")
+                load_cloud_nk_data(path, wl_master=lam_master_cut)
 
 
 def runtime_opacity_cache() -> dict:

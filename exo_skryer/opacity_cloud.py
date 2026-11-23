@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from .aux_functions import pchip_1d
+from .data_constants import bar
 from .mie_schemes import rayleigh, madt
 from .lxmie_mod import lxmie_jax
 
@@ -22,6 +23,7 @@ __all__ = [
     "direct_nk",
     "nk_f18_blend",
     "f18_skew_cloud",
+    "optics_grid_cloud",
 ]
 
 _LXMIE_NMAX = 2000
@@ -47,8 +49,14 @@ def _lognormal_cloud(
     r_cm: jnp.ndarray,
     sig_g: jnp.ndarray,
     efficiencies,
+    batch_size: int = _LOGNORMAL_N_NODES,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     """Cloud opacity for a lognormal size distribution with median radius r_cm.
+
+    ``batch_size`` radius nodes are evaluated at once (default: all of them, one
+    vectorised call, no sequential loop; best on GPU, costs 3 x nnodes x nwl floats).
+    ``batch_size=1`` keeps the sequential scan, for schemes whose per-radius work is
+    itself large (full Mie, ``lxmie``), so their memory is unchanged.
 
     Transformed trapezoid rule, as in gCMCRT optools (cloud_tables_dist.f90): with
     r(z) = exp(ln r_g + sqrt(2) ln(sig_g) z), the size integral becomes
@@ -83,15 +91,23 @@ def _lognormal_cloud(
     weights = jnp.exp(-(z**2)) * (z[1] - z[0]) / jnp.sqrt(jnp.pi)
     weights = weights.at[jnp.array([0, -1])].multiply(0.5)
 
-    def _accum(carry, r_w):
-        sigma_ext, sigma_sca, sigma_sca_g = carry
-        r_i, w_i = r_w
-        Q_ext_i, Q_sca_i, g_i = efficiencies(r_i)
-        dA = w_i * jnp.pi * r_i**2  # cm^2
-        return (sigma_ext + dA * Q_ext_i, sigma_sca + dA * Q_sca_i, sigma_sca_g + dA * Q_sca_i * g_i), None
+    if batch_size > 1:
+        # All radius nodes at once (lax.map in batches of batch_size; = vmap when it covers them all)
+        Q_ext_n, Q_sca_n, g_n = jax.lax.map(efficiencies, r_nodes, batch_size=batch_size)   # (nnodes, nwl)
+        dA = weights * jnp.pi * r_nodes**2                                                  # (nnodes,) cm^2
+        sigma_ext = dA @ Q_ext_n
+        sigma_sca = dA @ Q_sca_n
+        sigma_sca_g = dA @ (Q_sca_n * g_n)
+    else:
+        def _accum(carry, r_w):
+            sigma_ext, sigma_sca, sigma_sca_g = carry
+            r_i, w_i = r_w
+            Q_ext_i, Q_sca_i, g_i = efficiencies(r_i)
+            dA = w_i * jnp.pi * r_i**2  # cm^2
+            return (sigma_ext + dA * Q_ext_i, sigma_sca + dA * Q_sca_i, sigma_sca_g + dA * Q_sca_i * g_i), None
 
-    zeros = jnp.zeros_like(wl)
-    (sigma_ext, sigma_sca, sigma_sca_g), _ = jax.lax.scan(_accum, (zeros, zeros, zeros), (r_nodes, weights))
+        zeros = jnp.zeros_like(wl)
+        (sigma_ext, sigma_sca, sigma_sca_g), _ = jax.lax.scan(_accum, (zeros, zeros, zeros), (r_nodes, weights))
 
     # Particles per gram of atmosphere implied by q_c for a lognormal distribution.
     n_per_gram = (3.0 * q_c) / (4.0 * jnp.pi * rho_d * r_cm**3) * jnp.exp(-4.5 * ln_sigma**2)  # (nlay,)
@@ -537,9 +553,12 @@ def _cached_nk_mie_cloud(
 
     def _poly_case(_):
         sig_g = params.get("cld_sigma", jnp.asarray(1.0))
+        # Full Mie allocates (orders x nwl) per radius, so keep its radii sequential.
+        full_mie = eff_scheme.lower().strip() in ("lxmie", "mie", "mie_full", "full_mie")
         return _lognormal_cloud(
             wl, q_c, rho_d, r_cm, sig_g,
             lambda r: compute_cloud_efficiencies(wl, r, params, eff_scheme=eff_scheme, n=n, k=k),
+            batch_size=1 if full_mie else _LOGNORMAL_N_NODES,
         )
 
     def _do_cloud(_):
@@ -550,6 +569,117 @@ def _cached_nk_mie_cloud(
         return zeros, zeros, zeros
 
     return jax.lax.cond(has_cloud_any, _do_cloud, _skip_cloud, operand=None)
+
+
+def _bracket(axis: jnp.ndarray, x: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Left index and linear weight of x on an increasing axis, clamped to its ends."""
+    i = jnp.clip(jnp.searchsorted(axis, x, side="right", method="compare_all") - 1, 0, axis.shape[0] - 2)
+    w = jnp.clip((x - axis[i]) / (axis[i + 1] - axis[i]), 0.0, 1.0)
+    return i, w
+
+
+def _cloud_log10_r_g(
+    state: Dict[str, jnp.ndarray],
+    params: Dict[str, jnp.ndarray],
+    sig: jnp.ndarray,
+) -> jnp.ndarray:
+    """log10 median radius r_g [um] for the optics-grid lookup: scalar, or (nlay,) with a radius gradient.
+
+    The radius is given either as the median radius (``log_10_cld_r``) or as the
+    effective radius <r^3>/<r^2> (``log_10_cld_r_eff``), converted with
+    r_g = r_eff * exp(-2.5 ln^2 sigma_g) for a log-normal distribution.
+
+    With ``cld_r_alpha`` the radius varies with pressure above the cloud base:
+    r(P) = r_base * (P / P_base)**alpha for P < P_base (r_base below it), with
+    P_base from ``log_10_p_base``. alpha = 0 gives a constant radius.
+    """
+    if "log_10_cld_r_eff" in params:
+        log_r = jnp.asarray(params["log_10_cld_r_eff"])
+        is_r_eff = True
+    else:
+        log_r = jnp.asarray(params["log_10_cld_r"])
+        is_r_eff = False
+
+    if "cld_r_alpha" in params:
+        if "log_10_p_base" not in params:
+            raise KeyError("cld_r_alpha (radius gradient) needs log_10_p_base, the cloud-base pressure in bar.")
+        log_p = jnp.log10(state["p_lay"] / bar)
+        log_p_base = jnp.asarray(params["log_10_p_base"])
+        log_r = log_r + params["cld_r_alpha"] * jnp.minimum(log_p - log_p_base, 0.0)   # (nlay,)
+
+    if is_r_eff:
+        log_r = log_r - 2.5 * jnp.log(sig) ** 2 / jnp.log(10.0)
+    return log_r
+
+
+def optics_grid_cloud(
+    state: Dict[str, jnp.ndarray],
+    params: Dict[str, jnp.ndarray],
+) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """Cloud opacity from a precomputed, size-distribution-averaged optics grid.
+
+    Reads the table loaded by ``registry_cloud.load_cloud_optics_grid`` (an LX-MIE
+    HDF5 grid over median radius r_g, lognormal width sigma_g and wavelength,
+    given in ``cfg.opac.cloud`` as a ``.h5`` path). Per call:
+
+    1. Bilinear interpolation in (log10 r_g, sigma_g) on the coarse table, once
+       (constant radius) or once per layer (radius gradient); the cost does not
+       depend on the model wavelength grid.
+    2. Linear interpolation in log wavelength onto the model grid with the
+       indices and weights precomputed at load time.
+    3. Scale by the cloud mass per layer: k_ext = q_c * (C_ext/<V>) / rho_d.
+
+    C_ext/<V> and C_sca/<V> are interpolated in log10, g linearly. Radii and
+    sigma_g outside the table are clamped to its edges (zero gradient there).
+
+    Parameters
+    ----------
+    state : dict[str, `~jax.numpy.ndarray`]
+        Needs ``q_c_lay`` (nlay,) cloud mass mixing ratio from the ``vert_cloud``
+        kernel, ``p_lay``, and the ``cloud_optics_*`` cache arrays.
+    params : dict[str, `~jax.numpy.ndarray`]
+        - ``log_10_cld_r_eff`` : log10 effective radius <r^3>/<r^2> [um], or
+          ``log_10_cld_r`` : log10 median radius r_g [um]
+        - ``cld_rho`` : condensate bulk density [g cm^-3]
+        - ``cld_sigma`` : geometric standard deviation; used when
+          ``physics.cloud_dist: log_normal``, otherwise sigma_g = 1 (single size)
+        - ``cld_r_alpha`` (optional) : radius power-law index with pressure,
+          r(P) = r_base (P/P_base)**alpha above the base; needs ``log_10_p_base``
+
+    Returns
+    -------
+    k_ext, ssa, g : `~jax.numpy.ndarray`, shape (nlay, nwl)
+        Mass extinction in cm^2 per g of atmosphere, single-scattering albedo
+        and asymmetry parameter (zero in cloud-free layers).
+    """
+    q_c = state["q_c_lay"]
+    q_c = jnp.where(q_c > _QC_EPS, q_c, 0.0)
+    table = state["cloud_optics_table"]          # (3, nr, ns, nwl_tab)
+
+    lognormal = jnp.asarray(params.get("cloud_dist", 1)) == 2
+    sig = jnp.where(lognormal, jnp.asarray(params.get("cld_sigma", 1.0), dtype=table.dtype), 1.0)
+    log_r = _cloud_log10_r_g(state, params, sig).astype(table.dtype)   # () or (nlay,)
+
+    ir, wr = _bracket(state["cloud_optics_log10_r_g"], log_r)
+    js, ws = _bracket(state["cloud_optics_sigma_g"], sig)
+    wr = wr[..., None]
+    # Gathers give (3, nwl_tab) for a scalar radius, (3, nlay, nwl_tab) per layer.
+    tab = ((1.0 - wr) * ((1.0 - ws) * table[:, ir, js] + ws * table[:, ir, js + 1])
+           + wr * ((1.0 - ws) * table[:, ir + 1, js] + ws * table[:, ir + 1, js + 1]))
+
+    idx = state["cloud_optics_wl_idx"]
+    w = state["cloud_optics_wl_w"]
+    vals = (1.0 - w) * tab[..., idx] + w * tab[..., idx + 1]      # (3, nwl) or (3, nlay, nwl)
+
+    ext_per_mass = 10.0 ** vals[0] / params["cld_rho"]           # cm^2 per g condensate
+    ssa_wl = jnp.clip(10.0 ** (vals[1] - vals[0]), 0.0, 1.0)
+    g_wl = vals[2]
+
+    has_cloud = (q_c > 0.0)[:, None]
+    k_ext = q_c[:, None] * ext_per_mass
+    ssa = jnp.where(has_cloud, ssa_wl, 0.0)
+    g = jnp.where(has_cloud, g_wl, 0.0)
+    return k_ext, ssa, g
 
 
 def zero_cloud_opacity(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
@@ -618,8 +748,8 @@ def grey_const_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarra
 
 
 def grey_profile_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray]) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    """Compute grey cloud opacity masked by the vertical cloud profile.
-    
+    """Grey cloud: constant mass opacity, ssa and g inside the vertical cloud profile.
+
     Parameters
     ----------
     state : dict[str, `~jax.numpy.ndarray`]
@@ -629,38 +759,42 @@ def grey_profile_cloud(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndar
             Number of atmospheric layers.
         - ``nwl`` : int
             Number of wavelength points.
-        - ``q_c_lay`` : `~jax.numpy.ndarray`, shape (nlay,)
-            Cloud mass mixing ratio per layer from the selected ``vert_cloud``
-            kernel. Layers with values greater than zero receive grey opacity.
+        - ``cloud_cover_lay`` : `~jax.numpy.ndarray`, shape (nlay,)
+            Fraction of each layer inside the cloud from the ``vert_cloud``
+            kernel (fractional at the cloud edges, so they move smoothly).
+            Kernels without a cover fall back to ``q_c_lay > 0``.
 
     params : dict[str, `~jax.numpy.ndarray`]
         Parameter dictionary containing:
 
         - ``log_10_k_cld_grey`` : float
-            Log10 grey cloud extinction coefficient in cm² g⁻¹.
+            Log10 grey cloud extinction coefficient in cm² per g of atmosphere.
+        - ``cld_ssa`` : float, optional
+            Single-scattering albedo, constant with wavelength (default 0:
+            pure absorption).
+        - ``cld_g`` : float, optional
+            Asymmetry parameter, constant with wavelength (default 0).
 
     Returns
     -------
     k_cld : `~jax.numpy.ndarray`, shape (nlay, nwl)
         Grey cloud extinction coefficient in cm² g⁻¹: ``10**log_10_k_cld_grey``
-        times the fraction of the layer inside the cloud (``cloud_cover_lay``),
-        or where ``q_c_lay > 0`` when no cover is available.
+        times the fraction of the layer inside the cloud.
     ssa : `~jax.numpy.ndarray`, shape (nlay, nwl)
-        Single-scattering albedo (zeros; pure absorption).
+        ``cld_ssa`` inside the cloud, 0 outside.
     g : `~jax.numpy.ndarray`, shape (nlay, nwl)
-        Asymmetry parameter (zeros).
+        ``cld_g`` inside the cloud, 0 outside.
     """
     shape = (state["nlay"], state["nwl"])
     opacity_value = 10.0**params["log_10_k_cld_grey"]
-    # Fraction of each layer inside the cloud (fractional at slab/base edges, so the
-    # edges move smoothly); kernels without a cover fall back to q_c_lay > 0.
     cover = state.get("cloud_cover_lay")
     if cover is None:
         cover = (state["q_c_lay"] > 0.0).astype(jnp.float64)
 
     k_cld = cover[:, None] * opacity_value + jnp.zeros(shape)
-    ssa = jnp.zeros(shape)
-    g = jnp.zeros(shape)
+    inside = (cover > 0.0)[:, None]
+    ssa = jnp.where(inside, params.get("cld_ssa", 0.0), 0.0) + jnp.zeros(shape)
+    g = jnp.where(inside, params.get("cld_g", 0.0), 0.0) + jnp.zeros(shape)
     return k_cld, ssa, g
 
 

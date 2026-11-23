@@ -634,7 +634,7 @@ def file_cloud_opacity_kernel(state, params):
         t = jnp.zeros_like(logp)
         nxt = i
     else:
-        i = jnp.clip(jnp.searchsorted(logp_tab, logp) - 1, 0, n - 2)
+        i = jnp.clip(jnp.searchsorted(logp_tab, logp, method="compare_all") - 1, 0, n - 2)
         t = jnp.clip((logp - logp_tab[i]) / (logp_tab[i + 1] - logp_tab[i]), 0.0, 1.0)
         nxt = i + 1
 

@@ -134,6 +134,7 @@ experiments/**/trace*.png
 
 experiments/HD209_Barstow_2020_trans_setup_test/*
 experiments/ringberg*/
+RINGBERG_EXPERIMENTS.md
 
 experiments/**/run_exo_skryer.sh
 experiments/**/ES.err
@@ -216,3 +217,4 @@ exo_skryer/version.py
 # =============================================================================
 plans/
 experiments/_tmp_*/
+experiments/platon_drag_race/

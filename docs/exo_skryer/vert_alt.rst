@@ -36,6 +36,20 @@ Reference pressure is assumed to be at the highest pressure of the atmosphere.
 
    g(z) = g_{\rm ref} \left(\frac{R_{\rm ref}}{R_{\rm ref} + z}\right)^{2}
 
+With constant temperature and mean molecular weight within each layer, hydrostatic
+balance integrates exactly in :math:`1/r` (with :math:`r = R_{\rm ref} + z`):
+
+.. math::
+
+   \frac{1}{r_{i+1}} = \frac{1}{r_i} - \frac{k_{\rm b} T_i}{\overline{\mu}_i \, {\rm amu} \, g_{\rm ref} R_{\rm ref}^{2}} \ln\left(\frac{p_i}{p_{i+1}}\right)
+
+so the whole profile is a single cumulative sum,
+:math:`1/r_j = 1/R_{\rm ref} - C_j` with :math:`C_j` the running sum of the per-layer
+terms (no layer-by-layer loop). Altitudes and layer thicknesses are formed as
+:math:`z_j = R_{\rm ref} C_j / (1/r_j)` and
+:math:`\Delta z_i = (C_{i+1} - C_i) / \left[(1/r_i)(1/r_{i+1})\right]`, which avoids
+subtracting nearly equal radii and keeps them accurate to machine precision.
+
 **Example YAML Configuration:**
 
 .. code-block:: yaml
@@ -53,6 +67,13 @@ Hypsometric - Variable Gravity with Reference Pressure
 
 Uses hypsometic equation to calculate altitude with variable gravity throughout the atmosphere, from a reference gravity and radius.
 Reference pressure is given in the YAML parameters.
+
+The same per-layer :math:`1/r` solution as above is used, but anchored so that
+:math:`r = R_{\rm ref}` (:math:`z = 0`) at :math:`p_{\rm ref}`:
+:math:`1/r_j = 1/R_{\rm ref} - (C_j - C_{\rm ref})`, where :math:`C_{\rm ref}` adds the
+partial step from the level below :math:`p_{\rm ref}` using that layer's temperature
+and mean molecular weight. Levels at higher pressure than :math:`p_{\rm ref}` have
+negative altitude. :math:`p_{\rm ref}` is clipped to the pressure grid.
 
 **Example YAML Configuration:**
 

@@ -27,6 +27,21 @@ def t_interp_scheme(state) -> str:
     return T_INTERP_SCHEMES[int(state.get("opac_T_interp", 0))]
 
 
+def sum_present(components, keys):
+    """Running sum of ``components[k]`` over the keys present (not None).
+
+    Returns None when none are present. Replaces ``jnp.stack([... zeros ...]).sum(0)``,
+    which materialises an (ncomp, ...) copy and adds arrays of zeros.
+    """
+    present = [components[k] for k in keys if components.get(k) is not None]
+    if not present:
+        return None
+    total = present[0]
+    for arr in present[1:]:
+        total = total + arr
+    return total
+
+
 def safe_sqrt(x: jnp.ndarray) -> jnp.ndarray:
     """
     Square root that returns 0 for x <= 0 with a finite (zero) gradient there.
@@ -156,7 +171,7 @@ def pchip_1d(x: jnp.ndarray,
 
     m_nodes = _pchip_slopes(x_nodes, y_nodes)  # (N,)
 
-    idx = jnp.searchsorted(x_nodes, x_eval, side="right") - 1
+    idx = jnp.searchsorted(x_nodes, x_eval, side="right", method="compare_all") - 1
     nseg = x_nodes.shape[0] - 1
     idx = jnp.clip(idx, 0, nseg - 1)
 
@@ -227,7 +242,7 @@ def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
     """
     n = x_grid.shape[0]
     x_c = jnp.clip(x, x_grid[0], x_grid[-1])
-    i = jnp.clip(jnp.searchsorted(x_grid, x_c) - 1, 0, n - 2)
+    i = jnp.clip(jnp.searchsorted(x_grid, x_c, method="compare_all") - 1, 0, n - 2)
     x0 = x_grid[i]
     h0 = x_grid[i + 1] - x0
     # x_c is already inside [x0, x1], so t is in [0, 1]. No clip here: at t == 1
@@ -238,6 +253,9 @@ def interp_table_axis(x, x_grid, gather, scheme: str = "linear"):
     y1 = gather(i + 1)
 
     def _bcast(a):
+        # Weights take the table's dtype: bin search stays in the grid's precision,
+        # but a float32 table is interpolated in float32 (no per-element promotion).
+        a = jnp.asarray(a).astype(y0.dtype)
         return jnp.reshape(a, jnp.shape(a) + (1,) * (y0.ndim - jnp.ndim(a)))
 
     if scheme == "linear":

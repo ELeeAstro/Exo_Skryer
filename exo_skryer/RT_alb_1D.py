@@ -9,6 +9,8 @@ from typing import Dict, Mapping, Tuple
 
 import jax.numpy as jnp
 
+from .aux_functions import sum_present
+
 from . import build_opacities as XS
 
 __all__ = ["compute_albedo_spectrum_1d"]
@@ -45,11 +47,9 @@ def _sum_opacity_components_ck(
         ng = _get_ck_weights(state).shape[-1]
         line_opacity = jnp.zeros((nlay, nwl, ng))
 
-    zeros_2d = jnp.zeros((nlay, nwl), dtype=line_opacity.dtype)
-    component_keys_2d = ("rayleigh", "cia", "special", "cloud")
-    components_2d = jnp.stack([opacity_components.get(k, zeros_2d) for k in component_keys_2d], axis=0)
-    summed_2d = jnp.sum(components_2d, axis=0)
-
+    summed_2d = sum_present(opacity_components, ("rayleigh", "cia", "special", "cloud"))
+    if summed_2d is None:
+        return line_opacity
     return line_opacity + summed_2d[:, :, None]
 
 
@@ -69,9 +69,7 @@ def _sum_opacity_components_os(
     if first is None:
         return jnp.zeros((nlay, nwl))
 
-    zeros = jnp.zeros_like(first)
-    stacked = jnp.stack([opacity_components.get(k, zeros) for k in component_keys], axis=0)
-    return jnp.sum(stacked, axis=0)
+    return sum_present(opacity_components, component_keys)
 
 
 def compute_albedo_spectrum_1d(

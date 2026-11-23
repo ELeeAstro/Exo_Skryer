@@ -24,6 +24,7 @@ from .opacity_ray import zero_ray_opacity
 from .opacity_cia import zero_cia_opacity
 from .opacity_special import zero_special_opacity
 from .opacity_cloud import zero_cloud_opacity
+from .registry_cloud import CLOUD_OPTICS_CACHE
 from .aux_functions import T_INTERP_SCHEMES
 from .vert_chem import constant_vmr, constant_vmr_clr
 from .vert_mu import build_compute_mu, constant_mu
@@ -503,7 +504,7 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
             state["cloud_nk_k"] = opac["cloud_nk_k"]
         if kzz_file is not None:
             state["Kzz_lay"] = kzz_file
-        for key in profile_io.CLOUD_CACHE_KEYS:
+        for key in profile_io.CLOUD_CACHE_KEYS + CLOUD_OPTICS_CACHE:
             if key in opac:
                 state[key] = opac[key]
         if spec.ck_mix is not None:

@@ -59,9 +59,15 @@ def solve_toon89(
 
     Inputs are bottom-first, ``be_levels`` (nlev, nwl) and the rest (nlay, nwl).
     Returns the TOA upward flux ``olr`` (nwl,) and a bottom-first layer
-    contribution (nlay, nwl), zeros unless ``return_layer_contrib``. The lower
-    boundary is the bottom-level Planck intensity, so ``be_internal`` is unused
-    (as in Exo-FMS).
+    contribution (nlay, nwl), zeros unless ``return_layer_contrib``.
+
+    Lower boundary: a reflecting surface emitting the internal flux,
+    ``F_up = F_down + pi * B_int``, so the bottom net flux equals ``F_int`` for the
+    given ``T_int`` (as in ``eaa`` and ``dda``). This replaces Exo-FMS's black
+    surface at the bottom-level temperature, which ignored ``be_internal``. The
+    upward source-function sweep starts from the matching isotropic intensity
+    ``F_down(bottom) / pi + B_int``; ``F_down(bottom)`` comes from the two-stream
+    solution, so no extra sweep is needed.
     """
     nlay = dtau_layers.shape[0]
     be = jnp.asarray(be_levels)[::-1]
@@ -96,7 +102,7 @@ def solve_toon89(
 
     tautop = dtau[0] * jnp.exp(-1.0)
     Btop = (1.0 - jnp.exp(-tautop / ubari)) * be[0]
-    Bsurf = be[-1]
+    B_int = jnp.broadcast_to(jnp.asarray(be_internal, dtype=dtype), be[0].shape)
 
     exptrm = jnp.minimum(lam * dtau, 35.0)
     Ep = jnp.exp(exptrm)
@@ -106,7 +112,9 @@ def solve_toon89(
     E3 = gam * Ep + Em
     E4 = gam * Ep - Em
 
-    # Tridiagonal system (a_surf = 0); rows interleave even/odd layer interfaces
+    # Tridiagonal system; rows interleave even/odd layer interfaces. Last row is the
+    # lower boundary with surface reflectivity 1 and emission B_int (Toon et al. 1989,
+    # A = e1 - R e3, B = e2 - R e4, D = S - C+ + R C-):  F_up = F_down + B_int (flux/pi units)
     gm1, gp1 = gam[1:] - 1.0, gam[1:] + 1.0
     A_e = (E1[:-1] + E3[:-1]) * gm1
     B_e = (E2[:-1] + E4[:-1]) * gm1
@@ -122,12 +130,14 @@ def solve_toon89(
         return jnp.concatenate([first[None], mid, last[None]], axis=0)
 
     zero = jnp.zeros_like(be[0])
-    Af = rows(zero, A_e, A_o, E1[-1])
-    Bf = rows(gam[0] + 1.0, B_e, B_o, E2[-1])
+    Af = rows(zero, A_e, A_o, E1[-1] - E3[-1])
+    Bf = rows(gam[0] + 1.0, B_e, B_o, E2[-1] - E4[-1])
     Cf = rows(gam[0] - 1.0, C_e, C_o, zero)
-    Df = rows(Btop - Cmm1[0], D_e, D_o, Bsurf - Cp[-1])
+    Df = rows(Btop - Cmm1[0], D_e, D_o, B_int - Cp[-1] + Cm[-1])
 
     xkk = _dtridgl(Af, Bf, Cf, Df)
+    # Two-stream downward flux (flux/pi units) at the bottom of the lowest layer
+    F_down_bot = xkk[-2] * E3[-1] + xkk[-1] * E4[-1] + Cm[-1]
     xk1 = xkk[0::2] + xkk[1::2]
     xk2 = xkk[0::2] - xkk[1::2]
     xk2 = jnp.where(jnp.abs(xk2) < 1.0e-30 * jnp.abs(xkk[0::2]), 0.0, xk2)
@@ -157,7 +167,8 @@ def solve_toon89(
     lp, lm = c(lam) * mu + 1.0, _safe(c(lam) * mu - 1.0)
     src_up = ((c(g) / lm) * (c(Ep) * em2 - 1.0) + (c(h) / lp) * (1.0 - c(Em) * em2)
               + c(alpha1) * (1.0 - em2) + c(alpha2) * (mu - (c(dtau) + mu) * em2))
-    I_bot = twopi * (Bsurf + B1[-1] * mu[0])
+    # Isotropic upward intensity leaving the reflecting, internally heated lower boundary
+    I_bot = twopi * jnp.broadcast_to(F_down_bot + B_int, src_up[0].shape)
     olr = wuarr @ _sweep(I_bot, em2, src_up, reverse=True)
 
     if return_layer_contrib:

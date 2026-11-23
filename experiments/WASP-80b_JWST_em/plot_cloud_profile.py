@@ -12,7 +12,7 @@ Overview:
 
     Supports multiple cloud profile types from vert_cloud.py:
     - slab_profile: Uniform slab between P_top and P_bot
-    - exponential_decay_profile: Exponential decay with hard base cutoff
+    - f_sed (formerly exponential_decay_profile): power law in P with hard base cutoff
     - const_profile: Constant q_c throughout atmosphere
 
 Usage:
@@ -145,17 +145,17 @@ def _compute_slab_profiles(
 
 def _compute_exponential_profiles(
     log10_q_c: np.ndarray,
-    log10_alpha_cld: np.ndarray,
+    log10_f_sed: np.ndarray,
     log10_p_base: np.ndarray,
     p_lay: np.ndarray,
 ) -> np.ndarray:
-    """Compute exponential decay profiles matching vert_cloud.exponential_decay_profile.
+    """Compute f_sed profiles matching vert_cloud.f_sed_profile (formerly exponential_decay_profile).
 
     Parameters
     ----------
     log10_q_c : (n_draw,)
         Log10 cloud mass mixing ratio at base pressure.
-    log10_alpha_cld : (n_draw,)
+    log10_f_sed : (n_draw,)
         Log10 pressure power-law exponent.
     log10_p_base : (n_draw,)
         Log10 base pressure in bar.
@@ -168,7 +168,7 @@ def _compute_exponential_profiles(
         Cloud mass mixing ratio profiles.
     """
     q_c_0 = np.power(10.0, log10_q_c)  # (n_draw,)
-    alpha = np.power(10.0, log10_alpha_cld)  # (n_draw,)
+    alpha = np.power(10.0, log10_f_sed)  # (n_draw,)
     p_base = np.power(10.0, log10_p_base) * bar  # (n_draw,)
 
     p_lay_2d = p_lay[None, :]  # (1, nlay)
@@ -227,7 +227,7 @@ def main() -> None:
     nlay = int(physics_cfg.get("nlay", 99))
 
     # Get cloud profile type from config
-    vert_cloud = physics_cfg.get("vert_cloud", "exponential_decay_profile")
+    vert_cloud = physics_cfg.get("vert_cloud", "f_sed")
     print(f"[plot_cloud_profile] Using vert_cloud model: {vert_cloud}")
 
     p_bot_bar = params_lookup.get("p_bot")
@@ -251,17 +251,20 @@ def main() -> None:
 
         q_profiles = _compute_slab_profiles(log10_q_c, log10_p_top_slab, log10_dp_slab, p_lay)
 
-    elif vert_cloud == "exponential_decay_profile":
-        required = ["log_10_q_c", "log_10_alpha_cld", "log_10_p_base"]
+    elif vert_cloud in ("f_sed", "f_sed_profile", "exponential_decay_profile", "exponential", "exp_decay"):
+        # f_sed (formerly exponential_decay_profile): q_c0 (P/P_base)^f_sed above the base.
+        # Posteriors from before the rename store the exponent as log_10_alpha_cld.
+        exp_name = "log_10_f_sed" if "log_10_f_sed" in posterior else "log_10_alpha_cld"
+        required = ["log_10_q_c", exp_name, "log_10_p_base"]
         missing = [name for name in required if name not in posterior]
         if missing:
-            raise KeyError(f"Posterior variables missing for exponential_decay_profile: {', '.join(missing)}")
+            raise KeyError(f"Posterior variables missing for f_sed: {', '.join(missing)}")
 
         log10_q_c = _flatten_samples(posterior["log_10_q_c"].values)
-        log10_alpha_cld = _flatten_samples(posterior["log_10_alpha_cld"].values)
+        log10_f_sed = _flatten_samples(posterior[exp_name].values)
         log10_p_base = _flatten_samples(posterior["log_10_p_base"].values)
 
-        q_profiles = _compute_exponential_profiles(log10_q_c, log10_alpha_cld, log10_p_base, p_lay)
+        q_profiles = _compute_exponential_profiles(log10_q_c, log10_f_sed, log10_p_base, p_lay)
 
     elif vert_cloud == "const_profile":
         required = ["log_10_q_c"]

@@ -13,7 +13,7 @@ physics:
   vert_alt: p_ref
   vert_chem: constant_vmr
   vert_mu: dynamic
-  vert_cloud: exponential_decay_profile
+  vert_cloud: f_sed
 
   opac_line: ck
   opac_ray: ck
@@ -78,7 +78,7 @@ params:
   - { name: log_10_q_c,        dist: delta, value: -6.0, transform: identity, init: -6.0 }
   - { name: log_10_p_base,     dist: delta, value: 0.0,  transform: identity, init: 0.0 }
   - { name: log_10_cld_r,      dist: delta, value: -1.0, transform: identity, init: -1.0 }
-  - { name: log_10_alpha_cld,  dist: delta, value: 0.0,  transform: identity, init: 0.0 }
+  - { name: log_10_f_sed,  dist: delta, value: 0.0,  transform: identity, init: 0.0 }
   - { name: cld_rho,           dist: delta, value: 1.0,  transform: identity, init: 1.0 }
   - { name: cld_Q0,            dist: delta, value: 20.0, transform: identity, init: 20.0 }
   - { name: cld_Q1,            dist: delta, value: 1.0,  transform: identity, init: 1.0 }

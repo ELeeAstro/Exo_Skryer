@@ -441,7 +441,7 @@ def build_atmospheric_state(cfg, params, wl):
     from exo_skryer.vert_Tp import isothermal, Milne, Guillot, Barstow, MandS, picket_fence, Modified_Milne
     from exo_skryer.vert_chem import constant_vmr, constant_vmr_clr, CE_fastchem_jax, CE_rate_jax, quench_approx
     from exo_skryer.vert_mu import constant_mu, compute_mu
-    from exo_skryer.vert_cloud import no_cloud, exponential_decay_profile, slab_profile, const_profile
+    from exo_skryer.vert_cloud import no_cloud, f_sed_profile, slab_profile, const_profile
     from exo_skryer.build_chem import prepare_chemistry_kernel
 
     phys = cfg.physics
@@ -490,8 +490,7 @@ def build_atmospheric_state(cfg, params, wl):
     vert_cloud_name = str(getattr(phys, "vert_cloud", "none")).lower()
     cloud_kernels = {
         "none": no_cloud, "off": no_cloud, "no_cloud": no_cloud,
-        "exponential": exponential_decay_profile, "exp_decay": exponential_decay_profile,
-        "exponential_decay": exponential_decay_profile,
+        "f_sed": f_sed_profile, "f_sed_profile": f_sed_profile,
         "slab": slab_profile, "slab_profile": slab_profile,
         "const": const_profile, "constant": const_profile, "const_profile": const_profile,
     }

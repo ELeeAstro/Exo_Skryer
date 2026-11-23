@@ -146,11 +146,9 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         normalization = pair_weight * weights_nd2_over_rho  # (nlay,)
         return acc + normalization[:, None] * sigma_val
 
-    out = lax.fori_loop(
-        0,
-        sigma_cube.shape[0],
-        _accumulate_one,
-        out,
-    )
+    # Unrolled at trace time (pair count is static); the barrier keeps pairs
+    # sequential so only one (nlay, nwl) term is live at a time (see opacity_line).
+    for i in range(sigma_cube.shape[0]):
+        out = lax.optimization_barrier(_accumulate_one(i, out))
 
     return out

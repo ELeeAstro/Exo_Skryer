@@ -139,10 +139,11 @@ VERT_MU_OPTIONS = ["dynamic", "constant", "auto"]
 # Cloud vertical distribution profiles
 # See: kernel_registry.VERT_CLOUD
 # - None: No clouds
-# - exponential_decay_profile: Exponential decay from cloud base
+# - f_sed: Power law (exponent f_sed) above a cloud base (formerly exponential_decay_profile)
+# - f_sed_beta: f_sed with an exponential drop-off above the base and a steep tail below
 # - slab_profile: Cloud slab between two pressure levels
 # - const_profile: Constant cloud throughout atmosphere
-VERT_CLOUD_OPTIONS = ["None", "exponential", "slab", "constant"]
+VERT_CLOUD_OPTIONS = ["None", "f_sed", "f_sed_beta", "slab", "constant"]
 
 # Line opacity calculation methods
 # See: kernel_registry.py opac_line entries
@@ -206,6 +207,13 @@ EMISSION_MODES = ["planet", "brown_dwarf"]
 # - PRAS: Pre-sorted sampling of the k-distributions (slower than RORR)
 # - TRANS: Transmission-optimized method (transit schemes only)
 CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
+# TRANS has no emission solver, so it is not offered for rt_scheme: emission_1d
+CK_MIX_OPTIONS_EMISSION = ["RORR", "PRAS"]
+
+
+def _ck_mix_options(rt_scheme) -> list:
+    """CK mixing rules valid for the given RT scheme (TRANS is transit-only)."""
+    return CK_MIX_OPTIONS_EMISSION if rt_scheme == "emission_1d" else CK_MIX_OPTIONS
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space
@@ -384,10 +392,36 @@ def _param_name_for_rt(base_name: str) -> str:
     return name
 
 
+def _add_cloud_profile_params(add):
+    """Add the parameters of the selected vertical cloud profile via ``add(name, dist, **kw)``.
+
+    With no profile selected the f_sed parameters are added (the former default).
+    """
+    profile = st.session_state.get("vert_cloud", "None")
+    add("log_10_q_c", "uniform", low=-12, high=0, transform="logit", init=0)
+    if profile == "constant":
+        return
+    if profile == "slab":
+        add("log_10_p_top_slab", "uniform", low=-6, high=2, transform="logit", init=-2)
+        add("log_10_dp_slab",    "uniform", low=-2, high=2, transform="logit", init=0.5)
+        return
+    add("log_10_p_base", "uniform", low=-8, high=3, transform="logit", init=0)
+    if profile == "f_sed_beta":
+        add("log_10_alpha_top", "uniform", low=-2, high=1, transform="logit", init=0.3)
+        add("log_10_beta_0",    "uniform", low=-2, high=2, transform="logit", init=0)
+    else:
+        add("log_10_f_sed", "uniform", low=-2, high=2, transform="logit", init=0)
+
+
 def _none_if_disabled(value):
     if value in (None, "None", "none", "off", "false", "0", ""):
         return None
     return value
+
+
+def _none_string_if_disabled(value):
+    """Like _none_if_disabled, but keeps the key in the YAML as the string "None"."""
+    return "None" if _none_if_disabled(value) is None else value
 
 
 def build_config() -> dict:
@@ -430,14 +464,15 @@ def build_config() -> dict:
         'vert_alt': st.session_state.get('vert_alt', 'p_ref'),
         'vert_chem': st.session_state.get('vert_chem', 'constant_vmr'),
         'vert_mu': st.session_state.get('vert_mu', 'dynamic'),
-        # Cloud profile (convert string "None" to actual None for YAML)
-        'vert_cloud': _none_if_disabled(st.session_state.get('vert_cloud', 'None')),
-        'opac_line': _none_if_disabled(st.session_state.get('opac_line', 'ck')),
-        # These opacity sources can be disabled (None)
-        'opac_ray': _none_if_disabled(st.session_state.get('opac_ray', 'os')),
-        'opac_cia': _none_if_disabled(st.session_state.get('opac_cia', 'os')),
-        'opac_cloud': _none_if_disabled(st.session_state.get('opac_cloud', 'None')),
-        'opac_special': _none_if_disabled(st.session_state.get('opac_special', 'None')),
+        # Cloud profile and opacity sources are written explicitly, with the string
+        # "None" when disabled: Exo Skryer requires opac_line/ray/cia/cloud to be set,
+        # and a missing opac_special defaults to "on" (H- enabled).
+        'vert_cloud': _none_string_if_disabled(st.session_state.get('vert_cloud', 'None')),
+        'opac_line': _none_string_if_disabled(st.session_state.get('opac_line', 'ck')),
+        'opac_ray': _none_string_if_disabled(st.session_state.get('opac_ray', 'os')),
+        'opac_cia': _none_string_if_disabled(st.session_state.get('opac_cia', 'os')),
+        'opac_cloud': _none_string_if_disabled(st.session_state.get('opac_cloud', 'None')),
+        'opac_special': _none_string_if_disabled(st.session_state.get('opac_special', 'None')),
         'cloud_dist': st.session_state.get('cloud_dist', 'mono'),
         'rt_scheme': st.session_state.get('rt_scheme', 'emission_1d'),
         # Emission-specific settings (only include if doing emission spectrum)
@@ -461,7 +496,12 @@ def build_config() -> dict:
     }
     # CK mixing rule only relevant if using correlated-k
     if st.session_state.get('use_ck'):
-        config['opac']['ck_mix'] = st.session_state.get('ck_mix', 'RORR')
+        ck_mix = st.session_state.get('ck_mix', 'RORR')
+        # Never write TRANS for emission (no emission solver for it), even if it was
+        # selected earlier while a transit scheme was active
+        if ck_mix not in _ck_mix_options(st.session_state.get('rt_scheme')):
+            ck_mix = 'RORR'
+        config['opac']['ck_mix'] = ck_mix
 
     # Line opacity species (the main absorbers like H2O, CO, etc.)
     # Use FlowStyleDict for compact single-line YAML output
@@ -940,7 +980,13 @@ def render_opac_section():
         st.checkbox("Use correlated-k tables", key="use_ck")
         # Only show CK mixing rule if CK is enabled
         if st.session_state.get('use_ck'):
-            st.selectbox("CK mixing rule", CK_MIX_OPTIONS, key="ck_mix")
+            ck_options = _ck_mix_options(st.session_state.get('rt_scheme'))
+            # A TRANS selection left over from a transit scheme is not valid for emission
+            if st.session_state.get('ck_mix') not in ck_options:
+                st.session_state['ck_mix'] = 'RORR'
+            st.selectbox("CK mixing rule", ck_options, key="ck_mix")
+            if st.session_state.get('rt_scheme') == "emission_1d":
+                st.caption("TRANS is transit-only and is not available for emission.")
 
     # -------------------------------------------------------------------------
     # LINE OPACITY SPECIES
@@ -1209,9 +1255,7 @@ def render_params_section():
                 param_name = _param_name_for_rt(name)
                 if param_name not in existing:
                     add_parameter(param_name, dist, **kw)
-            _add("log_10_q_c",        "uniform", low=-12, high=0,    transform="logit", init=0)
-            _add("log_10_p_base",     "uniform", low=-8,  high=3,    transform="logit", init=0)
-            _add("log_10_alpha_cld",  "uniform", low=-2,  high=2,    transform="logit", init=0)
+            _add_cloud_profile_params(_add)  # vertical profile params for the selected vert_cloud
             _add("log_10_cld_r",      "uniform", low=-3,  high=2,    transform="logit", init=0)
             _add("cld_rho",           "delta",   value=2.5, transform="identity")
             _add("cld_Q0",            "uniform", low=0.1,  high=65.0, transform="logit", init=1.0)
@@ -1244,9 +1288,7 @@ def render_params_section():
                     param_name = _param_name_for_rt(name)
                     if param_name not in existing:
                         add_parameter(param_name, dist, **kw)
-                _add("log_10_q_c",       "uniform", low=-12, high=0,   transform="logit", init=0)
-                _add("log_10_p_base",    "uniform", low=-8,  high=3,   transform="logit", init=0)
-                _add("log_10_alpha_cld", "uniform", low=-2,  high=2,   transform="logit", init=0)
+                _add_cloud_profile_params(_add)  # vertical profile params for the selected vert_cloud
                 _add("log_10_cld_r",     "uniform", low=-3,  high=2,   transform="logit", init=0)
                 _add("cld_rho",          "delta",   value=2.5, transform="identity")
                 wl_nodes = [7.0, 7.5, 8.0, 8.25, 8.5, 8.75, 9.0, 9.25, 9.5, 10.0, 10.5, 11.0, 11.5]

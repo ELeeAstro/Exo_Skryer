@@ -232,14 +232,16 @@ determines which retrieval parameters (in ``params``) you must provide.
   *Supported values*:
 
   * ``None`` / ``none`` / ``off`` / ``no_cloud``: no clouds
-  * ``exponential_decay_profile`` (aliases: ``exponential``, ``exp_decay``)
+  * ``f_sed`` (alias: ``f_sed_profile``): power law above a cloud base (formerly ``exponential_decay_profile``)
+  * ``f_sed_beta`` (alias: ``f_sed_beta_profile``): ``f_sed`` with an exponential drop-off above the base and a steep tail below
   * ``slab_profile`` (alias: ``slab``)
   * ``const_profile`` (aliases: ``const``, ``constant``)
   * ``file``: total condensate q_c from ``profile.cloud_file`` (see `profile`_)
 
   *Typical required parameters* (see :doc:`vert_cloud`):
 
-  * ``exponential_decay_profile``: ``log_10_q_c, log_10_alpha_cld, log_10_p_base``
+  * ``f_sed``: ``log_10_q_c, log_10_f_sed, log_10_p_base``
+  * ``f_sed_beta``: ``log_10_q_c, log_10_p_base, log_10_alpha_top, log_10_beta_0`` (optional ``alpha_bot``, default 20)
   * ``slab_profile``: ``log_10_q_c, log_10_p_top_slab, log_10_dp_slab``
   * ``const_profile``: ``log_10_q_c``
 
@@ -319,6 +321,22 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``toon89`` / ``toon89_picaso``: Toon et al. (1989) two-stream method.
   * ``dda`` / ``4dda``: four-stream discrete ordinates adding method. Most accurate
     for multiple scattering (e.g. Mie clouds), at roughly Toon89 cost.
+
+  *Lower boundary*: all three schemes treat the bottom of the grid (``p_bot``) as
+  a reflecting boundary that emits the internal flux, so the net upward flux there
+  equals :math:`F_{\rm int} = \pi B_\lambda(T_{\rm int})` for the given ``T_int``
+  (``eaa`` and ``dda``: :math:`I_{\uparrow} = I_{\downarrow} + B_{\rm int}` in each
+  stream; ``toon89``: :math:`F_{\uparrow} = F_{\downarrow} + \pi B_{\rm int}`). If
+  ``T_int`` is not a parameter, :math:`B_{\rm int} = 0`. Where the atmosphere is
+  optically thick above ``p_bot`` the boundary term does not reach the top of the
+  atmosphere, and ``T_int`` affects the spectrum only through the T-p profile; it
+  matters only where the column is still partly transparent at ``p_bot``. In that
+  case the model grid is too shallow: increase ``p_bot`` (1000 bar is typical).
+
+  .. note::
+     ``toon89`` previously used a black surface at the bottom-level temperature
+     and ignored ``T_int`` at the boundary (as in Exo-FMS). Spectra are unchanged
+     wherever the bottom is opaque.
 
 ``physics.contri_func``
   Boolean. If true, the forward model also computes a contribution function and
@@ -761,7 +779,18 @@ runtime
   can be useful on an APU because system memory is shared with the CPU.
 
 ``runtime.threads``
-  Only used when ``runtime.platform: cpu``; passed to NumPyro host device count.
+  Only used when ``runtime.platform: cpu``. Restricts the process to this many CPU
+  cores (CPU affinity, which also sizes XLA's thread pool). Processes sharing a
+  node under MPI/Slurm take consecutive blocks of cores by local rank. Affinity is
+  Linux-only: on macOS and Windows it cannot be enforced, a warning is printed and
+  JAX uses every core. ``jax_threads`` is a legacy alias.
 
 ``runtime.tf_gpu_allocator``
   Optional string. If set, exported as ``TF_GPU_ALLOCATOR`` when on GPU.
+
+.. note::
+   On CUDA, Exo Skryer appends ``--xla_gpu_graph_min_graph_size=2`` to
+   ``XLA_FLAGS`` (alongside its other XLA GPU flags), so short sequences of
+   kernels are captured into CUDA graphs and launched together. This reduces
+   kernel-launch overhead in the forward model. A value you have already set in
+   ``XLA_FLAGS`` is kept.

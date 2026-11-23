@@ -9,6 +9,8 @@ from typing import Dict, Mapping, Tuple
 
 import jax.numpy as jnp
 
+from .aux_functions import sum_present
+
 from .data_constants import kb, h, c_light, pc
 from .RT_em_schemes import solve_alpha_eaa
 
@@ -30,9 +32,7 @@ def _sum_opacity_components_os(
     if first is None:
         return jnp.zeros((nlay, nwl))
 
-    zeros = jnp.zeros_like(first)
-    stacked = jnp.stack([opacity_components.get(k, zeros) for k in component_keys], axis=0)
-    return jnp.sum(stacked, axis=0)
+    return sum_present(opacity_components, component_keys)
 
 
 def _planck_lambda(wavelength_cm: jnp.ndarray, temperature: jnp.ndarray) -> jnp.ndarray:

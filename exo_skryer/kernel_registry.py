@@ -67,7 +67,8 @@ from .vert_chem import (
 from .vert_mu import constant_mu, compute_mu
 from .vert_cloud import (
     no_cloud,
-    exponential_decay_profile,
+    f_sed_profile,
+    f_sed_beta_profile,
     slab_profile,
     const_profile,
 )
@@ -84,7 +85,9 @@ from .opacity_cloud import (
     direct_nk,
     nk_f18_blend,
     f18_skew_cloud,
+    optics_grid_cloud,
 )
+from .registry_cloud import CLOUD_OPTICS_CACHE
 from .RT_trans_1D_os import compute_transit_depth_1d_os
 from .RT_trans_1D_ck import compute_transit_depth_1d_ck
 from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
@@ -292,8 +295,8 @@ register("vert_mu", "constant", _mu_constant, aliases=("fixed",))
 register("vert_mu", "dynamic", _mu_dynamic, aliases=("variable", "vmr"))
 
 register("vert_cloud", "none", no_cloud, aliases=("off", "no_cloud"))
-register("vert_cloud", "exponential", exponential_decay_profile,
-         aliases=("exp_decay", "exponential_decay", "exponential_decay_profile"))
+register("vert_cloud", "f_sed", f_sed_profile, aliases=("f_sed_profile",))
+register("vert_cloud", "f_sed_beta", f_sed_beta_profile, aliases=("f_sed_beta_profile",))
 register("vert_cloud", "slab", slab_profile, aliases=("slab_profile",))
 register("vert_cloud", "constant", const_profile, aliases=("const", "const_profile"))
 
@@ -329,6 +332,8 @@ register("opac_cloud", "lxmie", _lxmie, cache=CLOUD_NK_CACHE, aliases=("mie_full
 register("opac_cloud", "direct_nk", direct_nk, aliases=("nk",))
 register("opac_cloud", "nk_f18_blend", nk_f18_blend, aliases=("nk_f18",))
 register("opac_cloud", "f18_skew", f18_skew_cloud, aliases=("f18_skewnormal",))
+register("opac_cloud", "optics_grid", optics_grid_cloud, cache=CLOUD_OPTICS_CACHE,
+         aliases=("optics_table", "lxmie_grid"))
 
 
 # ---------------------------------------------------------------------------

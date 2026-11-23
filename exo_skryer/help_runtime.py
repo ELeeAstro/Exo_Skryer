@@ -126,6 +126,11 @@ def apply_runtime_env(rc):
             "--xla_gpu_enable_highest_priority_async_stream=true "
             "--xla_gpu_deterministic_ops=true",
         )
+        # Capture short kernel sequences into CUDA graphs (XLA's default threshold is
+        # conservative), cutting launch overhead from the forward model's small kernels
+        # and sequential RT/altitude/search loops. Added only if the user has not set it.
+        if "--xla_gpu_graph_min_graph_size" not in os.environ.get("XLA_FLAGS", ""):
+            _append_env_flags("XLA_FLAGS", "--xla_gpu_graph_min_graph_size=2")
     elif platform == "rocm":
         visible = getattr(rt, "rocm_visible_devices", None)
         if visible is not None and str(visible) != "":

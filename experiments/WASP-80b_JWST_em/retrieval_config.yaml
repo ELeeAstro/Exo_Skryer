@@ -14,7 +14,7 @@ physics:
   vert_alt: p_ref
   vert_chem: constant_vmr_clr
   vert_mu: dynamic
-  vert_cloud: None #exponential_decay_profile
+  vert_cloud: None #f_sed
 
   opac_line: os
   opac_ray: None

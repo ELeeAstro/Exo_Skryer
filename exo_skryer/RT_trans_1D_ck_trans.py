@@ -21,7 +21,7 @@ from typing import Dict, Mapping, Tuple
 import jax.numpy as jnp
 from jax import lax
 
-from .aux_functions import safe_sqrt
+from .aux_functions import safe_sqrt, sum_present
 from .refraction import maybe_refraction_cutoff_mask
 from .RT_trans_1D_os import _get_base_transit_radius
 
@@ -86,11 +86,10 @@ def _sum_opacity_components_2d(
     """
     nlay = state["rho_lay"].shape[0]
     nwl = state["wl"].shape[0] if "wl" in state else int(state["nwl"])
-    zeros_2d = jnp.zeros((nlay, nwl), dtype=state["rho_lay"].dtype)
-
-    component_keys = ("rayleigh", "cia", "special", "cloud")
-    components = jnp.stack([opacity_components.get(k, zeros_2d) for k in component_keys], axis=0)
-    return jnp.sum(components, axis=0)
+    total = sum_present(opacity_components, ("rayleigh", "cia", "special", "cloud"))
+    if total is None:
+        return jnp.zeros((nlay, nwl), dtype=state["rho_lay"].dtype)
+    return total
 
 
 def _integrate_g_points_trans(
@@ -155,10 +154,11 @@ def _integrate_g_points_trans(
     # Important: when nspec==0 (e.g. continuum-only diagnostics), tracing a fori_loop
     # would still stage `_body` and attempt `sigma_perspecies[0]`, which is invalid
     # for a zero-length leading dimension.
-    if nspec == 0:
-        T_prod = T_prod0
-    else:
-        T_prod = lax.fori_loop(0, nspec, _body, T_prod0)  # (nlay, nwl)
+    # Unrolled over species (static count, so static slices); the barrier keeps
+    # species sequential so only one (nlay, nwl, ng) tau array is live at a time.
+    T_prod = T_prod0
+    for spec_idx in range(nspec):
+        T_prod = lax.optimization_barrier(_body(spec_idx, T_prod))  # (nlay, nwl)
 
     T_total = jnp.exp(-jnp.clip(tau_path_cont, 0.0, 300.0)) * T_prod  # (nlay, nwl)
     if refraction_mask is not None:

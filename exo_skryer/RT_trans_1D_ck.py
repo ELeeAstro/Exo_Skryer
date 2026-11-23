@@ -9,7 +9,7 @@ from typing import Dict, Mapping, Tuple
 
 import jax.numpy as jnp
 
-from .aux_functions import safe_sqrt
+from .aux_functions import safe_sqrt, sum_present
 from .refraction import maybe_refraction_cutoff_mask, refraction_extra_tau
 from .RT_trans_1D_os import _get_base_transit_radius
 
@@ -44,11 +44,9 @@ def _sum_opacity_components_ck(
         ng = g_weights.shape[-1]
         line_opacity = jnp.zeros((nlay, nwl, ng))
 
-    zeros_2d = jnp.zeros((nlay, nwl), dtype=line_opacity.dtype)
-    component_keys_2d = ("rayleigh", "cia", "special", "cloud")
-    components_2d = jnp.stack([opacity_components.get(k, zeros_2d) for k in component_keys_2d], axis=0)
-    summed_2d = jnp.sum(components_2d, axis=0)
-
+    summed_2d = sum_present(opacity_components, ("rayleigh", "cia", "special", "cloud"))
+    if summed_2d is None:
+        return line_opacity
     return line_opacity + summed_2d[:, :, None]
 
 

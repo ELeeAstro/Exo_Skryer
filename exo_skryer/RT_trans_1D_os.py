@@ -9,7 +9,7 @@ from typing import Dict, Mapping, Tuple
 
 import jax.numpy as jnp
 
-from .aux_functions import safe_sqrt
+from .aux_functions import safe_sqrt, sum_present
 from .refraction import maybe_refraction_cutoff_mask, refraction_extra_tau
 
 __all__ = ["compute_transit_depth_1d_os"]
@@ -31,9 +31,7 @@ def _sum_opacity_components_os(
     if first is None:
         return jnp.zeros((nlay, nwl))
 
-    zeros = jnp.zeros_like(first)
-    stacked = jnp.stack([opacity_components.get(k, zeros) for k in component_keys], axis=0)
-    return jnp.sum(stacked, axis=0)
+    return sum_present(opacity_components, component_keys)
 
 
 def _build_transit_geometry(state: Dict[str, jnp.ndarray]) -> tuple[jnp.ndarray, jnp.ndarray]:
