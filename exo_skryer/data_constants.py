@@ -42,7 +42,7 @@ CHEM_SPECIES_DATA = [
     {"id": "_CO2", "symbol": "CO2", "fastchem_symbol": "C1O2", "molecular_weight": 44.01},
     {"id": "_CO", "symbol": "CO", "fastchem_symbol": "C1O1", "molecular_weight": 28.0101},
     {"id": "_CH4", "symbol": "CH4", "fastchem_symbol": "C1H4", "molecular_weight": 16.04246},
-    {"id": "_HCN", "symbol": "HCN", "fastchem_symbol": "C1H1N1_1", "molecular_weight": 27.0253},
+    {"id": "_HCN", "symbol": "HCN", "fastchem_symbol": "C1H1N1_hcn", "molecular_weight": 27.0253},
     {"id": "_NH3", "symbol": "NH3", "fastchem_symbol": "H3N1", "molecular_weight": 17.03052},
     {"id": "_C2H2", "symbol": "C2H2", "fastchem_symbol": "C2H2", "molecular_weight": 26.04},
     {"id": "_C2H4", "symbol": "C2H4", "fastchem_symbol": "C2H4", "molecular_weight": 28.05316},

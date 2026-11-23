@@ -133,6 +133,7 @@ experiments/**/trace*.png
 
 
 experiments/HD209_Barstow_2020_trans_setup_test/*
+experiments/ringberg*/
 
 experiments/**/run_exo_skryer.sh
 experiments/**/ES.err

@@ -134,14 +134,16 @@ def modify_abundances(input_file, output_file, M_H, C_O_ratio):
 
     return output_file
 
-# Load T and p grid from opacity data to ensure exact matching.
-# Update this path if you want FastChem to follow a different opacity reference file.
-opacity_grid_file = '../opac_data/ck/H2O_ck_R1000.zarr.zip'
-T, p = load_tp_grid_from_opacity(opacity_grid_file)
+# T-p grid: 30 x 30 log-spaced points (T rounded to 10 K, p to 2 significant figures),
+# matching the grid shipped as fastchem_grid_5d_log10.npz.
+T = np.round(np.logspace(2, np.log10(6000), 30), -1)   # 100 - 6000 K
+p = round_in_log(np.logspace(-8, 3, 30))                # 1e-8 - 1e3 bar
+# Alternatively, copy the T-p grid from an opacity table:
+# T, p = load_tp_grid_from_opacity('../opac_data/ck/H2O_ck_R1000.zarr.zip')
 
 # Setup M/H and C/O grid
-log_M_H = np.linspace(-2, 3, 20)  # [M/H] from -2 to +3 dex
-log_C_O = np.linspace(-1, 1, 10)  # log(C/O) from -1 to +1 dex
+log_M_H = np.linspace(-2, 3, 15)    # [M/H] from -2 to +3 dex
+log_C_O = np.linspace(-1, 0.3, 15)  # log(C/O) from -1 to +0.3 dex
 M_H_grid = log_M_H  # These are already in log space
 C_O_grid = 10.0**log_C_O  # Convert to linear C/O ratio
 
@@ -163,10 +165,10 @@ os.makedirs(temp_dir, exist_ok=True)
 plot_species = ['H2O1', 'C1O2', 'C1O1', 'C1H4', 'H3N1']
 plot_species_labels = ['H2O', 'CO2', 'CO', 'CH4', 'NH3']
 
-# Base abundance file
-base_abundance_file = '/Users/elspeth/fastchem/input/element_abundances/asplund_2020.dat'
-logK_file = '/Users/elspeth/fastchem/input/logK/logK.dat'
-input_file = '/Users/elspeth/fastchem/input/logK/parameters_py.dat'
+# FastChem input data (from a FastChem checkout; override with FASTCHEM_INPUT_DIR)
+fastchem_input_dir = os.path.expanduser(os.environ.get('FASTCHEM_INPUT_DIR', '~/FastChem/input'))
+base_abundance_file = os.path.join(fastchem_input_dir, 'element_abundances', 'asplund_2021.dat')
+logK_file = os.path.join(fastchem_input_dir, 'logK', 'logK.dat')
 
 # Get grid dimensions
 n_T = len(T)
