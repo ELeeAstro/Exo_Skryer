@@ -464,6 +464,15 @@ def run_nested_pymultinest(
     samples = posterior[:, :ndim]  # extract parameter columns
     n_samples = samples.shape[0]
 
+    # Kish effective sample size of the weighted posterior (<basename>.txt, first
+    # column is the sample weight); fall back to the equal-weight sample count.
+    try:
+        wts = np.asarray(analyzer.get_data())[:, 0]
+        wts = wts[wts > 0]
+        ess = float(np.sum(wts) ** 2 / np.sum(wts ** 2))
+    except Exception:  # noqa: BLE001
+        ess = float(n_samples)
+
     # Get best fit
     best_fit = analyzer.get_best_fit()
     best_logL = float(best_fit['log_likelihood'])
@@ -481,7 +490,7 @@ def run_nested_pymultinest(
         "logZ_err": logZ_err,
         "logZ_ns": logZ_ns,
         "logZ_ns_err": logZ_ns_err,
-        "ESS": float(n_samples),  # PyMultiNest gives equal-weight samples
+        "ESS": ess,
         "H": np.nan,  # MultiNest doesn't report H directly
         "n_like": np.nan,  # Not easily accessible from PyMultiNest
         "n_samples": n_samples,

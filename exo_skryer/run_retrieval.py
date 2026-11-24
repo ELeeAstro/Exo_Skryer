@@ -264,8 +264,16 @@ def main() -> None:
         from .retrieval_target import posterior_log_likelihood
         eng_cfg = getattr(cfg.sampling, str(engine), None)
         bs = int(getattr(eng_cfg, "batch_size", 0) or 0) if eng_cfg is not None else 0
+        bs_use = bs if bs > 0 else 1
+        n_post = int(np.size(next(iter(samples_np.values())))) if samples_np else 0
+        print(f"[info] Computing the log-likelihood of all {n_post} posterior samples "
+              f"(batch size {bs_use}) for posterior.nc (sample_stats.log_likelihood)...")
         t_ll = time.perf_counter()
-        log_like = posterior_log_likelihood(cfg, obs, fm_fnc, samples_np, batch_size=bs if bs > 0 else 64)
+        # Engines with a batch_size already ran the model at that batch size, so it fits
+        # in memory. Otherwise evaluate one sample at a time: on CPU, vmapping gives no
+        # speed-up and its memory grows with the batch (64 samples of the WASP-39b 1.5D
+        # model needed ~42 GB of temporaries and ran 20x slower from swapping).
+        log_like = posterior_log_likelihood(cfg, obs, fm_fnc, samples_np, batch_size=bs_use)
         sample_stats = {"log_likelihood": log_like}
         print(f"[info] Posterior log-likelihood: {log_like.size} samples, max {np.max(log_like):.4f}, "
               f"median {np.median(log_like):.4f} ({format_duration(time.perf_counter() - t_ll)})")
@@ -276,8 +284,34 @@ def main() -> None:
     if sample_stats is not None and np.isfinite(sample_stats["log_likelihood"]).any():
         ll = sample_stats["log_likelihood"]
         idata.attrs["max_log_likelihood"] = float(np.max(ll[np.isfinite(ll)]))
+        if evidence_info:
+            # Also in the sampler's evidence summary (posterior.nc attrs + evidence.json).
+            evidence_info["max_log_likelihood"] = idata.attrs["max_log_likelihood"]
+            evidence_info["median_log_likelihood"] = float(np.median(ll[np.isfinite(ll)]))
+    if not evidence_info:
+        # MCMC (NUTS): no evidence, but store the autocorrelation ESS, the smallest
+        # bulk and tail ESS over the sampled parameters.
+        try:
+            import arviz as az
+            bulk = az.ess(idata, method="bulk")
+            tail = az.ess(idata, method="tail")
+            idata.attrs["ESS"] = float(min(float(bulk[v]) for v in bulk.data_vars))
+            idata.attrs["ESS_tail"] = float(min(float(tail[v]) for v in tail.data_vars))
+            idata.attrs["ESS_method"] = "arviz bulk ESS, minimum over parameters"
+            print(f"[info] ESS (min over parameters): bulk {idata.attrs['ESS']:.0f}, "
+                  f"tail {idata.attrs['ESS_tail']:.0f}, saved in posterior.nc attrs")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] Could not compute the ESS ({type(exc).__name__}: {exc}).")
     out_nc = save_inferencedata(idata, exp_dir, evidence=evidence_info or None)
     print(f"[info] ArviZ posterior -> {out_nc}")
+    if sample_stats is not None:
+        print("[info] Per-sample log-likelihood saved in posterior.nc (sample_stats.log_likelihood), "
+              "maximum in the max_log_likelihood attribute"
+              + (" and evidence.json" if evidence_info else ""))
+    if evidence_info and "logZ" in evidence_info:
+        print(f"[info] Evidence logZ = {float(evidence_info['logZ']):.3f} ± "
+              f"{float(evidence_info.get('logZ_err', float('nan'))):.3f}, ESS = "
+              f"{float(evidence_info.get('ESS', float('nan'))):.0f}, saved in posterior.nc attrs and evidence.json")
 
     # Save a copy of the observational data to a csv in the experiment directory
     save_observed_data_csv(

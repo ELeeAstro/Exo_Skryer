@@ -389,11 +389,15 @@ def run_nested_dynesty(
     # Dynesty stores ncall per iteration; sum it for total likelihood calls.
     n_like = int(np.sum(results.ncall)) if hasattr(results, "ncall") else None
 
+    # Kish effective sample size of the importance weights (dynesty does not store one).
+    _w = np.exp(results.logwt - np.max(results.logwt))
+    ess = float(np.sum(_w) ** 2 / np.sum(_w ** 2))
+
     evidence_info: Dict[str, Any] = {
         "logZ": float(results.logz[-1]),
         "logZ_err": float(results.logzerr[-1]),
-        "ESS": float(getattr(results, "ess", np.nan)),
-        "H": float(results.h[-1]) if hasattr(results, "h") else np.nan,
+        "ESS": ess,
+        "H": float(results["information"][-1]) if "information" in results.keys() else np.nan,
         "n_like": n_like,
         "sampler": "dynesty",
         "n_live": nlive,

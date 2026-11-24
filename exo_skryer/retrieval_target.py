@@ -146,7 +146,7 @@ def batched(fn: Callable, chunk: int, runtime: Any = None) -> Callable[[np.ndarr
 
 
 def posterior_log_likelihood(
-    cfg, obs: dict, fm: Callable, samples: Dict[str, np.ndarray], batch_size: int = 64
+    cfg, obs: dict, fm: Callable, samples: Dict[str, np.ndarray], batch_size: int = 1
 ) -> np.ndarray:
     """Log-likelihood of every posterior sample, with the samplers' shared likelihood.
 
