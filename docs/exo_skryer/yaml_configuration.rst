@@ -343,7 +343,13 @@ determines which retrieval parameters (in ``params``) you must provide.
   includes it in outputs when running the forward model directly.
 
 ``physics.refraction``
-  Transmission-only refraction toggle. Only supported for ``rt_scheme: transit_1d``.
+  Transmission-only refraction toggle.
+
+  .. note::
+
+     ``cutoff`` is temporarily unavailable while the transmission RT is being
+     unified for 1D/1.5D/2D/3D geometries; only ``None`` is accepted for now.
+     The description below applies once it is re-enabled.
 
   *Supported values*:
 

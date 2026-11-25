@@ -1,6 +1,10 @@
 """
-RT_em_1D_os.py
-==============
+RT_em_core_os.py
+================
+
+Emission spectra with opacity-sampled (os) opacities (registry: emission_1d/os). The
+solvers (eaa, toon89, dda; ``physics.em_scheme``) are in ``RT_em_solvers``. The Planck
+function and flux scaling here are shared with ``RT_em_core_ck``.
 """
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ import jax.numpy as jnp
 from .aux_functions import sum_present
 
 from .data_constants import kb, h, c_light, pc
-from .RT_em_schemes import solve_alpha_eaa
+from .RT_em_solvers import solve_alpha_eaa
 
 __all__ = ["compute_emission_spectrum_1d_os"]
 

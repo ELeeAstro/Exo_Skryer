@@ -28,7 +28,7 @@ from .registry_cloud import CLOUD_OPTICS_CACHE
 from .aux_functions import T_INTERP_SCHEMES
 from .vert_chem import constant_vmr, constant_vmr_clr
 from .vert_mu import build_compute_mu, constant_mu
-from .RT_em_schemes import get_emission_solver
+from .RT_em_solvers import get_emission_solver
 from .limb_asymmetry import split_limb_tag
 from . import kernel_registry as KR
 
@@ -72,7 +72,7 @@ class ModelState(TypedDict, total=False):
     nwl: int
     nlay: int
     wl: jnp.ndarray            # (nwl,) micron
-    R0: jnp.ndarray            # planet radius at p_bot
+    R0: jnp.ndarray            # planet radius at the altitude anchor (p_bot, or p_ref for vert_alt: p_ref)
     R_s: jnp.ndarray           # stellar radius
     p_lev: jnp.ndarray         # (nlev,)
     p_lay: jnp.ndarray         # (nlay,)
@@ -132,26 +132,6 @@ class ModelSpec:
             "special_opac": self.schemes["opac_special"],
         }
 
-    def describe(self, fmt: Callable) -> Dict[str, object]:
-        """Selected kernels keyed by the pre-refactor field names (for checks)."""
-        return {
-            "Tp_kernel": fmt(self.tp),
-            "altitude_kernel": fmt(self.alt),
-            "chemistry_kernel": fmt(self.chem),
-            "mu_kernel": fmt(self.mu),
-            "vert_cloud_kernel": fmt(self.cloud_profile),
-            "line_opac_kernel": fmt(self.line),
-            "ray_opac_kernel": fmt(self.ray),
-            "cia_opac_kernel": fmt(self.cia),
-            "cld_opac_kernel": fmt(self.cloud),
-            "special_opac_kernel": fmt(self.special),
-            "rt_kernel": fmt(self.rt),
-            "ck": self.ck,
-            "ck_mix_code_static": None if self.ck_mix is None else int(self.ck_mix),
-            "opac_T_interp": self.t_interp,
-            "contri_func_enabled": self.contri_func,
-            "refraction_mode": int(self.refraction),
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -201,10 +181,15 @@ def select_model(cfg, geometry: str = "1d") -> ModelSpec:
     if rt_raw is None or str(rt_raw).strip().lower() == "none":
         raise ValueError("physics.rt_scheme must be specified explicitly.")
     rt_scheme = str(rt_raw).strip().lower()
+    if rt_scheme in ("transit_2d", "transit_3d"):
+        raise NotImplementedError(
+            f"physics.rt_scheme: {rt_scheme} is planned but not implemented yet "
+            "(see plans/multiD_transmission_plan.md). Use transit_1d or transit_1_5d."
+        )
     emission_mode = str(getattr(phys, "emission_mode", "planet")).lower().replace(" ", "_")
     if geometry == "1_5d":
         if rt_scheme != "transit_1_5d":
-            raise ValueError("build_forward_model_1_5d requires physics.rt_scheme='transit_1_5d'.")
+            raise ValueError("The 1.5D geometry requires physics.rt_scheme='transit_1_5d'.")
         if emission_mode not in ("planet", "none"):
             raise NotImplementedError("transit_1_5d is only implemented for transit radiative transfer.")
 
@@ -228,7 +213,10 @@ def select_model(cfg, geometry: str = "1d") -> ModelSpec:
     ck = schemes["opac_line"] == "ck"
     ck_mix = _parse_ck_mix(cfg) if ck else None
     mode = "os" if not ck else ("ck_trans" if ck_mix is CkMix.TRANS else "ck")
-    rt_entry = KR.get("rt", f"{rt_scheme}/{mode}", "physics.rt_scheme")
+    # Transmission builds every geometry from single columns (build_model_trans); spec.rt is
+    # the single-column kernel, also usable directly.
+    rt_key = f"transit_1d/{mode}" if rt_scheme.startswith("transit") else f"{rt_scheme}/{mode}"
+    rt_entry = KR.get("rt", rt_key, "physics.rt_scheme")
     rt = rt_entry.fn
     if rt_scheme == "emission_1d":
         rt = partial(rt, emission_solver=get_emission_solver(getattr(phys, "em_scheme", "eaa")))
@@ -279,14 +267,12 @@ def validate_model(cfg, spec: ModelSpec, opac_cache: Mapping[str, jnp.ndarray]) 
     names = _param_names(cfg)
     transit = spec.rt_scheme.startswith("transit")
     if spec.refraction is Refraction.CUTOFF:
-        if not transit:
-            raise NotImplementedError("physics.refraction is only supported for transit rt_schemes.")
-        a_sm = "a_sm_joint" if spec.geometry == "1_5d" else "a_sm"
-        if a_sm not in names:
-            raise ValueError(f"physics.refraction: cutoff requires a delta parameter '{a_sm}' "
-                             "(semi-major axis in AU).")
-        if "ray_master_wavelength" not in opac_cache:
-            raise RuntimeError("physics.refraction: cutoff requires Rayleigh registry data (cfg.opac.ray).")
+        # The transit RT is being unified for 1D/1.5D/2D/3D (RT_trans_geometry + RT_trans_core_*);
+        # refraction (refraction.py) is not wired into it yet.
+        raise NotImplementedError(
+            "physics.refraction: cutoff is temporarily unavailable while the transmission RT is "
+            "being unified (1D/1.5D/2D/3D). Use physics.refraction: None."
+        )
 
     if spec.ck_mix is CkMix.TRANS:
         if not transit:

@@ -625,7 +625,7 @@ def compute_component_spectra(
 
     from exo_skryer.build_opacities import build_opacities, master_wavelength_cut
     from exo_skryer.registry_bandpass import load_bandpass_registry
-    from exo_skryer.RT_trans_1D_os import _build_transit_geometry, _transit_depth_from_opacity
+    from exo_skryer.RT_trans_core_os import transit_depth_1d_from_opacity
     from exo_skryer.opacity_cloud import compute_cloud_opacity
     from exo_skryer.opacity_special import compute_special_opacity
     from exo_skryer import build_opacities as XS
@@ -765,7 +765,6 @@ def compute_component_spectra(
 
     # Compute transit depth for each component
     print("[component_spectra] Computing transit depth for each component...")
-    geometry = _build_transit_geometry(state)
 
     if use_ck:
         # Correlated-k RT requires g-points/weights in the opac cache.
@@ -788,13 +787,13 @@ def compute_component_spectra(
         # Pick the CK transit kernel and prepare line opacities.
         if ck_mix == "TRANS":
             from exo_skryer.opacity_ck import compute_ck_opacity_perspecies
-            from exo_skryer.RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans as _rt_ck
+            from exo_skryer.RT_trans_core_ck import compute_transit_depth_1d_ck_trans as _rt_ck
 
             sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac_ck, full_params)
             ck_species = XS.ck_species_names()
         else:
             from exo_skryer.opacity_ck import compute_ck_opacity_perspecies, compute_ck_opacity
-            from exo_skryer.RT_trans_1D_ck import compute_transit_depth_1d_ck as _rt_ck
+            from exo_skryer.RT_trans_core_ck import compute_transit_depth_1d_ck as _rt_ck
 
             sigma_ps, vmr_ps = compute_ck_opacity_perspecies(state, opac_ck, full_params)
             line_total = compute_ck_opacity(state, opac_ck, full_params)
@@ -879,14 +878,14 @@ def compute_component_spectra(
 
     spectra = {"wavelength_um": hi_wl}
     for name, kappa in all_opacities.items():
-        D = _transit_depth_from_opacity(state, kappa, geometry, refraction_mask=None)
+        D = transit_depth_1d_from_opacity(state, kappa)[0]
         spectra[name] = np.asarray(D)
         print(f"  - {name}: computed")
 
     # Compute total opacity and transit depth
     if all_opacities:
         total_opacity = sum(all_opacities.values())
-        D_total = _transit_depth_from_opacity(state, total_opacity, geometry, refraction_mask=None)
+        D_total = transit_depth_1d_from_opacity(state, total_opacity)[0]
         spectra["total"] = np.asarray(D_total)
         print("  - total: computed")
 

@@ -44,7 +44,7 @@ physics:
 # Opacity Section
 # ----------------------------------------------------------------------------------
 opac:
-  wl_master: ../../opac_data.os/wl_R30000.txt
+  wl_master: ../../opac_data/os/wl_R30000.txt
   full_grid: false
   ck: false
   ck_mix: RORR

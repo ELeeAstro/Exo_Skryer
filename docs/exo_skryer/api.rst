@@ -19,6 +19,12 @@ Reference/API
 .. automodapi:: exo_skryer.build_model
     :no-inheritance-diagram:
 
+.. automodapi:: exo_skryer.build_model_trans
+    :no-inheritance-diagram:
+
+.. automodapi:: exo_skryer.build_model_em
+    :no-inheritance-diagram:
+
 .. automodapi:: exo_skryer.build_opacities
     :no-inheritance-diagram:
 
@@ -73,7 +79,7 @@ Reference/API
 .. automodapi:: exo_skryer.opacity_special
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.rate_jax
+.. automodapi:: exo_skryer.chem_rate_jax
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.read_obs
@@ -103,34 +109,34 @@ Reference/API
 .. automodapi:: exo_skryer.registry_ray
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_alb_1D
+.. automodapi:: exo_skryer.build_model_alb
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_1D_ck
+.. automodapi:: exo_skryer.RT_alb_core_os
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_1D_os
+.. automodapi:: exo_skryer.RT_alb_core_ck
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_schemes
+.. automodapi:: exo_skryer.RT_alb_solvers
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_eaa
+.. automodapi:: exo_skryer.RT_em_core_ck
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_toon89
+.. automodapi:: exo_skryer.RT_em_core_os
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_em_dda
+.. automodapi:: exo_skryer.RT_em_solvers
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_trans_1D_ck
+.. automodapi:: exo_skryer.RT_trans_geometry
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_trans_1D_ck_trans
+.. automodapi:: exo_skryer.RT_trans_core_os
     :no-inheritance-diagram:
 
-.. automodapi:: exo_skryer.RT_trans_1D_os
+.. automodapi:: exo_skryer.RT_trans_core_ck
     :no-inheritance-diagram:
 
 .. automodapi:: exo_skryer.refraction

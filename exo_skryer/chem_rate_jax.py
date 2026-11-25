@@ -1,6 +1,6 @@
 """
-rate_jax.py
-===========
+chem_rate_jax.py
+================
 """
 
 from __future__ import annotations
@@ -284,7 +284,7 @@ class RateJAX:
 
     Parameters
     ----------
-    thermo : `~exo_skryer.rate_jax.NASA9ThermoJAX`
+    thermo : `~exo_skryer.chem_rate_jax.NASA9ThermoJAX`
         NASA-9 thermo evaluator created by `load_nasa9_cache`.
     C, N, O : float
         Elemental abundances (number ratios relative to H₂, following the original

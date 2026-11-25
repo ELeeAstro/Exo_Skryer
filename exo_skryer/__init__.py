@@ -26,7 +26,7 @@ except ImportError:
 # from . import opacity_line
 # from . import opacity_ray
 # from . import opacity_special
-# from . import rate_jax
+# from . import chem_rate_jax
 # from . import read_obs
 # from . import read_stellar
 # from . import read_yaml

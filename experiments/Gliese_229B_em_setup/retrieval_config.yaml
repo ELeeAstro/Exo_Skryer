@@ -31,18 +31,18 @@ physics:
 
 opac:
 
-  wl_master: ../../opac_data/os/OS_R20000/wl_R20000.txt
+  wl_master: ../../opac_data/os/wl_R20000.txt
   full_grid: False
   ck: False
   ck_mix: RORR
 
   line:
-    - {species: H2O, path: ../../opac_data/os/OS_R20000/H2O_R20000.zarr.zip}
-    - {species: CO, path: ../../opac_data/os/OS_R20000/CO_R20000.zarr.zip}
-    - {species: CH4, path: ../../opac_data/os/OS_R20000/CH4_R20000.zarr.zip}
-    - {species: NH3, path: ../../opac_data/os/OS_R20000/NH3_R20000.zarr.zip}
-    - {species: Na, path: ../../opac_data/os/OS_R20000/Na_R20000.zarr.zip}
-    - {species: K, path: ../../opac_data/os/OS_R20000/K_R20000.zarr.zip}
+    - {species: H2O, path: ../../opac_data/os/H2O_R20000.zarr.zip}
+    - {species: CO, path: ../../opac_data/os/CO_R20000.zarr.zip}
+    - {species: CH4, path: ../../opac_data/os/CH4_R20000.zarr.zip}
+    - {species: NH3, path: ../../opac_data/os/NH3_R20000.zarr.zip}
+    - {species: Na, path: ../../opac_data/os/Na_R20000.zarr.zip}
+    - {species: K, path: ../../opac_data/os/K_R20000.zarr.zip}
 
   ray:
     - {species: H2}

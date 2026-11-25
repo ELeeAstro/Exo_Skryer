@@ -10,7 +10,6 @@ data:
   obs_east: None
   obs_west: None
   stellar: ./HD189_stellar.txt
-  janaf: ../../JANAF_data/
 
 # ----------------------------------------------------------------------------------
 # Physics Section

@@ -505,7 +505,7 @@ def load_nasa9(cfg: Any, exp_dir: Path) -> None:
 
     Relative ``data.nasa9`` paths resolve against ``exp_dir`` (cwd if None).
     """
-    from .rate_jax import is_nasa9_cache_loaded, load_nasa9_cache
+    from .chem_rate_jax import is_nasa9_cache_loaded, load_nasa9_cache
 
     if is_nasa9_cache_loaded():
         print("[info] NASA-9 cache already loaded")

@@ -48,8 +48,29 @@ def is_internal_parameter_name(name: str) -> bool:
     return str(name).startswith("__")
 
 
+DELTA_PREFIX = "delta_"
+
+
+def _delta_target(base: str, tag: str | None, tagged: Mapping[str, set]) -> str | None:
+    """For ``delta_<name>_<limb>``: the parameter it offsets (<name>), if that is a valid limb offset.
+
+    ``delta_<name>_west`` sets <name>_west = <name>_east + delta (and vice versa for _east). It is
+    valid when <name> is given for the other limb only and is not joint.
+    """
+    if not base.startswith(DELTA_PREFIX) or tag not in (EAST_TAG, WEST_TAG):
+        return None
+    target = base[len(DELTA_PREFIX):]
+    other = WEST_TAG if tag == EAST_TAG else EAST_TAG
+    tags = tagged.get(target, set())
+    return target if tags == {other} else None
+
+
 def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
-    """Validate explicit transit_1_5d tagging and return east/west duplicated bases."""
+    """Validate explicit transit_1_5d tagging and return east/west duplicated bases.
+
+    A limb may instead be given as an offset from the other limb: ``delta_<name>_west``
+    (``<name>_west = <name>_east + delta_<name>_west``), or the mirror with _east.
+    """
     tagged: dict[str, set[str]] = {}
     untagged: set[str] = set()
 
@@ -80,8 +101,26 @@ def validate_limb_parameter_names(names: Iterable[str]) -> set[str]:
             f"{joined}"
         )
 
+    # Limb offsets: delta_<name>_<limb> supplies the missing partner of <name>_<other limb>.
+    delta_of = {}
+    for base, tags in tagged.items():
+        for tag in tags:
+            target = _delta_target(base, tag, tagged)
+            if target is not None:
+                delta_of[base] = target
+    if base_bad := sorted(b for b, t in tagged.items()
+                          if b.startswith(DELTA_PREFIX) and b not in delta_of and t <= {EAST_TAG, WEST_TAG}
+                          and b[len(DELTA_PREFIX):] in tagged):
+        raise ValueError(
+            "transit_1_5d limb offsets delta_<name>_<limb> need <name> given for the other limb only "
+            f"(not joint, not both limbs). Invalid: {', '.join(base_bad)}"
+        )
+    offset_targets = set(delta_of.values())
+
     missing_pairs = sorted(
-        base for base, tags in tagged.items() if tags in ({EAST_TAG}, {WEST_TAG}, {EAST_TAG, JOINT_TAG}, {WEST_TAG, JOINT_TAG})
+        base for base, tags in tagged.items()
+        if base not in delta_of and base not in offset_targets
+        and tags in ({EAST_TAG}, {WEST_TAG}, {EAST_TAG, JOINT_TAG}, {WEST_TAG, JOINT_TAG})
     )
     if missing_pairs:
         joined = ", ".join(missing_pairs)
@@ -117,6 +156,13 @@ def split_limb_parameter_dict(
             west[base] = value
         else:
             raise ValueError(f"Parameter '{name}' is missing an explicit _joint/_east/_west tag.")
+
+    # Limb offsets: delta_<name> on one limb -> <name> = other limb's <name> + delta.
+    for this, other in ((east, west), (west, east)):
+        for key in [k for k in this if k.startswith(DELTA_PREFIX)]:
+            target = key[len(DELTA_PREFIX):]
+            if target in other and target not in this:
+                this[target] = other[target] + this.pop(key)
 
     return joint, east, west
 

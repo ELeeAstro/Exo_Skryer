@@ -16,7 +16,7 @@ from jax.scipy.special import logsumexp
 import equinox as eqx
 
 from .data_constants import amu, kb, bar, R
-from .rate_jax import RateJAX, get_nasa9_cache
+from .chem_rate_jax import RateJAX, get_nasa9_cache
 from .chem_easychem_short_jax import (
     EasyChemShortModel,
     solve_profile_scan,
@@ -71,7 +71,7 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Global atmodeller cache (mirrors _NASA9_CACHE pattern in rate_jax.py)
+# Global atmodeller cache (mirrors _NASA9_CACHE pattern in chem_rate_jax.py)
 # ---------------------------------------------------------------------------
 _ATMODELLER_MODEL = None          # EquilibriumModel instance (built once at init)
 _ATMODELLER_GAS_KEYS: tuple = ()  # atmodeller output keys, e.g. ('H2O_g', 'CH4_g', ...)

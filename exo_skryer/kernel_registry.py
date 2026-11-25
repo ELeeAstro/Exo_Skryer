@@ -88,14 +88,12 @@ from .opacity_cloud import (
     optics_grid_cloud,
 )
 from .registry_cloud import CLOUD_OPTICS_CACHE
-from .RT_trans_1D_os import compute_transit_depth_1d_os
-from .RT_trans_1D_ck import compute_transit_depth_1d_ck
-from .RT_trans_1D_ck_trans import compute_transit_depth_1d_ck_trans
-from .RT_em_1D_os import compute_emission_spectrum_1d_os
-from .RT_em_1D_ck import compute_emission_spectrum_1d_ck
-from .RT_trans_1_5D_os import compute_transit_depth_1_5d_os
-from .RT_trans_1_5D_ck import compute_transit_depth_1_5d_ck
-from .RT_trans_1_5D_ck_trans import compute_transit_depth_1_5d_ck_trans
+from .RT_trans_core_os import compute_transit_depth_1d_os
+from .RT_trans_core_ck import (
+    compute_transit_depth_1d_ck, compute_transit_depth_1d_ck_trans,
+)
+from .RT_em_core_os import compute_emission_spectrum_1d_os
+from .RT_em_core_ck import compute_emission_spectrum_1d_ck
 from . import build_chem as _chem
 
 __all__ = [
@@ -345,6 +343,3 @@ register("rt", "transit_1d/ck", compute_transit_depth_1d_ck)
 register("rt", "transit_1d/ck_trans", compute_transit_depth_1d_ck_trans)
 register("rt", "emission_1d/os", compute_emission_spectrum_1d_os)
 register("rt", "emission_1d/ck", compute_emission_spectrum_1d_ck)
-register("rt", "transit_1_5d/os", compute_transit_depth_1_5d_os)
-register("rt", "transit_1_5d/ck", compute_transit_depth_1_5d_ck)
-register("rt", "transit_1_5d/ck_trans", compute_transit_depth_1_5d_ck_trans)

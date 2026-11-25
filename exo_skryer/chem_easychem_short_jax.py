@@ -88,7 +88,7 @@ def load_nasa9_coeff_arrays(
     *,
     default_t_switch: float = 1000.0,
 ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    from .rate_jax import load_nasa9_cache
+    from .chem_rate_jax import load_nasa9_cache
 
     thermo = load_nasa9_cache(str(nasa9_dir))
     coeff_low = jnp.stack([thermo.data[sp]["coeffs_low"] for sp in species], axis=0)
