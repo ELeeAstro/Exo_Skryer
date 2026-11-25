@@ -63,10 +63,11 @@ params:
   - {name: T_int_joint, dist: uniform, low: 100.0, high: 600.0, transform: logit, init: 600.0}
   - {name: cld_rho_joint, dist: delta,   value: 1.0,transform: identity, init: 1.0}  # particle density [g/cm^3]
   - {name: cld_Q1_joint,  dist: delta,   value: 1.0, transform: identity, init: 1.0}
+  # Common radius and gravity at p_ref for both limbs (multi-D transmission convention).
+  - { name: R_p_joint,      dist: uniform, low: 1.00, high: 1.50, transform: logit, init: 1.25 }
+  - { name: log_10_g_joint, dist: uniform, low: 2.0,  high: 3.5,  transform: logit, init: 2.63 }
 
   # --- East limb ---
-  - { name: R_p_east,       dist: uniform, low: 1.00, high: 1.50, transform: logit, init: 1.25 }
-  - { name: log_10_g_east,  dist: uniform, low: 2.0,  high: 3.5,  transform: logit, init: 3.1 }
   - { name: T_eq_east,     dist: uniform, low: 500.0, high: 1500.0, transform: logit, init: 1200.0 }
   - { name: log_10_f_H2O_east, dist: uniform, low: -12, high: -2, transform: logit, init: -4.0 }
   - { name: log_10_f_CO2_east, dist: uniform, low: -12, high: -2, transform: logit, init: -5.0 }
@@ -90,8 +91,6 @@ params:
   - {name: log_10_f_sed_east, dist: uniform, low: -2, high: 2, transform: logit, init: 0}
 
   # --- West limb ---
-  - { name: R_p_west,       dist: uniform, low: 1.00, high: 1.50, transform: logit, init: 1.25 }
-  - { name: log_10_g_west,  dist: uniform, low: 2.0,  high: 3.5,  transform: logit, init: 3.1 }
   - { name: T_eq_west,     dist: uniform, low: 500.0, high: 1500.0, transform: logit, init: 1000.0 }
   - { name: log_10_f_H2O_west, dist: uniform, low: -12, high: -2, transform: logit, init: -4.5 }
   - { name: log_10_f_CO2_west, dist: uniform, low: -12, high: -2, transform: logit, init: -5.5 }

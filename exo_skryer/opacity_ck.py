@@ -13,7 +13,7 @@ from . import build_opacities as XS
 from .data_constants import amu, bar
 from .ck_mix_RORR import mix_k_tables_rorr
 from .ck_mix_PRAS import mix_k_tables_pras
-from .aux_functions import interp_table_axis, t_interp_scheme
+from .aux_functions import interp_table_axis, opac_dtype, t_interp_scheme
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
 _LN10 = 2.302585092994046
@@ -367,7 +367,10 @@ def compute_ck_opacity_perspecies(
     sigma_log_all = jnp.transpose(sigma_log_all, (1, 0, 2, 3))
 
     # Convert from log10 to linear space
-    # exp in table precision, then float64 for the RT
+    # exp in table precision, then float64 for the RT (float32 if the RT runs in float32)
+    if opac_dtype(state) == jnp.float32:
+        inv_m = (1.0 / (layer_mu * amu)).astype(jnp.float32)
+        return jnp.exp(_LN10 * sigma_log_all).astype(jnp.float32) * inv_m[None, :, None, None], mixing_ratios
     sigma_linear = jnp.exp(_LN10 * sigma_log_all).astype(jnp.float64)
 
     # Convert to mass opacity (cm² / g)

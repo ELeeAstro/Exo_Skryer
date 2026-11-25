@@ -229,7 +229,7 @@ This was converted into JAX compatible python from the original python code foun
    import numpy as np
    import matplotlib.pyplot as plt
    from pathlib import Path
-   from exo_skryer.rate_jax import load_nasa9_cache
+   from exo_skryer.chem_rate_jax import load_nasa9_cache
    from exo_skryer.vert_Tp import Modified_Milne
    from exo_skryer.vert_chem import CE_rate_jax
    from exo_skryer.data_constants import bar

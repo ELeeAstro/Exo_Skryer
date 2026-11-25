@@ -122,17 +122,17 @@ def convert_vhs1256b_to_retrieval_format(
         for i in range(len(wl) - 1):
             f.write(f"{wl[i]:.6g} {dlam[i]:.6g} {flux[i]:.6g} {flux_err[i]:.6g} boxcar\n")
 
-        # Write last point with MIRI_MRS_4A response
+        # Write last point with MIRI_4A response
         i = len(wl) - 1
-        f.write(f"{wl[i]:.6g} {dlam[i]:.6g} {flux[i]:.6g} {flux_err[i]:.6g} MIRI_MRS_4A\n")
+        f.write(f"{wl[i]:.6g} {dlam[i]:.6g} {flux[i]:.6g} {flux_err[i]:.6g} MIRI_4A\n")
 
     print(f"Wrote {len(wl)} data points to {output_file}")
-    print(f"All points use 'boxcar' except the last which uses 'MIRI_MRS_4A'")
+    print(f"All points use 'boxcar' except the last which uses 'MIRI_4A'")
 
 
 if __name__ == "__main__":
-    input_file = Path("/Users/gl20y334/Desktop/Exo_Skryer/obs_data/VHS1256b_V2.txt")
-    output_file = Path("/Users/gl20y334/Desktop/Exo_Skryer/obs_data/VHS1256b_observed_data.txt")
+    input_file = Path(__file__).resolve().parent / "VHS1256b_V2.txt"
+    output_file = Path(__file__).resolve().parent / "VHS1256b_observed_data.txt"
 
     convert_vhs1256b_to_retrieval_format(input_file, output_file)
 

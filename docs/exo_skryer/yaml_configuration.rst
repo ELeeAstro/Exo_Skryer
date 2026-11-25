@@ -289,19 +289,121 @@ determines which retrieval parameters (in ``params``) you must provide.
 ``physics.rt_scheme``
   Radiative transfer mode.
 
-  *Supported values*: ``transit_1d``, ``transit_1_5d``, or ``emission_1d``.
+  *Supported values*: ``transit_1d``, ``transit_1_5d``, ``transit_2d``, ``transit_3d``,
+  or ``emission_1d`` (``albedo_1d`` is planned).
 
-  Notes for ``transit_1_5d``:
+  All transmission geometries use one ray-tracing path (TRIDENT geometry; MacDonald &
+  Lewis 2022): each column is a full 1D atmosphere, and rays use a grid shared by all
+  columns. Columns share the radius ``R_p`` at ``p_ref``; a ray that passes below a
+  column's bottom is opaque.
 
-  * Use ``data.obs_east`` and ``data.obs_west`` to fit separate limb spectra.
-    If only ``data.obs`` is supplied, the model compares the hemispheric mean
-    ``0.5 * east + 0.5 * west`` to the combined observation.
+  Notes for ``transit_1_5d`` (two half-annulus sectors: east = evening, west = morning):
+
+  * Use ``data.obs_east`` and ``data.obs_west`` to fit separate limb spectra
+    (half-annulus depths, i.e. 0.5 x (R_limb / R_s)^2). If only ``data.obs`` is
+    supplied, the model compares the sum of the two half-annulus spectra to it.
   * Every YAML parameter name must end in ``_joint``, ``_east``, or ``_west``.
   * Use ``_joint`` for shared quantities; use paired ``_east``/``_west`` entries
-    for limb-specific quantities.
+    for limb-specific quantities, or one limb as an offset from the other with
+    ``delta_<name>_west`` (``<name>_west = <name>_east + delta``).
   * ``M_p``-based radius/gravity inference is not supported; provide explicit
     ``log_10_g_east``/``log_10_g_west`` or a shared ``log_10_g_joint``.
   * ``physics.contri_func: true`` is not supported.
+
+  Notes for ``transit_2d`` (day-night terminator, TRIDENT):
+
+  * One sector covering the whole annulus, cut into ``physics.n_zenith`` slices along
+    the line of sight (default 6; >= 6 keeps the error below ~1e-3 relative): a dayside
+    slice, a nightside slice and ``n_zenith - 2`` transition slices spanning the opening
+    angle ``beta_dn_joint`` [deg] around the terminator plane.
+  * Parameters end in ``_joint``, ``_day`` or ``_night`` (offsets with
+    ``delta_<name>_night`` as above). Day and night anchor columns get the full T-p and
+    chemistry; transition columns interpolate T(p), log VMR(p) and the other per-column
+    parameters linearly in angle.
+  * ``beta_dn_joint`` is required (it can be free). ``p_bot`` / ``p_top`` must be
+    ``_joint``; ``f_cloud`` only as ``f_cloud_joint``.
+  * Fits a single (whole-terminator) spectrum, ``data.obs``.
+  * ``M_p``, ``physics.contri_func: true`` and ``ck_mix: PRAS`` are not supported.
+
+  TRIDENT parameterisation (``physics.vert_Tp: trident`` and ``physics.vert_chem: trident``;
+  MacDonald & Lewis 2022, as in POSEIDON):
+
+  * Works with ``transit_1d`` (one column), ``transit_2d`` (1 sector x (2 + ``physics.n_slice_dn``)
+    zones) and ``transit_3d`` ((2 + ``physics.n_slice_em``) x (2 + ``n_slice_dn``)); slice counts
+    are even integers (or None for a single region), as in POSEIDON.
+  * Untagged parameters: ``T_bar_term``, ``Delta_T_term`` (evening - morning), ``Delta_T_DN``
+    (day - night), ``T_deep``, ``alpha_em`` and ``beta_dn`` (opening angles, degrees); per species
+    ``log_X_bar_term_<sp>``, ``Delta_log_X_term_<sp>``, ``Delta_log_X_DN_<sp>`` and optional
+    ``log_X_deep_<sp>`` (without it, constant with altitude). Missing Delta_* are 0. H2/He fill
+    the rest with He/H2 = ``He_fraction`` (default 0.17).
+  * Each column takes T(p) and X(p) at its sector/zone centre: linear in angle across the
+    transitions, linear in log P between 1e-5 and 10 bar, constant outside. Every column
+    computes its own hydrostatics and opacities.
+  * Fits the whole-terminator spectrum (``data.obs``) or, with limb observations, the evening and
+    morning half-annulus spectra (as in 1.5D: ``east`` = evening, ``west`` = morning). Outputs
+    ``hires_east`` / ``hires_west`` (full-circle equivalent) and ``*_scaled`` (halves summing to
+    the total).
+  * Iceberg clouds (Eq. 47): see ``physics.iceberg_cloud`` below (works with TRIDENT and with the
+    anchor-column geometries).
+
+  Iceberg clouds (``physics.iceberg_cloud: True``, any transit geometry):
+
+  * Masks the column cloud in angle: the cloud sits in the azimuthal wedge starting at
+    ``phi_0_cld`` [deg, clockwise from the north pole; evening limb at -90] and covering a
+    fraction ``f_cld`` of the terminator, on the nightside of the zenith angle ``theta_0_cld``
+    [deg]. Defaults ``f_cld = 1``, ``phi_0_cld = theta_0_cld = -90`` (cloud everywhere). Tagged
+    geometries use ``_joint`` names (``f_cld_joint`` etc.).
+  * The cloud itself is the usual ``vert_cloud`` / ``opac_cloud`` scheme, with its usual units, e.g.
+    the default slab (``vert_cloud: slab``, ``opac_cloud: grey_profile``: ``log_10_p_top_slab``,
+    ``log_10_dp_slab`` [bar], ``log_10_k_cld_grey`` [cm^2 g^-1]).
+  * Alternatively the POSEIDON grey deck: ``log_10_k_cld`` [m^-1] at P >= ``10**log_10_p_cld`` [bar]
+    (used for the POSEIDON benchmark; matches ``TRIDENT()`` exactly with its quadrature).
+  * Cloud edges become extra sector and zone boundaries, so the cloud may break north-south
+    symmetry. Each sector's clear and cloudy spectra share one gas slant optical depth; only the
+    cloud term is added for the cloudy one. The theta_0 zone edge is folded into the path tensors,
+    so the gas contraction runs over the columns only. Not combinable with ``f_cloud`` or ``contri_func``.
+
+  Notes for ``transit_3d`` (east/west limbs, each with day-night structure):
+
+  * Two half-annulus sectors (east = evening, west = morning), each cut into
+    ``physics.n_zenith`` day-night slices with the shared ``beta_dn_joint`` (as in 2D).
+  * Parameters end in ``_joint``, ``_east_day``, ``_west_day``, ``_east_night`` or
+    ``_west_night``. Offsets: ``delta_<name>_west_day`` (from east day) and
+    ``delta_<name>_<limb>_night`` (from that limb's day); e.g. a fixed
+    ``delta_log_10_f_H2O_east_night: 0`` shares the day abundance with the night.
+  * Each limb's transition columns interpolate between its day and night anchors.
+  * Fits limb-resolved spectra (``data.obs_east`` / ``data.obs_west``, half-annulus
+    depths) or the whole-terminator spectrum, as in 1.5D. The same restrictions as 2D
+    apply. A smooth azimuthal transition between the limbs is planned.
+
+  ``physics.sector_loop`` (multi-sector transit geometries): ``vmap`` (default) computes all
+  sectors at once; ``map`` computes them one after another, using less memory (~6% less XLA
+  temporary memory, ~10% slower in the 3D / TRIDENT benchmarks on a 12-core CPU).
+
+  ``physics.rt_precision`` (all transit geometries): ``float32`` (default) or ``float64`` (also
+  ``f32``/``f64``, ``single``/``double``, ``32``/``64``). To run everything in double precision, set
+
+  .. code-block:: yaml
+
+     physics:
+       rt_precision: float64
+
+  It sets the precision of the opacity sums and of the slant optical depth contraction (path
+  tensor x vertical optical depth), the dominant radiative-transfer cost.
+
+  * In ``float32``: the line (os), per-species ck (TRANS), Rayleigh and CIA opacity sums, the
+    optics-grid cloud's wavelength interpolation, the per-column optical depths, the slant optical
+    depths, exp(-tau) and the g-average. CIA cross sections (~1e-46 cm^5) are below the float32
+    range, so the per-layer factor n_i n_j / rho is folded into the exponent (added in float64).
+  * Always ``float64``: hydrostatics, ray geometry, the other cloud schemes (on-the-fly Mie needs
+    it), RORR/PRAS mixing, the product over species, the area sums and the depths.
+  * Accuracy: each float32 opacity is within 2e-7 of float64 (CIA 2e-6), below the precision of the
+    float32 opacity tables themselves. Spectra change by < 1e-4 ppm at posterior samples (< 1e-3 ppm
+    anywhere in the priors tested), log-likelihoods by ~1e-5.
+  * Speed (12-core CPU): forward model 1.5-2.7x faster, about half the memory. 3D Iceberg ck:
+    23.7 -> 8.5 ms; TRIDENT os: 13.5 -> 8.1 ms. GPUs with slow float64 should gain far more
+    (consumer cards run float64 at 1/32-1/64 of the float32 rate). The contraction uses
+  ``Precision.HIGHEST``, so GPUs do not drop to TF32.
 
 ``physics.emission_mode``
   Only relevant for ``physics.rt_scheme: emission_1d``.
@@ -343,7 +445,13 @@ determines which retrieval parameters (in ``params``) you must provide.
   includes it in outputs when running the forward model directly.
 
 ``physics.refraction``
-  Transmission-only refraction toggle. Only supported for ``rt_scheme: transit_1d``.
+  Transmission-only refraction toggle.
+
+  .. note::
+
+     ``cutoff`` is temporarily unavailable while the transmission RT is being
+     unified for 1D/1.5D/2D/3D geometries; only ``None`` is accepted for now.
+     The description below applies once it is re-enabled.
 
   *Supported values*:
 

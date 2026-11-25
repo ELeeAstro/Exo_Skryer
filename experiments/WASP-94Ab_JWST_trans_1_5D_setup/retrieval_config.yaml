@@ -1,0 +1,280 @@
+# WASP-94Ab, JWST NIRISS SOSS morning/evening limb spectra: transit_1_5d benchmark.
+# Follows the 1.5D (PICASO + VIRGA) retrieval of Mukherjee et al. 2025, arXiv:2505.10910 ("Cloudy mornings
+# and clear evenings"), as closely as Exo Skryer allows:
+#   equilibrium chemistry with shared [M/H] and C/O; Guillot T-p with shared kappa_IR, gamma, T_int and
+#   limb-specific T_eq (T_morn = T_eve + delta, delta in [-600, 0] K); shared cloud f_sed; one shared
+#   radius at 1 mbar; an additive offset on the morning spectrum only (+-250 ppm); fiducial reduction
+#   FIREFLy; nested sampling with 2000 live points and evidence tolerance 0.5.
+# Differences from the paper (not available in Exo Skryer):
+#   - Guillot "alpha" (visible-channel weight) has no equivalent; f_hem fixed at 0.25.
+#   - VIRGA clouds (MgSiO3, Fe, MnS from f_sed + K_zz) -> f_sed profile + F18 optics; K_zz has no
+#     equivalent. f_sed and the F18 optical shape are shared; cloud mass, base and size are per limb.
+#   - C/O lower bound 0.1 (FastChem grid limit) instead of 0.01; [M/H] grid covers -1..3.
+#   - Opacity species limited to available ck tables (no N2/N2O).
+# Paper prior bounds (Table S3) came from a summary of the supplementary table: check against the PDF.
+data:
+
+  # Limb spectra in the transit_1_5d convention (half-annulus depths), written by prepare_limb_obs.py.
+  # east = evening, west = morning. FIREFLy is the paper's fiducial reduction.
+  obs: None
+  obs_east: WASP-94Ab_SOSS_FIREFLy_evening_east_half.txt
+  obs_west: WASP-94Ab_SOSS_FIREFLy_morning_west_half.txt
+  # Other reductions of the same visit: WASP-94Ab_SOSS_{Eureka,Fu}_{evening_east,morning_west}_half.txt
+  stellar: None
+
+physics:
+
+  nlay: 99
+
+  vert_Tp: guillot
+  vert_alt: p_ref
+  vert_chem: fastchem_grid_jax
+  vert_mu: dynamic
+  vert_cloud: f_sed
+
+  opac_line: ck
+  opac_ray: ck
+  opac_cia: ck
+  opac_cloud: F18
+  opac_special: None
+
+  rt_scheme: transit_1_5d   # transit_1d | transit_1_5d
+  contri_func: False
+  refraction: None
+
+opac:
+
+  wl_master: ../../opac_data/ck/wl_ck_R250.txt
+  full_grid: False
+  ck: True
+  ck_mix: TRANS
+
+  line:
+    - {species: H2O, path: ../../opac_data/ck/H2O_ck_R250.zarr.zip}
+    - {species: CO, path: ../../opac_data/ck/CO_ck_R250.zarr.zip}
+    - {species: CO2, path: ../../opac_data/ck/CO2_ck_R250.zarr.zip}
+    - {species: CH4, path: ../../opac_data/ck/CH4_ck_R250.zarr.zip}
+    - {species: H2S, path: ../../opac_data/ck/H2S_ck_R250.zarr.zip}
+    - {species: HCN, path: ../../opac_data/ck/HCN_ck_R250.zarr.zip}
+    - {species: NH3, path: ../../opac_data/ck/NH3_ck_R250.zarr.zip}
+  ray:
+    - {species: H2}
+    - {species: He}
+  cia:
+    - {species: H2-H2, path: ../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../opac_data/cia/H2-He_2011.zarr.zip}
+  special: None
+  cloud: None
+
+params:
+
+  # transit_1_5d: every name ends in _joint, _east or _west; delta_<name>_west = west - east offset.
+
+  # --- Shared: star, pressure grid, radius at 1 mbar ---
+  - { name: R_s_joint,          dist: delta,   value: 1.62,  transform: identity, init: 1.62 }  # Neveu-VanMalle+2014
+  - { name: p_bot_joint,        dist: delta,   value: 100.0, transform: identity, init: 100.0 }
+  - { name: p_top_joint,        dist: delta,   value: 1e-8,  transform: identity, init: 1e-8 }
+  - { name: log_10_p_ref_joint, dist: delta,   value: -3.0,  transform: identity, init: -3.0 }  # paper: radius at 1 mbar
+  # paper: R = R_p (1 + x R_p), R_p = 1.72 R_J, x ~ U(-0.1, 0)  ->  R in [1.42, 1.72] R_J
+  - { name: R_p_joint,          dist: uniform, low: 1.42, high: 1.72, transform: logit, init: 1.57 }
+  # g at 1 mbar from M_p = 0.456 M_J (paper) and R ~ 1.57 R_J (their retrieved radius); 1.5D cannot use M_p
+  - { name: log_10_g_joint,     dist: delta,   value: 2.66,  transform: identity, init: 2.66 }
+  - { name: f_hem_joint,        dist: delta,   value: 0.25,  transform: identity, init: 0.25 }
+
+  # --- Shared T-p (Guillot) ---
+  - { name: T_int_joint,        dist: uniform, low: 30.0, high: 630.0, transform: logit, init: 330.0 }
+  - { name: log_10_k_ir_joint,  dist: uniform, low: -2.0, high: 0.5, transform: logit, init: 0.0 }
+  - { name: log_10_gam_v_joint, dist: uniform, low: -2.0, high: 0.5, transform: logit, init: -1.3 }
+
+  # --- Shared equilibrium chemistry ---
+  - { name: M_to_H_joint,       dist: uniform, low: -1.0, high: 3.0, transform: logit, init: 0.5 }
+  - { name: C_to_O_joint,       dist: uniform, low: 0.1,  high: 2.0, transform: logit, init: 0.6 }
+
+  # --- Shared cloud (f_sed and optical shape) ---
+  - { name: log_10_f_sed_joint, dist: uniform, low: -4.0, high: 1.0, transform: logit, init: -1.0 }
+  - { name: cld_rho_joint,      dist: delta,   value: 3.2, transform: identity, init: 3.2 }  # ~MgSiO3 [g/cm^3]
+  - { name: cld_Q0_joint,       dist: uniform, low: 0.1,  high: 65,  transform: logit, init: 30.0 }
+  - { name: cld_a_joint,        dist: uniform, low: 3.0,  high: 7.0, transform: logit, init: 4.0 }
+  - { name: cld_Q1_joint,       dist: delta,   value: 1.0, transform: identity, init: 1.0 }
+
+  # --- Offset on the morning spectrum only (half-annulus units: +-250 ppm on (R/R_s)^2 -> +-125 ppm) ---
+  - {name: offset_evening_joint, dist: delta,   value: 0.0, transform: identity, init: 0.0}
+  - {name: offset_morning_joint, dist: uniform, low: -1.25e-4, high: 1.25e-4, transform: logit, init: 0.0}
+
+  # --- Evening (east) limb ---
+  - { name: T_eq_east,          dist: uniform, low: 800.0, high: 2100.0, transform: logit, init: 1500.0 }
+  - {name: log_10_q_c_east,     dist: uniform, low: -12, high: -2, transform: logit, init: -8 }
+  - {name: log_10_p_base_east,  dist: uniform, low: -6, high: 1, transform: logit, init: 0}
+  - {name: log_10_cld_r_east,   dist: uniform, low: -3, high: 2, transform: logit, init: -1 }
+
+  # --- Morning (west) limb: T_eq_west = T_eq_east + delta ---
+  - { name: delta_T_eq_west,    dist: uniform, low: -600.0, high: 0.0, transform: logit, init: -450.0 }
+  - {name: log_10_q_c_west,     dist: uniform, low: -12, high: -2, transform: logit, init: -4 }
+  - {name: log_10_p_base_west,  dist: uniform, low: -6, high: 1, transform: logit, init: 0}
+  - {name: log_10_cld_r_west,   dist: uniform, low: -3, high: 2, transform: logit, init: -1 }
+
+# ----------------------------------------------------------------------------------
+# FastChem 5D grid (equilibrium chemistry)
+# ----------------------------------------------------------------------------------
+fastchem_grid_jax:
+  grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
+  solver:
+    mode: vmap   # vmap | scan
+  bounds:
+    mode: clip
+  species_map:
+
+sampling:
+
+  engine: dynesty
+
+  # NUTS / HMC settings
+  nuts:
+    backend: numpyro
+    warmup: 100
+    draws: 100
+    seed: 42
+    chains: 1
+
+  # JAXNS settings
+  jaxns:
+    max_samples: 100000
+    num_live_points: 1000
+    s: 4
+    k: 0
+    c: null
+    allocation_target: uniform   # uniform, evidence_improving, posterior_improving
+    replacement_width: null      # parallel chains; null = 10 * free parameters
+    checkpoint_dir: null         # e.g. jaxns_checkpoint; resumes automatically if a checkpoint exists
+    checkpoint_cadence: 3600     # minimum seconds between saves, made at the end of a pass
+    verbose: true
+
+    termination:
+      ess: 10000
+      evidence_uncert: null
+      dlogZ: 0.1
+      max_samples: 100000
+      max_num_likelihood_evaluations: null
+      rtol: null
+      atol: null
+
+    posterior_samples: 10000
+    seed: 42
+
+  # BlackJAX nested sampling settings
+  blackjax_ns:
+    num_live_points: 500
+    num_inner_steps: 45
+    num_delete: 250
+    batch_size: 32                   # Particles evaluated together; sets peak memory, not the result. 0 = all at once
+    dlogz_stop: 0.1
+    seed: 42
+    posterior_samples: 10000
+
+  # Dynesty settings
+  dynesty:
+    nlive: 2000
+    bound: multi
+    sample: auto
+    dlogz: 0.5
+    maxiter: null
+    maxcall: null
+    bootstrap: 0
+    enlarge: null
+    update_interval: null
+    dynamic: false
+    print_progress: true
+    seed: 42
+
+  # UltraNest settings
+  ultranest:
+    num_live_points: 1000
+    min_num_live_points: 1000
+    dlogz: 0.1
+    max_iters: 0
+    verbose: true
+    show_status: true
+    log_dir: ultranest_run
+    resume: false
+
+  # Nautilus settings
+  nautilus:
+    n_live: 1000
+    n_update: null
+    split_threshold: 100
+    n_networks: 4
+    n_batch: null
+    n_like_new_bound: null
+    seed: 42
+    filepath: nautilus_checkpoint.hdf5
+    resume: false
+
+    f_live: 0.01
+    n_shell: 1
+    n_eff: null
+    n_like_max: null
+    discard_exploration: false
+    timeout: null
+    equal_weight: true
+    verbose: true
+
+  # PyMultiNest settings
+  pymultinest:
+    n_live_points: 2000
+    evidence_tolerance: 0.5
+    sampling_efficiency: 0.3
+    n_iter_before_update: 100
+    null_log_evidence: -1.0e99
+    max_modes: 100
+    mode_tolerance: -1.0e99
+    seed: -1
+    verbose: true
+    outputfiles_basename: pymultinest_
+    resume: false
+    importance_nested_sampling: false
+    multimodal: true
+    const_efficiency_mode: false
+
+  # nessai settings (normalising-flow proposals; needs the nessai extra)
+  nessai:
+    nlive: 2000                      # Number of live points
+    stopping: 0.1                    # dlogZ stopping criterion
+    seed: 42
+    output: nessai_run               # Output/checkpoint directory, relative to this file
+    resume: false                    # Continue from the checkpoint in output
+    checkpoint_interval: 600         # Seconds between checkpoints
+    pytorch_threads: 1               # CPU threads for flow training
+    plot: false                      # Write nessai's diagnostic plots to output
+
+  # BlackJAX persistent-sampling SMC settings
+  blackjax_smc:
+    num_particles: 1000              # Particles per temperature
+    num_mcmc_steps: 25               # Random-walk steps per particle per temperature
+    target_ess: 3.0                  # ESS target over all kept particles, as a multiple of num_particles
+    max_iterations: 200              # Upper limit on temperature steps; sets the stored array size
+    batch_size: 32                   # Particles per batch; lower it if memory runs out, 0 = all at once
+    posterior_samples: 5000
+    seed: 42
+    resume: false                    # Continue from checkpoint
+    checkpoint: blackjax_smc_checkpoint.npz
+    checkpoint_interval: 600         # Seconds between checkpoints
+
+  # pocoMC settings (normalising-flow preconditioning; needs the pixi pocomc environment)
+  pocomc:
+    n_effective: 512                 # Effective sample size per temperature
+    n_active: 256                    # Particles moved per iteration
+    n_total: 4096                    # Effective samples to collect at the end
+    n_evidence: 4096                 # Importance samples for logZ
+    batch_size: 32                   # Likelihood batch; lower it if memory runs out, null = n_active
+    posterior_samples: 5000
+    seed: 42
+    output: pocomc_run               # State directory, relative to this file
+    resume: false                    # Continue from the newest state in output
+    save_every: 5                    # Iterations between state files
+    pytorch_threads: 1               # CPU threads for flow training
+    progress: false                  # tqdm bar; keep false for batch jobs
+
+runtime:
+  platform: cuda
+  cuda_visible_devices: 1
+  threads: 1

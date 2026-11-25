@@ -7,7 +7,7 @@ from typing import Dict, Tuple, Optional
 import jax
 import jax.numpy as jnp
 
-from .aux_functions import pchip_1d
+from .aux_functions import opac_dtype, pchip_1d
 from .data_constants import bar
 from .mie_schemes import rayleigh, madt
 from .lxmie_mod import lxmie_jax
@@ -31,6 +31,7 @@ _LXMIE_CF_MAX_TERMS = 2000
 _LXMIE_CF_EPS = 1e-10
 _DIV_EPS = 1e-30
 _QC_EPS = 1e-30
+_LN10 = 2.302585092994046   # exp(_LN10 * x) is several times faster than 10.0 ** x
 _Q_EXT_MAX = 2.0
 _LOGNORMAL_N_NODES = 41
 _LOGNORMAL_Z_MAX = 5.0
@@ -667,16 +668,25 @@ def optics_grid_cloud(
     tab = ((1.0 - wr) * ((1.0 - ws) * table[:, ir, js] + ws * table[:, ir, js + 1])
            + wr * ((1.0 - ws) * table[:, ir + 1, js] + ws * table[:, ir + 1, js + 1]))
 
+    # Materialise the coarse (3, [nlay,] nwl_tab) interpolation once: otherwise XLA fuses it into the
+    # wavelength gather and redoes the 4-corner (r_g, sigma_g) lookup for every model wavelength.
+    tab = jax.lax.optimization_barrier(tab)
     idx = state["cloud_optics_wl_idx"]
     w = state["cloud_optics_wl_w"]
+    low = opac_dtype(state) == jnp.float32
+    if low:
+        # float32 RT: wavelength interpolation and exp in float32 (~1e-6 relative in k_ext; the
+        # (3, nlay, nwl) arrays of a radius gradient dominate the cloud cost).
+        tab, w = tab.astype(jnp.float32), w.astype(jnp.float32)
     vals = (1.0 - w) * tab[..., idx] + w * tab[..., idx + 1]      # (3, nwl) or (3, nlay, nwl)
 
-    ext_per_mass = 10.0 ** vals[0] / params["cld_rho"]           # cm^2 per g condensate
-    ssa_wl = jnp.clip(10.0 ** (vals[1] - vals[0]), 0.0, 1.0)
+    # exp(ln10 x) rather than 10 ** x: several times faster on these arrays.
+    ext_per_mass = jnp.exp(_LN10 * vals[0]) / jnp.asarray(params["cld_rho"], vals.dtype)   # cm^2 per g condensate
+    ssa_wl = jnp.clip(jnp.exp(_LN10 * (vals[1] - vals[0])), 0.0, 1.0)
     g_wl = vals[2]
 
     has_cloud = (q_c > 0.0)[:, None]
-    k_ext = q_c[:, None] * ext_per_mass
+    k_ext = q_c[:, None].astype(vals.dtype) * ext_per_mass
     ssa = jnp.where(has_cloud, ssa_wl, 0.0)
     g = jnp.where(has_cloud, g_wl, 0.0)
     return k_ext, ssa, g

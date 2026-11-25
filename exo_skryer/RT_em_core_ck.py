@@ -1,6 +1,10 @@
 """
-RT_em_1D_ck.py
-==============
+RT_em_core_ck.py
+================
+
+Emission spectra with correlated-k opacities (registry: emission_1d/ck). The solvers
+(eaa, toon89, dda; ``physics.em_scheme``) are in ``RT_em_solvers``; the Planck function and
+flux scaling are shared with ``RT_em_core_os``.
 """
 
 from __future__ import annotations
@@ -12,8 +16,9 @@ import jax.numpy as jnp
 from .aux_functions import sum_present
 from jax import lax
 
-from .data_constants import kb, h, c_light, pc
-from .RT_em_schemes import solve_alpha_eaa
+from .data_constants import pc
+from .RT_em_solvers import solve_alpha_eaa
+from .RT_em_core_os import _planck_lambda, _scale_flux_ratio
 
 __all__ = ["compute_emission_spectrum_1d_ck"]
 
@@ -49,12 +54,6 @@ def _sum_opacity_components_ck(
         return line_opacity
     return line_opacity + summed_2d[:, :, None]
 
-
-def _planck_lambda(wavelength_cm: jnp.ndarray, temperature: jnp.ndarray) -> jnp.ndarray:
-    exponent = (h * c_light) / (wavelength_cm * kb * jnp.maximum(temperature, 1.0))
-    expm1 = jnp.expm1(jnp.clip(exponent, None, 80.0))
-    prefactor = 2.0 * h * c_light**2 / (wavelength_cm**5)
-    return prefactor / jnp.maximum(expm1, 1e-300)
 
 
 def _layer_optical_depth_ck(k_tot: jnp.ndarray, rho: jnp.ndarray, dz: jnp.ndarray) -> jnp.ndarray:
@@ -93,22 +92,6 @@ def _compute_scattering_properties(
     ssa = jnp.clip(k_tot_scat / k_tot_safe, 0.0, 0.99)
     return ssa, g
 
-
-def _scale_flux_ratio(
-    flux: jnp.ndarray,
-    state: Dict[str, jnp.ndarray],
-    params: Dict[str, jnp.ndarray],
-) -> jnp.ndarray:
-    dtype = flux.dtype
-    stellar_flux = jnp.asarray(state.get("stellar_flux", jnp.ones_like(flux)), dtype=dtype)
-    has_stellar_flux = jnp.asarray(state.get("has_stellar_flux", 0), dtype=jnp.int32)
-    f_star_param = jnp.asarray(params.get("F_star", jnp.ones_like(stellar_flux)), dtype=dtype)
-    use_stellar = has_stellar_flux != 0
-    F_star = jnp.where(use_stellar, stellar_flux, f_star_param)
-    R0 = jnp.asarray(state["R0"], dtype=dtype)
-    R_s = jnp.asarray(state["R_s"], dtype=dtype)
-    scale = (R0**2) / (F_star * (R_s**2))
-    return flux * scale
 
 
 def compute_emission_spectrum_1d_ck(
