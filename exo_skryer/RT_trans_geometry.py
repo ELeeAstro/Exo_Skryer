@@ -38,6 +38,7 @@ __all__ = [
     "uniform_sector_fractions",
     "shared_ray_grid",
     "sector_geometry",
+    "day_night_slices",
 ]
 
 # One slice spanning the whole chord (dayside and nightside): the 1D case.
@@ -168,3 +169,28 @@ def sector_geometry(
     r_near = _window_radius(b[:, None], theta_near[None, :])                # (nray, nslice)
     opaque = jnp.any(r_near < r_low[None, :, 0] * (1.0 - 1e-12), axis=1)
     return P, opaque
+
+
+def day_night_slices(n_zenith: int, beta: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Zenith slices and interpolation weights for a day-night (2D) terminator (TRIDENT).
+
+    Slice 0 is the dayside (theta from -pi/2 to -beta/2), the last slice the nightside
+    (beta/2 to pi/2), and the ``n_zenith - 2`` slices between share the transition region
+    |theta| < beta/2 equally. ``beta`` (radians, may be traced) is the opening angle.
+
+    Returns the slice edges (n_zenith + 1,) and the night weight of each slice (n_zenith,):
+    0 for the day slice, 1 for the night slice, and (theta_centre + beta/2) / beta for the
+    transition slices, i.e. linear in angle across the transition.
+    """
+    if n_zenith < 2:
+        raise ValueError("A day-night terminator needs n_zenith >= 2.")
+    half = 0.5 * jnp.pi
+    if n_zenith == 2:
+        return jnp.array([-half, 0.0, half]), jnp.array([0.0, 1.0])
+    n_tr = n_zenith - 2
+    inner = -0.5 * beta + beta * jnp.arange(n_tr + 1) / n_tr            # transition edges
+    edges = jnp.concatenate([jnp.array([-half]), inner, jnp.array([half])])
+    centres = 0.5 * (inner[:-1] + inner[1:])
+    w_tr = (centres + 0.5 * beta) / jnp.where(beta > 0, beta, 1.0)
+    w = jnp.concatenate([jnp.zeros(1), w_tr, jnp.ones(1)])
+    return edges, w

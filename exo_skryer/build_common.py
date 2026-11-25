@@ -41,6 +41,8 @@ __all__ = [
     "validate_model",
     "extract_fixed_params",
     "make_mu_kernel",
+    "make_profile_fn",
+    "make_column_fn",
     "make_atmosphere_fn",
     "make_opacity_fn",
     "check_model_traces",
@@ -101,7 +103,7 @@ class ModelState(TypedDict, total=False):
 @dataclass(frozen=True)
 class ModelSpec:
     """Schemes selected from ``cfg.physics`` / ``cfg.opac``."""
-    geometry: str                      # "1d" | "1_5d"
+    geometry: str                      # "1d" | "1_5d" | "2d" | "3d"
     rt_scheme: str
     tp: Callable
     alt: Callable
@@ -181,17 +183,12 @@ def select_model(cfg, geometry: str = "1d") -> ModelSpec:
     if rt_raw is None or str(rt_raw).strip().lower() == "none":
         raise ValueError("physics.rt_scheme must be specified explicitly.")
     rt_scheme = str(rt_raw).strip().lower()
-    if rt_scheme in ("transit_2d", "transit_3d"):
-        raise NotImplementedError(
-            f"physics.rt_scheme: {rt_scheme} is planned but not implemented yet "
-            "(see plans/multiD_transmission_plan.md). Use transit_1d or transit_1_5d."
-        )
     emission_mode = str(getattr(phys, "emission_mode", "planet")).lower().replace(" ", "_")
-    if geometry == "1_5d":
-        if rt_scheme != "transit_1_5d":
-            raise ValueError("The 1.5D geometry requires physics.rt_scheme='transit_1_5d'.")
+    if geometry in ("1_5d", "2d", "3d"):
+        if rt_scheme != f"transit_{geometry}":
+            raise ValueError(f"The {geometry} geometry requires physics.rt_scheme='transit_{geometry}'.")
         if emission_mode not in ("planet", "none"):
-            raise NotImplementedError("transit_1_5d is only implemented for transit radiative transfer.")
+            raise NotImplementedError(f"transit_{geometry} is only implemented for transit radiative transfer.")
 
     schemes = {
         "vert_Tp": getattr(phys, "vert_Tp", None) or getattr(phys, "vert_struct", None),
@@ -281,18 +278,28 @@ def validate_model(cfg, spec: ModelSpec, opac_cache: Mapping[str, jnp.ndarray]) 
             raise ValueError("physics.contri_func=True is not supported with opac.ck_mix=TRANS. "
                              "Use ck_mix=RORR/PRAS or disable contribution functions.")
 
-    if spec.geometry == "1_5d":
-        from .limb_asymmetry import validate_limb_parameter_names
-        validate_limb_parameter_names(names)
-        if "M_p" in {split_limb_tag(n)[0] for n in names}:
-            raise NotImplementedError("transit_1_5d does not support M_p-based gravity inference. "
-                                      "Provide explicit log_10_g_east/log_10_g_west instead.")
+    if spec.geometry in ("1_5d", "2d", "3d"):
+        from .limb_asymmetry import ANCHOR_TAGS, validate_limb_parameter_names
+        scheme = f"transit_{spec.geometry}"
+        validate_limb_parameter_names(names, ANCHOR_TAGS[scheme])
+        bases = {split_limb_tag(n)[0] for n in names}
+        if "M_p" in bases:
+            raise NotImplementedError(f"{scheme} does not support M_p-based gravity inference. "
+                                      "Provide log_10_g (e.g. log_10_g_joint) instead.")
         if spec.contri_func:
-            raise NotImplementedError("physics.contri_func=True is not supported for transit_1_5d.")
+            raise NotImplementedError(f"physics.contri_func=True is not supported for {scheme}.")
         if spec.ck_mix is CkMix.PRAS:
-            raise NotImplementedError("transit_1_5d does not support ck_mix: PRAS yet.")
+            raise NotImplementedError(f"{scheme} does not support ck_mix: PRAS yet.")
         if spec.ck and str(getattr(cfg.opac, "ck", False)).strip().lower() not in ("true", "1", "yes", "on"):
-            raise ValueError("transit_1_5d with physics.opac_line: ck requires opac.ck: True.")
+            raise ValueError(f"{scheme} with physics.opac_line: ck requires opac.ck: True.")
+        if spec.geometry in ("2d", "3d"):
+            for base in ("p_bot", "p_top"):
+                if base in bases and f"{base}_joint" not in names:
+                    raise ValueError(f"{scheme} needs {base}_joint (all columns share one pressure grid).")
+            if "f_cloud" in bases and "f_cloud_joint" not in names:
+                raise NotImplementedError(f"{scheme} supports f_cloud only as f_cloud_joint.")
+            if "beta_dn_joint" not in names:
+                raise ValueError(f"{scheme} needs beta_dn_joint: the day-night transition opening angle [deg].")
 
 
 def check_model_traces(cfg, fn: Callable, *args, param_names=None) -> None:
@@ -366,7 +373,7 @@ def extract_fixed_params(cfg, geometry: str = "1d") -> Dict[str, jnp.ndarray]:
         else:
             raise ValueError("physics.cloud_dist must be 'mono' or 'log_normal' (or 1/2).")
         # 1.5D shares it across limbs via the _joint tag.
-        key = "cloud_dist_joint" if geometry == "1_5d" else "cloud_dist"
+        key = "cloud_dist_joint" if geometry in ("1_5d", "2d", "3d") else "cloud_dist"
         fixed[key] = jnp.asarray(code, dtype=jnp.int32)
     return fixed
 
@@ -420,12 +427,12 @@ def _cloud_profile_caller(fn: Callable) -> Callable:
     return call
 
 
-def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int) -> Callable:
-    """Return ``atmosphere(params, wl, opac) -> (state, params)``.
+def make_profile_fn(spec: ModelSpec, chem: Callable, nlay: int) -> Callable:
+    """Return ``profiles(params) -> prof`` with the pressure grid, T-p and chemistry.
 
-    Builds the pressure grid, T-p, chemistry, mu, altitude, densities and cloud
-    profile. With ``M_p`` the radius follows from mass and gravity and is
-    written back as ``R_p`` so altitude kernels use the same radius as the RT.
+    ``prof`` holds ``p_lev``, ``p_lay``, ``T_lev``, ``T_lay`` and ``vmr_lay``. Multi-column
+    transmission computes these for anchor columns and interpolates them for the rest
+    before ``make_column_fn``.
     """
     from . import profile_io
 
@@ -435,17 +442,8 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
         nlay = int(p_lay_file.shape[0])
     kzz_file = profile_io.profile_kzz() if file_grid and profile_io.has_kzz_profile() else None
     nlev = nlay + 1
-    cloud_profile = _cloud_profile_caller(spec.cloud_profile)
 
-    def atmosphere(params, wl, opac):
-        if "M_p" in params:
-            M_p = params["M_p"] * M_jup
-            g = 10.0 ** params["log_10_g"]
-            R0 = jnp.sqrt((G * M_p) / g)
-            params = {**params, "R_p": R0 / R_jup}
-        else:
-            R0 = params["R_p"] * R_jup
-
+    def profiles(params):
         if file_grid:
             # Layers (and derived levels) of the user T-p-mu-Kzz file
             p_lev, p_lay = p_lev_file, p_lay_file
@@ -456,6 +454,37 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
         # A Kzz profile from the file reaches chemistry (quench_approx) as params["Kzz_lay"]
         chem_params = params if kzz_file is None else {**params, "Kzz_lay": kzz_file}
         vmr_lay = chem(p_lay, T_lay, chem_params, nlay)
+        return {"p_lev": p_lev, "p_lay": p_lay, "T_lev": T_lev, "T_lay": T_lay, "vmr_lay": vmr_lay}
+
+    return profiles
+
+
+def make_column_fn(spec: ModelSpec, mu: Callable, nlay: int) -> Callable:
+    """Return ``column(prof, params, wl, opac) -> (state, params)`` from given profiles.
+
+    Adds the radius, mean molecular weight, hydrostatic altitude, densities and cloud
+    profile to the T-p and chemistry in ``prof`` (from ``make_profile_fn``, or
+    interpolated between anchor columns). With ``M_p`` the radius follows from mass and
+    gravity and is written back as ``R_p`` so altitude kernels use the same radius as the RT.
+    """
+    from . import profile_io
+
+    file_grid = spec.schemes.get("vert_Tp") == "file"
+    if file_grid:
+        nlay = int(profile_io.profile_grid()[1].shape[0])
+    kzz_file = profile_io.profile_kzz() if file_grid and profile_io.has_kzz_profile() else None
+    cloud_profile = _cloud_profile_caller(spec.cloud_profile)
+
+    def column(prof, params, wl, opac):
+        if "M_p" in params:
+            M_p = params["M_p"] * M_jup
+            g = 10.0 ** params["log_10_g"]
+            R0 = jnp.sqrt((G * M_p) / g)
+            params = {**params, "R_p": R0 / R_jup}
+        else:
+            R0 = params["R_p"] * R_jup
+
+        p_lev, p_lay, T_lev, T_lay, vmr_lay = (prof[k] for k in ("p_lev", "p_lay", "T_lev", "T_lay", "vmr_lay"))
         mu_lay = mu(params, vmr_lay, nlay)
         z_lev, z_lay, dz = spec.alt(p_lev, T_lay, mu_lay, params)
         rho_lay = (mu_lay * amu * p_lay) / (kb * T_lay)
@@ -496,6 +525,21 @@ def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int)
         if spec.ck_mix is not None:
             state["ck_mix"] = int(spec.ck_mix)
         return state, params
+
+    return column
+
+
+def make_atmosphere_fn(spec: ModelSpec, chem: Callable, mu: Callable, nlay: int) -> Callable:
+    """Return ``atmosphere(params, wl, opac) -> (state, params)``: profiles then the column.
+
+    Builds the pressure grid, T-p, chemistry (``make_profile_fn``) and then mu, altitude,
+    densities and cloud profile (``make_column_fn``).
+    """
+    profiles = make_profile_fn(spec, chem, nlay)
+    column = make_column_fn(spec, mu, nlay)
+
+    def atmosphere(params, wl, opac):
+        return column(profiles(params), params, wl, opac)
 
     return atmosphere
 

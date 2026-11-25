@@ -9,7 +9,18 @@ Forward model for transmission spectra, for every geometry, chosen with
 - ``transit_1_5d``: two azimuthal sectors (east = evening, west = morning), each a
   half annulus with its own column. Parameters are tagged ``_joint/_east/_west``
   (``limb_asymmetry``).
-- ``transit_2d`` / ``transit_3d``: planned (more sectors and zenith slices).
+- ``transit_2d``: day-night terminator (TRIDENT): one sector (the full annulus) cut
+  into ``physics.n_zenith`` slices along the line of sight: a dayside slice, a
+  nightside slice and ``n_zenith - 2`` transition slices across the opening angle
+  ``beta_dn_joint`` [deg]. Day and night anchor columns get the full T-p and
+  chemistry from ``_day`` / ``_night`` / ``_joint`` parameters; transition columns
+  interpolate T(p), log VMR(p) and the other per-column parameters linearly in angle.
+- ``transit_3d``: east/west limbs (two half-annulus sectors), each with its own
+  day-night structure: ``n_zenith`` slices per sector from the shared
+  ``beta_dn_joint``. Four full-physics anchors (``_east_day``, ``_west_day``,
+  ``_east_night``, ``_west_night``); each limb's transition columns interpolate
+  between its day and night anchors. Fits limb-resolved spectra like 1.5D.
+  (A smooth azimuthal transition between the limbs is planned.)
 
 Every column is a full 1D atmosphere (T-p, chemistry, mu, hydrostatic altitude,
 clouds, opacities) built with the shared kernels in ``build_common``; columns are
@@ -37,16 +48,18 @@ from .build_common import (
     check_model_traces,
     extract_fixed_params,
     make_atmosphere_fn,
+    make_column_fn,
     make_mu_kernel,
     make_opacity_fn,
+    make_profile_fn,
     select_model,
     validate_model,
 )
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
-from .limb_asymmetry import merge_limb_parameter_dict, split_limb_parameter_dict
+from .limb_asymmetry import ANCHOR_TAGS, merge_limb_parameter_dict, split_limb_parameter_dict
 from .RT_trans_core_ck import column_dtau_ck, column_dtau_ck_trans, sector_dR2_ro, _get_ck_weights
 from .RT_trans_core_os import column_dtau_os, sector_dR2
-from .RT_trans_geometry import FULL_CHORD
+from .RT_trans_geometry import FULL_CHORD, day_night_slices
 
 __all__ = ["build_forward_model_trans"]
 
@@ -54,21 +67,57 @@ __all__ = ["build_forward_model_trans"]
 _LAYOUTS = {
     "1d": (("all",), (1.0,)),
     "1_5d": (("east", "west"), (0.5, 0.5)),
+    "2d": (("all",), (1.0,)),
+    "3d": (("east", "west"), (0.5, 0.5)),
 }
+# For day-night geometries: (day anchor, night anchor) index pairs, one per sector,
+# in the order of ANCHOR_TAGS[transit_<geometry>].
+_DAY_NIGHT_PAIRS = {"2d": ((0, 1),), "3d": ((0, 2), (1, 3))}
+_VMR_FLOOR = 1e-300
 
 
-def _column_params(geometry: str, params: Dict[str, jnp.ndarray]) -> Dict[str, jnp.ndarray]:
-    """Parameters of every column, stacked on a leading column axis."""
+def _anchor_params(geometry: str, params: Dict[str, jnp.ndarray]):
+    """(joint params, parameters of every anchor column stacked on a leading axis)."""
     if geometry == "1d":
-        return tree_util.tree_map(lambda x: jnp.asarray(x)[None], params)
-    joint, east, west = split_limb_parameter_dict(params)
-    p_e, p_w = merge_limb_parameter_dict(joint, east), merge_limb_parameter_dict(joint, west)
-    if set(p_e) != set(p_w):
-        raise ValueError(
-            "East/west limb parameters must share identical base names. "
-            f"Missing east={sorted(set(p_w) - set(p_e))}, missing west={sorted(set(p_e) - set(p_w))}"
-        )
-    return {k: jnp.stack([jnp.asarray(p_e[k]), jnp.asarray(p_w[k])]) for k in sorted(p_e)}
+        return params, tree_util.tree_map(lambda x: jnp.asarray(x)[None], params)
+    joint, *anchors = split_limb_parameter_dict(params, ANCHOR_TAGS[f"transit_{geometry}"])
+    merged = [merge_limb_parameter_dict(joint, a) for a in anchors]
+    keys = set(merged[0])
+    if any(set(m) != keys for m in merged):
+        raise ValueError("All anchor columns must share identical parameter base names: "
+                         + "; ".join(str(sorted(set(m) ^ keys)) for m in merged))
+    return joint, {k: jnp.stack([jnp.asarray(m[k]) for m in merged]) for k in sorted(keys)}
+
+
+def _interp_columns(anchor: Dict, w: jnp.ndarray, prof: Dict):
+    """Day (anchor 0) / night (anchor 1) interpolation to columns with night weights ``w``.
+
+    T and scalar parameters are linear in w, VMRs log-linear; integer parameters and the
+    pressure grid are taken from the dayside.
+    """
+    n = w.shape[0]
+
+    def lin(x):
+        x = jnp.asarray(x)
+        if not jnp.issubdtype(x.dtype, jnp.floating):
+            return jnp.broadcast_to(x[0], (n,) + x.shape[1:])
+        ww = w.reshape((n,) + (1,) * (x.ndim - 1))
+        return (1.0 - ww) * x[0] + ww * x[1]
+
+    def loglin(x):
+        x = jnp.asarray(x)
+        ww = w.reshape((n,) + (1,) * (x.ndim - 1))
+        lx = jnp.log(jnp.maximum(x, _VMR_FLOOR))
+        return jnp.exp((1.0 - ww) * lx[0] + ww * lx[1])
+
+    cols_prof = {
+        "p_lev": jnp.broadcast_to(prof["p_lev"][0], (n,) + prof["p_lev"].shape[1:]),
+        "p_lay": jnp.broadcast_to(prof["p_lay"][0], (n,) + prof["p_lay"].shape[1:]),
+        "T_lev": lin(prof["T_lev"]),
+        "T_lay": lin(prof["T_lay"]),
+        "vmr_lay": {k: (lin(v) if k.startswith("__") else loglin(v)) for k, v in prof["vmr_lay"].items()},
+    }
+    return cols_prof, {k: lin(v) for k, v in anchor.items()}
 
 
 def build_forward_model_trans(
@@ -86,7 +135,7 @@ def build_forward_model_trans(
     """
     del stellar_flux  # transmission does not use the stellar spectrum
     rt_scheme = str(cfg.physics.rt_scheme).strip().lower()
-    geometry = "1_5d" if rt_scheme == "transit_1_5d" else "1d"
+    geometry = {"transit_1_5d": "1_5d", "transit_2d": "2d", "transit_3d": "3d"}.get(rt_scheme, "1d")
     spec = select_model(cfg, geometry)
     init_chemistry(cfg, exp_dir)
     opac_cache = XS.runtime_opacity_cache()
@@ -95,8 +144,8 @@ def build_forward_model_trans(
     names, fracs = _LAYOUTS[geometry]
     n_sector = len(names)
     sector_frac = jnp.asarray(fracs)
-    theta_edges = FULL_CHORD                  # one zenith slice per sector (for now)
-    has_limb_obs = geometry == "1_5d" and bool(obs.get("has_limb_observations", False))
+    n_slice = int(getattr(cfg.physics, "n_zenith", 6)) if geometry in ("2d", "3d") else 1
+    has_limb_obs = geometry in ("1_5d", "3d") and bool(obs.get("has_limb_observations", False))
     mode = "os" if not spec.ck else ("ck_trans" if spec.ck_mix is CkMix.TRANS else "ck")
     want_contrib = spec.contri_func
 
@@ -104,20 +153,41 @@ def build_forward_model_trans(
     wl_hi = jnp.asarray(np.asarray(XS.master_wavelength_cut(), dtype=float))
     bandpass_cache = get_bandpass_cache()
     chem, trace_species = prepare_chemistry_kernel(cfg, spec.chem, spec.opacity_schemes())
-    atmosphere = make_atmosphere_fn(spec, chem, make_mu_kernel(cfg, spec, trace_species), nlay)
+    mu_kernel = make_mu_kernel(cfg, spec, trace_species)
+    atmosphere = make_atmosphere_fn(spec, chem, mu_kernel, nlay)
+    profiles = make_profile_fn(spec, chem, nlay)
+    column = make_column_fn(spec, mu_kernel, nlay)
     opacities = make_opacity_fn(spec)
     fixed_params = extract_fixed_params(cfg, geometry)
 
     @jax.jit
     def _forward_model_impl(params, wl, opac, bandpass):
-        def build_column(p):
-            state, p = atmosphere(p, wl, opac)
+        joint, anchors = _anchor_params(geometry, {**fixed_params, **params})
+
+        # State and opacities in one vmapped function: static fields of the state (nlay, nwl,
+        # flags) are traced once they leave a vmap, and the opacity kernels need them static.
+        def with_opacities(state, p):
             return state, p, opacities(state, p, opac)
 
-        states, col_params, comps = jax.vmap(build_column)(_column_params(geometry, {**fixed_params, **params}))
+        if geometry in _DAY_NIGHT_PAIRS:
+            # Anchor profiles, then each sector's columns interpolated from its day to its night anchor.
+            theta_edges, w_night = day_night_slices(n_slice, jnp.deg2rad(joint["beta_dn"]))
+            anchor_prof = jax.vmap(profiles)(anchors)
+            pick = lambda tree, ij: tree_util.tree_map(lambda x: x[jnp.asarray(ij)], tree)
+            per_sector = [_interp_columns(pick(anchors, ij), w_night, pick(anchor_prof, ij))
+                          for ij in _DAY_NIGHT_PAIRS[geometry]]
+            col_prof, col_in = tree_util.tree_map(lambda *xs: jnp.concatenate(xs, axis=0), *per_sector)
+            states, col_params, comps = jax.vmap(
+                lambda pr, p: with_opacities(*column(pr, p, wl, opac)))(col_prof, col_in)
+        else:
+            theta_edges = FULL_CHORD
+            states, col_params, comps = jax.vmap(lambda p: with_opacities(*atmosphere(p, wl, opac)))(anchors)
+
+        # Columns are sector-major: (nsector * nslice, ...) -> (nsector, nslice, ...).
+        grid = lambda x: x.reshape((n_sector, n_slice) + x.shape[1:])
         R_s = states["R_s"][0]
-        r_low = (states["R0"][:, None] + states["z_lev"][:, :-1])[:, None, :]   # (nsector, nslice=1, nlay)
-        r_up = (states["R0"][:, None] + states["z_lev"][:, 1:])[:, None, :]
+        r_low = grid(states["R0"][:, None] + states["z_lev"][:, :-1])
+        r_up = grid(states["R0"][:, None] + states["z_lev"][:, 1:])
         g_weights = _get_ck_weights(opac)[: comps["line"].shape[-1]] if mode == "ck" else None
         partial_cloud = "f_cloud" in col_params and "cloud" in comps
 
@@ -125,18 +195,20 @@ def build_forward_model_trans(
             """Per-sector absorbing area (nsector, nwl[, ng]), per-cell contribution, R_base."""
             if mode == "ck_trans":
                 dcont, dspec = jax.vmap(lambda s, c: column_dtau_ck_trans(s, c, clear))(states, comps)
+                dcont, dspec = grid(dcont), jnp.moveaxis(grid(dspec), 2, 1)   # (nsec, nspec, nslice, ...)
                 dR2, R_base = sector_dR2_ro(r_low, r_up, theta_edges,
-                                            lambda j: (dcont[j][None], dspec[j][:, None]), _get_ck_weights(opac))
+                                            lambda j: (dcont[j], dspec[j]), _get_ck_weights(opac))
                 return dR2, None, R_base
             if mode == "ck":
                 dtau = jax.vmap(lambda s, c: column_dtau_ck(s, c, opac, clear))(states, comps)
             else:
                 dtau = jax.vmap(lambda s, c: column_dtau_os(s, c, clear))(states, comps)
-            return sector_dR2(r_low, r_up, theta_edges, lambda j: dtau[j][None], g_weights, want_contrib)
+            dtau = grid(dtau)
+            return sector_dR2(r_low, r_up, theta_edges, lambda j: dtau[j], g_weights, want_contrib)
 
         dR2, contrib, R_base = sector_areas(clear=False)
         if partial_cloud:
-            f = jnp.clip(col_params["f_cloud"], 0.0, 1.0)                        # (nsector,)
+            f = jnp.clip(grid(col_params["f_cloud"])[:, 0], 0.0, 1.0)            # (nsector,)
             dR2_clear, contrib_clear, _ = sector_areas(clear=True)
             fb = f.reshape((-1,) + (1,) * (dR2.ndim - 1))
             dR2 = fb * dR2 + (1.0 - fb) * dR2_clear
@@ -170,7 +242,18 @@ def build_forward_model_trans(
                 result["p_lay"] = state0["p_lay"]
             return result
 
-        # 1.5D: sector j's depth is its half-annulus share (= 0.5 x its full-circle depth).
+        if geometry == "2d":
+            D_bin = apply_response_functions_cached(D_hires, bandpass)
+            if not return_highres:
+                return D_bin
+            return {
+                "hires": D_hires, "binned": D_bin,
+                "theta_edges": theta_edges, "night_weight": w_night,
+                "p_lay": states["p_lay"][0], "T_lay_columns": states["T_lay"],
+                "z_lev_columns": states["z_lev"],
+            }
+
+        # 1.5D / 3D: sector j's depth is its half-annulus share (= 0.5 x its full-circle depth).
         binned_sector = jax.vmap(lambda d: apply_response_functions_cached(d, bandpass))(D_sector)
         binned_combined = jnp.sum(binned_sector, axis=0)
         if has_limb_obs:
@@ -180,7 +263,11 @@ def build_forward_model_trans(
             binned_likelihood = binned_combined
         if not return_highres:
             return binned_likelihood
-        return {
+        extra = {}
+        if geometry == "3d":
+            extra = {"theta_edges": theta_edges, "night_weight": w_night,
+                     "T_lay_columns": grid(states["T_lay"]), "z_lev_columns": grid(states["z_lev"])}
+        return {**extra,
             "hires_east": D_sector[0] / fracs[0], "hires_west": D_sector[1] / fracs[1],
             "hires_combined": D_hires,
             "hires_east_scaled": D_sector[0], "hires_west_scaled": D_sector[1],
@@ -188,8 +275,8 @@ def build_forward_model_trans(
             "binned_combined": binned_combined,
             "binned_east_scaled": binned_sector[0], "binned_west_scaled": binned_sector[1],
             "binned_likelihood": binned_likelihood,
-            "p_lay_east": states["p_lay"][0], "p_lay_west": states["p_lay"][1],
-            "T_lay_east": states["T_lay"][0], "T_lay_west": states["T_lay"][1],
+            "p_lay_east": grid(states["p_lay"])[0, 0], "p_lay_west": grid(states["p_lay"])[1, 0],
+            "T_lay_east": grid(states["T_lay"])[0, 0], "T_lay_west": grid(states["T_lay"])[1, 0],
         }
 
     runtime_args = (wl_hi, opac_cache, bandpass_cache)

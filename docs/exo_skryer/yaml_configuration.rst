@@ -289,19 +289,54 @@ determines which retrieval parameters (in ``params``) you must provide.
 ``physics.rt_scheme``
   Radiative transfer mode.
 
-  *Supported values*: ``transit_1d``, ``transit_1_5d``, or ``emission_1d``.
+  *Supported values*: ``transit_1d``, ``transit_1_5d``, ``transit_2d``, ``transit_3d``,
+  or ``emission_1d`` (``albedo_1d`` is planned).
 
-  Notes for ``transit_1_5d``:
+  All transmission geometries use one ray-tracing path (TRIDENT geometry; MacDonald &
+  Lewis 2022): each column is a full 1D atmosphere, and rays use a grid shared by all
+  columns. Columns share the radius ``R_p`` at ``p_ref``; a ray that passes below a
+  column's bottom is opaque.
 
-  * Use ``data.obs_east`` and ``data.obs_west`` to fit separate limb spectra.
-    If only ``data.obs`` is supplied, the model compares the hemispheric mean
-    ``0.5 * east + 0.5 * west`` to the combined observation.
+  Notes for ``transit_1_5d`` (two half-annulus sectors: east = evening, west = morning):
+
+  * Use ``data.obs_east`` and ``data.obs_west`` to fit separate limb spectra
+    (half-annulus depths, i.e. 0.5 x (R_limb / R_s)^2). If only ``data.obs`` is
+    supplied, the model compares the sum of the two half-annulus spectra to it.
   * Every YAML parameter name must end in ``_joint``, ``_east``, or ``_west``.
   * Use ``_joint`` for shared quantities; use paired ``_east``/``_west`` entries
-    for limb-specific quantities.
+    for limb-specific quantities, or one limb as an offset from the other with
+    ``delta_<name>_west`` (``<name>_west = <name>_east + delta``).
   * ``M_p``-based radius/gravity inference is not supported; provide explicit
     ``log_10_g_east``/``log_10_g_west`` or a shared ``log_10_g_joint``.
   * ``physics.contri_func: true`` is not supported.
+
+  Notes for ``transit_2d`` (day-night terminator, TRIDENT):
+
+  * One sector covering the whole annulus, cut into ``physics.n_zenith`` slices along
+    the line of sight (default 6; >= 6 keeps the error below ~1e-3 relative): a dayside
+    slice, a nightside slice and ``n_zenith - 2`` transition slices spanning the opening
+    angle ``beta_dn_joint`` [deg] around the terminator plane.
+  * Parameters end in ``_joint``, ``_day`` or ``_night`` (offsets with
+    ``delta_<name>_night`` as above). Day and night anchor columns get the full T-p and
+    chemistry; transition columns interpolate T(p), log VMR(p) and the other per-column
+    parameters linearly in angle.
+  * ``beta_dn_joint`` is required (it can be free). ``p_bot`` / ``p_top`` must be
+    ``_joint``; ``f_cloud`` only as ``f_cloud_joint``.
+  * Fits a single (whole-terminator) spectrum, ``data.obs``.
+  * ``M_p``, ``physics.contri_func: true`` and ``ck_mix: PRAS`` are not supported.
+
+  Notes for ``transit_3d`` (east/west limbs, each with day-night structure):
+
+  * Two half-annulus sectors (east = evening, west = morning), each cut into
+    ``physics.n_zenith`` day-night slices with the shared ``beta_dn_joint`` (as in 2D).
+  * Parameters end in ``_joint``, ``_east_day``, ``_west_day``, ``_east_night`` or
+    ``_west_night``. Offsets: ``delta_<name>_west_day`` (from east day) and
+    ``delta_<name>_<limb>_night`` (from that limb's day); e.g. a fixed
+    ``delta_log_10_f_H2O_east_night: 0`` shares the day abundance with the night.
+  * Each limb's transition columns interpolate between its day and night anchors.
+  * Fits limb-resolved spectra (``data.obs_east`` / ``data.obs_west``, half-annulus
+    depths) or the whole-terminator spectrum, as in 1.5D. The same restrictions as 2D
+    apply. A smooth azimuthal transition between the limbs is planned.
 
 ``physics.emission_mode``
   Only relevant for ``physics.rt_scheme: emission_1d``.

@@ -229,3 +229,62 @@ def test_columns_gradients_finite():
 
     g = jax.grad(total, argnums=(0, 1))(1.0, 1.0)
     assert all(bool(jnp.isfinite(x)) for x in g)
+
+
+# ---------------------------------------------------------------------------
+# 2D day-night layout and tagging
+# ---------------------------------------------------------------------------
+
+from exo_skryer.RT_trans_geometry import day_night_slices  # noqa: E402
+from exo_skryer.limb_asymmetry import split_limb_parameter_dict, validate_limb_parameter_names  # noqa: E402
+
+
+@pytest.mark.parametrize("n_zenith", [2, 3, 6, 10])
+@pytest.mark.parametrize("beta_deg", [0.0, 20.0, 90.0])
+def test_day_night_slices(n_zenith, beta_deg):
+    edges, w = day_night_slices(n_zenith, jnp.deg2rad(beta_deg))
+    assert edges.shape == (n_zenith + 1,) and w.shape == (n_zenith,)
+    np.testing.assert_allclose([edges[0], edges[-1]], [-np.pi / 2, np.pi / 2])
+    assert bool(jnp.all(jnp.diff(edges) >= 0))
+    assert float(w[0]) == 0.0 and float(w[-1]) == 1.0
+    assert bool(jnp.all((w >= 0) & (w <= 1)) & jnp.all(jnp.diff(w) >= 0))
+    if n_zenith > 2:
+        np.testing.assert_allclose([edges[1], edges[-2]], [-np.deg2rad(beta_deg) / 2, np.deg2rad(beta_deg) / 2])
+
+
+def test_identical_day_night_columns_any_slicing_reproduce_1d():
+    st, rng = _state()
+    k = jnp.asarray(10 ** rng.uniform(-4, 1, (NLAY, NWL)))
+    D1, _ = compute_transit_depth_1d_os(st, {}, {"line": k}, None)
+    dtau = vertical_tau(k, st["rho_lay"], st["dz"])
+    for n_z, beta in ((2, 10.0), (6, 30.0), (10, 80.0)):
+        edges, _ = day_night_slices(n_z, jnp.deg2rad(beta))
+        r_low, r_up = _tile_columns(st, 1, n_z)
+        D, _ = transit_depth_columns(r_low, r_up, edges, jnp.ones(1),
+                                     lambda j: jnp.broadcast_to(dtau, (n_z,) + dtau.shape), st["R_s"])
+        np.testing.assert_allclose(D, D1, rtol=1e-9)
+
+
+def test_day_night_tagging_and_offsets():
+    p = {"R_p_joint": 1.0, "T_iso_day": 2000.0, "delta_T_iso_night": -800.0, "beta_dn_joint": 20.0}
+    joint, day, night = split_limb_parameter_dict({k: jnp.asarray(v) for k, v in p.items()}, ("day", "night"))
+    assert float(night["T_iso"]) == 1200.0 and float(day["T_iso"]) == 2000.0
+    assert set(joint) == {"R_p", "beta_dn"}
+    with pytest.raises(ValueError):
+        validate_limb_parameter_names({"T_iso_east": 1, "T_iso_west": 1}, ("day", "night"))
+    with pytest.raises(ValueError):
+        validate_limb_parameter_names({"T_iso_day": 1}, ("day", "night"))
+
+
+def test_3d_tags_and_offset_chain():
+    from exo_skryer.limb_asymmetry import ANCHOR_TAGS, split_limb_tag
+    A = ANCHOR_TAGS["transit_3d"]
+    assert split_limb_tag("T_iso_east_day") == ("T_iso", "east_day")
+    assert split_limb_tag("log_10_f_H2O_west_night") == ("log_10_f_H2O", "west_night")
+    p = {"R_p_joint": 1.0, "T_iso_east_day": 2000.0, "delta_T_iso_west_day": -100.0,
+         "delta_T_iso_east_night": -600.0, "delta_T_iso_west_night": -700.0}
+    _, ed, wd, en, wn = split_limb_parameter_dict({k: jnp.asarray(v) for k, v in p.items()}, A)
+    assert [float(d["T_iso"]) for d in (ed, wd, en, wn)] == [2000.0, 1900.0, 1400.0, 1200.0]
+    with pytest.raises(ValueError):   # days cannot come from nights
+        validate_limb_parameter_names({"T_iso_east_night": 1, "T_iso_west_night": 1,
+                                       "delta_T_iso_east_day": 0, "delta_T_iso_west_day": 0}, A)
