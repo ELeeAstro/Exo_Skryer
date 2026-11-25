@@ -37,6 +37,8 @@ __all__ = [
     "uniform_theta_edges",
     "uniform_sector_fractions",
     "shared_ray_grid",
+    "azimuth_weights",
+    "insert_zone_edge",
     "sector_geometry",
     "day_night_slices",
 ]
@@ -194,3 +196,60 @@ def day_night_slices(n_zenith: int, beta: jnp.ndarray) -> Tuple[jnp.ndarray, jnp
     w_tr = (centres + 0.5 * beta) / jnp.where(beta > 0, beta, 1.0)
     w = jnp.concatenate([jnp.zeros(1), w_tr, jnp.ones(1)])
     return edges, w
+
+
+# ---------------------------------------------------------------------------
+# Full-circle azimuthal weights and extra zone edges (limb split, Iceberg clouds)
+# ---------------------------------------------------------------------------
+
+def azimuth_weights(
+    phi_edges: jnp.ndarray,   # (nsector + 1,) northern-hemisphere sector edges, -pi/2 .. pi/2
+    phi_0: jnp.ndarray = 0.0,  # cloud start [rad], clockwise from the north pole
+    f_cloud: jnp.ndarray = 0.0,  # azimuthal cloud fraction of the full terminator
+    cloud: bool = False,
+) -> jnp.ndarray:
+    """Share of the full terminator annulus in each (sector, clear/cloudy, evening/morning).
+
+    The northern sectors (phi = angle clockwise from the north pole; phi < 0 is the
+    evening limb, phi > 0 the morning limb) are mirrored to the south. With ``cloud``, an
+    azimuthal cloud wedge starts at ``phi_0`` and spans ``2 pi f_cloud`` clockwise
+    (MacDonald & Lewis 2022, Eq. 47; POSEIDON ``extend_rad_transfer_grids``), so it may
+    break north-south symmetry.
+
+    Returns W (nsector, 2, 2): axis 1 is (clear, cloudy), axis 2 (evening, morning).
+    W sums to 1; each limb holds 1/2. Static shape, differentiable in phi_0 and f_cloud.
+    """
+    two_pi, half = 2.0 * jnp.pi, 0.5 * jnp.pi
+    # Full-circle angle Psi = pi/2 + phi in [0, 2 pi): 0 = evening equator, pi/2 north pole.
+    north = half + phi_edges
+    fixed = jnp.concatenate([north, two_pi - north, jnp.array([0.0, half, jnp.pi, 1.5 * jnp.pi, two_pi])])
+    psi0 = jnp.mod(half + phi_0, two_pi)
+    span = two_pi * jnp.clip(f_cloud, 0.0, 1.0)
+    psi_end = jnp.mod(psi0 + span, two_pi)
+    edges = jnp.sort(jnp.concatenate([fixed, jnp.stack([psi0, psi_end])]) if cloud else fixed)
+    width = jnp.diff(edges)
+    centre = 0.5 * (edges[:-1] + edges[1:])
+    phi = jnp.where(centre <= jnp.pi, centre, two_pi - centre) - half          # mirrored to the north
+    nsec = phi_edges.shape[0] - 1
+    j = jnp.clip(jnp.searchsorted(phi_edges, phi, side="right") - 1, 0, nsec - 1)
+    if cloud:
+        wraps = psi0 + span >= two_pi
+        cloudy = jnp.where(wraps, (centre <= psi_end) | (centre >= psi0), (centre >= psi0) & (centre <= psi_end))
+    else:
+        cloudy = jnp.zeros(centre.shape, dtype=bool)
+    morning = phi > 0.0
+    W = jnp.zeros((nsec, 2, 2), dtype=width.dtype)
+    return W.at[j, cloudy.astype(jnp.int32), morning.astype(jnp.int32)].add(width / two_pi)
+
+
+def insert_zone_edge(theta_edges: jnp.ndarray, theta_0: jnp.ndarray):
+    """Zone edges with ``theta_0`` inserted: (edges (nslice + 2,), background zone of each
+    new slice (nslice + 1,), slice lies at theta >= theta_0 (nslice + 1,)).
+
+    Splitting a slice leaves the path integral unchanged (the two parts share a column);
+    a zero-width slice (theta_0 on an existing edge) carries no path.
+    """
+    edges = jnp.sort(jnp.concatenate([theta_edges, jnp.reshape(theta_0, (1,))]))
+    centre = 0.5 * (edges[:-1] + edges[1:])
+    k = jnp.clip(jnp.searchsorted(theta_edges, centre, side="right") - 1, 0, theta_edges.shape[0] - 2)
+    return edges, k, centre >= theta_0

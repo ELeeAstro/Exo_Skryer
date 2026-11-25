@@ -339,7 +339,18 @@ determines which retrieval parameters (in ``params``) you must provide.
   * Each column takes T(p) and X(p) at its sector/zone centre: linear in angle across the
     transitions, linear in log P between 1e-5 and 10 bar, constant outside. Every column
     computes its own hydrostatics and opacities.
-  * Fits the whole-terminator spectrum (``data.obs``).
+  * Fits the whole-terminator spectrum (``data.obs``) or, with limb observations, the evening and
+    morning half-annulus spectra (as in 1.5D: ``east`` = evening, ``west`` = morning). Outputs
+    ``hires_east`` / ``hires_west`` (full-circle equivalent) and ``*_scaled`` (halves summing to
+    the total).
+  * Iceberg clouds (Eq. 47): ``physics.iceberg_cloud: True`` adds a grey cloud of opacity
+    ``10**log_10_k_cld`` [m^-1] at P >= ``10**log_10_p_cld`` [bar], in the azimuthal wedge starting
+    at ``phi_0_cld`` [deg, clockwise from the north pole] and covering a fraction ``f_cld`` of the
+    terminator, and on the nightside of the zenith angle ``theta_0_cld`` [deg]. Defaults
+    ``f_cld = 1``, ``phi_0_cld = theta_0_cld = -90`` give a uniform deck. Cloud edges become extra
+    sector and zone boundaries, so the cloud may break north-south symmetry. Each sector is
+    computed clear and cloudy (2x the RT cost). Matches POSEIDON ``TRIDENT()`` exactly with its
+    quadrature. Not combinable with ``f_cloud``.
 
   Notes for ``transit_3d`` (east/west limbs, each with day-night structure):
 

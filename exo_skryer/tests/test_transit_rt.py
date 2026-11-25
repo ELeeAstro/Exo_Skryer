@@ -325,3 +325,71 @@ def test_trident_vertical_profile():
     T = np.asarray(trident_vertical(p, 1000.0, 2000.0))
     np.testing.assert_allclose(T[[0, 1]], 1000.0); np.testing.assert_allclose(T[[3, 4]], 2000.0)
     np.testing.assert_allclose(T[2], 1000.0 + 1000.0 * 3.0 / 6.0)    # log10(1e-2/1e-5) / log10(10/1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Iceberg clouds and evening / morning split (TRIDENT)
+# ---------------------------------------------------------------------------
+
+def test_azimuth_weights_no_cloud_matches_sectors_and_limbs():
+    from exo_skryer.RT_trans_geometry import azimuth_weights
+    from exo_skryer.build_model_trans import trident_angles
+    edges, _, widths = trident_angles(2, 40.0)
+    W = np.asarray(azimuth_weights(edges))
+    np.testing.assert_allclose(W.sum(axis=(1, 2)), np.asarray(widths) / np.pi, atol=1e-15)
+    np.testing.assert_allclose(W.sum(axis=(0, 1)), [0.5, 0.5], atol=1e-15)
+    assert W[:, 1].sum() == 0.0
+    # One sector spanning the terminator: half evening, half morning.
+    W1 = np.asarray(azimuth_weights(trident_angles(None, 0.0)[0]))
+    np.testing.assert_allclose(W1[0, 0], [0.5, 0.5], atol=1e-15)
+
+
+@pytest.mark.parametrize("phi0, f, cloudy_em", [
+    (0.0, 0.6, (0.1, 0.5)),      # from the north pole clockwise: all of the morning limb
+    (-90.0, 0.5, (0.25, 0.25)),  # northern hemisphere
+    (-30.0, 0.6, (0.1, 0.5)),
+    (120.0, 0.5, (1 / 3, 1 / 6)),  # 210..390 deg: wraps past the evening equator
+    (10.0, 1.0, (0.5, 0.5)),
+    (10.0, 0.0, (0.0, 0.0)),
+])
+def test_azimuth_weights_cloud_wedge(phi0, f, cloudy_em):
+    from exo_skryer.RT_trans_geometry import azimuth_weights
+    from exo_skryer.build_model_trans import trident_angles
+    edges, _, widths = trident_angles(2, 40.0)
+    W = np.asarray(azimuth_weights(edges, jnp.deg2rad(phi0), f, cloud=True))
+    np.testing.assert_allclose(W.sum(), 1.0, atol=1e-14)
+    np.testing.assert_allclose(W.sum(axis=(1, 2)), np.asarray(widths) / np.pi, atol=1e-14)
+    np.testing.assert_allclose(W[:, 1].sum(axis=0), cloudy_em, atol=1e-14)
+    g = jax.grad(lambda ff: azimuth_weights(edges, 0.1, ff, cloud=True)[:, 1].sum())(0.3)
+    np.testing.assert_allclose(g, 1.0, atol=1e-12)
+
+
+def test_insert_zone_edge_keeps_path():
+    from exo_skryer.RT_trans_geometry import insert_zone_edge
+    edges = jnp.array([-0.5 * np.pi, -0.2, 0.2, 0.5 * np.pi])
+    for theta0 in (-1.0, 0.05, 0.2, 1.2):
+        e2, k, cz = insert_zone_edge(edges, jnp.asarray(theta0))
+        assert e2.shape == (5,) and k.shape == (4,)
+        c = 0.5 * (np.asarray(e2[:-1]) + np.asarray(e2[1:]))
+        np.testing.assert_array_equal(np.asarray(cz), c >= theta0)
+        r = np.linspace(7e9, 7.3e9, NLAY + 1)
+        rl = jnp.asarray(np.stack([r[:-1] * (1 + 0.01 * i) for i in range(3)]))
+        ru = jnp.asarray(np.stack([r[1:] * (1 + 0.01 * i) for i in range(3)]))
+        b = jnp.asarray(np.linspace(7.2e9, 7.4e9, 15))
+        P = np.asarray(path_tensor(b, rl, ru, edges))
+        P2 = np.asarray(path_tensor(b, rl[k], ru[k], e2))
+        P2_back = np.zeros_like(P)
+        np.add.at(P2_back, (slice(None), np.asarray(k)), P2)
+        np.testing.assert_allclose(P2_back, P, rtol=1e-12, atol=1e-12)
+
+
+def test_iceberg_dtau_levels_and_fraction():
+    from exo_skryer.build_model_trans import iceberg_dtau
+    from exo_skryer.data_constants import bar
+    p_lev = np.logspace(2, -8, 11) * bar                     # one decade per layer
+    dz = np.full(10, 1e7)
+    st = {"p_lev": jnp.asarray(p_lev)[None], "dz": jnp.asarray(dz)[None]}
+    t = np.asarray(iceberg_dtau(st, {"log_10_k_cld": -5.0, "log_10_p_cld": -3.0}))[0]
+    np.testing.assert_allclose(t, 1e-7 * 1e7 * (np.arange(10) < 5), rtol=1e-12)   # P >= 1 mbar: layers 0-4
+    t = np.asarray(iceberg_dtau(st, {"log_10_k_cld": -5.0, "log_10_p_cld": -3.25}))[0]
+    np.testing.assert_allclose(t[5], 0.25 * 1.0, rtol=1e-12)

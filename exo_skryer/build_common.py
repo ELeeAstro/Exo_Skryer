@@ -289,7 +289,16 @@ def validate_model(cfg, spec: ModelSpec, opac_cache: Mapping[str, jnp.ndarray]) 
                              f"log_X_bar_term_<species> (missing: {missing or 'abundances'}).")
         if spec.contri_func or spec.ck_mix is CkMix.PRAS:
             raise NotImplementedError("TRIDENT parameterisation: contri_func and ck_mix: PRAS are not supported.")
+        if str(getattr(cfg.physics, "iceberg_cloud", False)).strip().lower() in ("true", "1", "yes", "on"):
+            need = [k for k in ("log_10_p_cld", "log_10_k_cld") if k not in names]
+            if need:
+                raise ValueError(f"physics.iceberg_cloud needs parameters {need} (optional: f_cld, "
+                                 "phi_0_cld, theta_0_cld [deg]; default a uniform deck).")
+            if "f_cloud" in names:
+                raise ValueError("physics.iceberg_cloud already sets the cloud cover (f_cld); remove f_cloud.")
         return
+    if str(getattr(cfg.physics, "iceberg_cloud", False)).strip().lower() in ("true", "1", "yes", "on"):
+        raise NotImplementedError("physics.iceberg_cloud needs the TRIDENT parameterisation (vert_Tp: trident).")
 
     if spec.geometry in ("1_5d", "2d", "3d"):
         from .limb_asymmetry import ANCHOR_TAGS, validate_limb_parameter_names
