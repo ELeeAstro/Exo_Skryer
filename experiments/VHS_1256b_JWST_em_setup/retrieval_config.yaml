@@ -6,7 +6,7 @@
 # Data Section
 # ----------------------------------------------------------------------------------
 data:
-  obs: ../../obs_data/VHS1256b_V2.txt
+  obs: ../../obs_data/VHS1256b_observed_data.txt   # retrieval format, from VHS1256b_V2.txt via convert_vhs1256b.py
   obs_east: None
   obs_west: None
   stellar: None

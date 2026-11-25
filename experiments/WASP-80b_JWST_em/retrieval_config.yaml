@@ -1,6 +1,6 @@
 data:
 
-  obs: ../../obs_data/WASP-80b_JWST_em.txt
+  obs: ../../obs_data/WASP-80b_JWST_em_1.txt
   obs_east: None
   obs_west: None
   stellar: ./WASP-80.txt
