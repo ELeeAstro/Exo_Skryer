@@ -399,8 +399,7 @@ determines which retrieval parameters (in ``params``) you must provide.
     it), RORR/PRAS mixing, the product over species, the area sums and the depths.
   * Accuracy: each float32 opacity is within 2e-7 of float64 (CIA 2e-6), below the precision of the
     float32 opacity tables themselves. Spectra change by < 1e-4 ppm at posterior samples (< 1e-3 ppm
-    anywhere in the priors tested), log-likelihoods by ~1e-5. Checked with
-    ``experiments/HD209_Barstow_multiD/f32_validation.py`` and ``f32_opacity_check.py``.
+    anywhere in the priors tested), log-likelihoods by ~1e-5.
   * Speed (12-core CPU): forward model 1.5-2.7x faster, about half the memory. 3D Iceberg ck:
     23.7 -> 8.5 ms; TRIDENT os: 13.5 -> 8.1 ms. GPUs with slow float64 should gain far more
     (consumer cards run float64 at 1/32-1/64 of the float32 rate). The contraction uses

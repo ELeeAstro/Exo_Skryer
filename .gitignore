@@ -218,3 +218,12 @@ exo_skryer/version.py
 plans/
 experiments/_tmp_*/
 experiments/platon_drag_race/
+
+# Multi-D paper work: only the config generator and analysis script go to main
+experiments/HD209_Barstow_multiD/*
+!experiments/HD209_Barstow_multiD/make_configs.py
+!experiments/HD209_Barstow_multiD/analyse.py
+# HD 209458b NIRCam limb spectra: not for the public repo
+experiments/HD209_JWST_trans_1_5D_setup/*.txt
+# TRIDENT experiment directories: not for main yet
+experiments/TRIDENT_*/

@@ -71,11 +71,31 @@ CustomDumper.add_representer(type(None), represent_none)
 # Canonical names and aliases are defined in kernel_registry.py.
 
 # Radiative transfer schemes: emission (thermal) vs transit (transmission)
-# See: kernel_registry.py rt entries
-RT_SCHEMES = ["emission_1d", "transit_1d", "transit_1_5d"]
+# See: build_model.py (dispatch) and build_model_trans.py (transit geometries)
+# - transit_1d: one column
+# - transit_1_5d: east (evening) / west (morning) half-annulus limbs
+# - transit_2d: day-night terminator (n_zenith slices along the line of sight)
+# - transit_3d: east/west limbs, each with day-night structure
+# (albedo_1d is planned but not implemented, so it is not offered)
+RT_SCHEMES = ["emission_1d", "transit_1d", "transit_1_5d", "transit_2d", "transit_3d"]
+TRANSIT_SCHEMES = ("transit_1d", "transit_1_5d", "transit_2d", "transit_3d")
+MULTID_SCHEMES = ("transit_1_5d", "transit_2d", "transit_3d")
+
+# Parameter-name tags each multi-D geometry needs (limb_asymmetry.ANCHOR_TAGS); every
+# parameter ends in _joint or one of these. TRIDENT configs use untagged names instead.
+ANCHOR_TAGS = {
+    "transit_1_5d": ("east", "west"),
+    "transit_2d": ("day", "night"),
+    "transit_3d": ("east_day", "west_day", "east_night", "west_night"),
+}
+
+# Transit RT precision (physics.rt_precision; build_model_trans): float32 is the default
+RT_PRECISION_OPTIONS = ["float32", "float64"]
+# Sector evaluation (physics.sector_loop): vmap = all at once (default), map = one at a time (less memory)
+SECTOR_LOOP_OPTIONS = ["vmap", "map"]
 
 # Emission calculation schemes (only used when rt_scheme is emission_1d)
-# Passed to get_emission_solver() in RT_em_schemes.py
+# Passed to get_emission_solver() in RT_em_solvers.py
 # - eaa / alpha_eaa: extended absorption approximation (fastest, approximate scattering)
 # - toon89 / toon89_picaso: Toon et al. (1989) two-stream method
 # - dda / 4dda: four-stream discrete ordinates adding (most accurate for scattering)
@@ -91,6 +111,8 @@ EM_SCHEMES = ["eaa", "alpha_eaa", "toon89", "toon89_picaso", "dda", "4dda"]
 # - Modified_Milne: Modified Milne profile
 # - picket_fence: Picket-fence approximation
 # - MandS: Madhusudhan & Seager profile
+# - trident: TRIDENT parameterisation (MacDonald & Lewis 2022); transit_1d/2d/3d only,
+#   together with vert_chem: trident
 VERT_TP_OPTIONS = [
     "isothermal",
     "guillot",
@@ -101,6 +123,7 @@ VERT_TP_OPTIONS = [
     "modified_milne",
     "picket_fence",
     "mands",
+    "trident",
 ]
 
 # How altitude/height is calculated in the atmosphere model
@@ -118,6 +141,7 @@ VERT_ALT_OPTIONS = ["p_ref", "variable_g", "hypsometric"]
 # - easychem_jax: EasyChem-style gas-phase equilibrium backend
 # - atmodeller: Atmodeller equilibrium backend
 # - quench_approx: Quenched chemistry approximation
+# - trident: TRIDENT abundances (with vert_Tp: trident)
 VERT_CHEM_OPTIONS = [
     "constant_vmr",
     "constant_vmr_clr",
@@ -127,6 +151,7 @@ VERT_CHEM_OPTIONS = [
     "easychem_jax",
     "quench_approx",
     "atmodeller",
+    "trident",
 ]
 
 # Mean molecular weight handling
@@ -209,11 +234,21 @@ EMISSION_MODES = ["planet", "brown_dwarf"]
 CK_MIX_OPTIONS = ["RORR", "PRAS", "TRANS"]
 # TRANS has no emission solver, so it is not offered for rt_scheme: emission_1d
 CK_MIX_OPTIONS_EMISSION = ["RORR", "PRAS"]
+# PRAS is not supported for the multi-D geometries or the TRIDENT parameterisation
+CK_MIX_OPTIONS_MULTID = ["RORR", "TRANS"]
+
+
+def _is_trident() -> bool:
+    return st.session_state.get("vert_tp") == "trident" or st.session_state.get("vert_chem") == "trident"
 
 
 def _ck_mix_options(rt_scheme) -> list:
-    """CK mixing rules valid for the given RT scheme (TRANS is transit-only)."""
-    return CK_MIX_OPTIONS_EMISSION if rt_scheme == "emission_1d" else CK_MIX_OPTIONS
+    """CK mixing rules valid for the given RT scheme (TRANS is transit-only; no PRAS for multi-D/TRIDENT)."""
+    if rt_scheme == "emission_1d":
+        return CK_MIX_OPTIONS_EMISSION
+    if rt_scheme in MULTID_SCHEMES or _is_trident():
+        return CK_MIX_OPTIONS_MULTID
+    return CK_MIX_OPTIONS
 
 # Bayesian sampling engines supported by Exo_Skryer
 # Each has different strengths for exploring parameter space
@@ -223,11 +258,12 @@ SAMPLING_ENGINES = ["jaxns", "dynesty", "blackjax_ns", "nuts", "ultranest", "nau
 # supported by the runner as a legacy CUDA alias.
 RUNTIME_PLATFORMS = ["cuda", "rocm", "cpu"]
 
-# Refraction modes (for transit_1d only)
-# See: build_common.py _parse_refraction()
+# Refraction modes (transit)
+# See: build_common.py _parse_refraction() / validate_model()
 # - None: No refraction
-# - cutoff / refractive_cutoff: Apply refractive cutoff without ray tracing
-REFRACTION_OPTIONS = ["None", "cutoff", "refractive_cutoff", "refraction_cutoff"]
+# cutoff is temporarily unavailable while the transmission RT is unified for
+# 1D/1.5D/2D/3D (the build raises), so only None is offered for now.
+REFRACTION_OPTIONS = ["None"]
 
 # Common molecular/atomic species for line opacity (from opac_data directory)
 # These are the absorbers that create spectral features
@@ -385,8 +421,10 @@ def _parse_mapping_lines(raw: str) -> dict[str, str]:
 def _param_name_for_rt(base_name: str) -> str:
     """Return a valid parameter name for the selected RT scheme."""
     name = str(base_name)
-    if st.session_state.get("rt_scheme") == "transit_1_5d":
-        if name.endswith(("_joint", "_east", "_west")):
+    rt = st.session_state.get("rt_scheme")
+    # TRIDENT uses untagged names; the anchor-column geometries tag every parameter.
+    if rt in ANCHOR_TAGS and not _is_trident():
+        if name.endswith(tuple(f"_{t}" for t in ("joint",) + ANCHOR_TAGS[rt])):
             return name
         return f"{name}_joint"
     return name
@@ -478,10 +516,30 @@ def build_config() -> dict:
         # Emission-specific settings (only include if doing emission spectrum)
         'em_scheme': st.session_state.get('em_scheme', 'eaa') if st.session_state.get('rt_scheme') == 'emission_1d' else None,
         'emission_mode': st.session_state.get('emission_mode', 'planet') if st.session_state.get('rt_scheme') == 'emission_1d' else None,
-        'contri_func': st.session_state.get('contri_func', False),
-        # Refraction (only for transit mode)
-        'refraction': _none_if_disabled(st.session_state.get('refraction', 'None')) if st.session_state.get('rt_scheme') == 'transit_1d' else None,
+        # Contribution functions are not supported for multi-D geometries or TRIDENT
+        'contri_func': (st.session_state.get('contri_func', False)
+                        if st.session_state.get('rt_scheme') not in MULTID_SCHEMES and not _is_trident() else False),
+        # Refraction (transit; only None until cutoff is re-enabled)
+        'refraction': "None" if st.session_state.get('rt_scheme') in TRANSIT_SCHEMES else None,
     }
+    rt = st.session_state.get('rt_scheme')
+    if rt in TRANSIT_SCHEMES:
+        # Transit-only options (build_model_trans.py); written only when they differ from the defaults
+        if st.session_state.get('rt_precision', 'float32') != 'float32':
+            config['physics']['rt_precision'] = st.session_state.rt_precision
+        if rt in ('transit_1_5d', 'transit_3d') and st.session_state.get('sector_loop', 'vmap') != 'vmap':
+            config['physics']['sector_loop'] = st.session_state.sector_loop
+        if st.session_state.get('iceberg_cloud', False):
+            config['physics']['iceberg_cloud'] = True
+        if _is_trident():
+            # TRIDENT slice counts (even integers, POSEIDON convention); None = single region
+            if rt == 'transit_3d':
+                config['physics']['n_slice_em'] = int(st.session_state.get('n_slice_em', 2))
+            if rt in ('transit_2d', 'transit_3d'):
+                config['physics']['n_slice_dn'] = int(st.session_state.get('n_slice_dn', 2))
+        elif rt in ('transit_2d', 'transit_3d'):
+            # Day-night slices along the line of sight (default 6)
+            config['physics']['n_zenith'] = int(st.session_state.get('n_zenith', 6))
     # Remove None values from the dict (cleaner YAML output)
     config['physics'] = {k: v for k, v in config['physics'].items() if v is not None}
 
@@ -489,13 +547,16 @@ def build_config() -> dict:
     # OPAC SECTION
     # Opacity data files and wavelength grid settings
     # -------------------------------------------------------------------------
+    # Correlated-k tables are needed whenever the line opacity is ck (the multi-D
+    # geometries reject opac_line: ck with opac.ck: False)
+    use_ck = bool(st.session_state.get('use_ck', False)) or st.session_state.get('opac_line', 'ck') == 'ck'
     config['opac'] = {
         'wl_master': st.session_state.get('wl_master', ''),  # Master wavelength grid file
         'full_grid': st.session_state.get('full_grid', True),  # Use full wavelength range
-        'ck': st.session_state.get('use_ck', False),  # Use correlated-k tables
+        'ck': use_ck,  # Use correlated-k tables
     }
     # CK mixing rule only relevant if using correlated-k
-    if st.session_state.get('use_ck'):
+    if use_ck:
         ck_mix = st.session_state.get('ck_mix', 'RORR')
         # Never write TRANS for emission (no emission solver for it), even if it was
         # selected earlier while a transit scheme was active
@@ -890,10 +951,10 @@ def render_data_section():
         # key="obs_path" means the value is stored in st.session_state['obs_path']
         st.text_input("Observation file path", key="obs_path",
                       placeholder="e.g., ../data/spectrum.txt")
-        st.text_input("East limb observation path", key="obs_east_path",
-                      placeholder="Required for transit_1_5d")
-        st.text_input("West limb observation path", key="obs_west_path",
-                      placeholder="Required for transit_1_5d")
+        st.text_input("East (evening) limb observation path", key="obs_east_path",
+                      placeholder="Limb spectra: transit_1_5d / transit_3d / TRIDENT")
+        st.text_input("West (morning) limb observation path", key="obs_west_path",
+                      placeholder="Limb spectra: transit_1_5d / transit_3d / TRIDENT")
     with col2:
         st.text_input("Stellar spectrum path", key="stellar_path",
                       placeholder="e.g., ../data/stellar.txt")
@@ -920,8 +981,37 @@ def render_physics_section():
         st.subheader("Radiative Transfer")
         # st.selectbox creates a dropdown menu
         st.selectbox("RT Scheme", RT_SCHEMES, key="rt_scheme")
-        if st.session_state.rt_scheme == "transit_1_5d":
-            st.info("1.5D YAML parameters must end in `_joint`, `_east`, or `_west`. Quick-add helpers use `_joint` by default.")
+        rt = st.session_state.rt_scheme
+        if rt in ANCHOR_TAGS and not _is_trident():
+            tags = ", ".join(f"`_{t}`" for t in ("joint",) + ANCHOR_TAGS[rt])
+            st.info(f"{rt} YAML parameters must end in {tags}. Quick-add helpers use `_joint` by default. "
+                    "All columns share `R_p` and `log_10_g` at `p_ref` (use `_joint`); one anchor can be an "
+                    "offset of another with `delta_<name>_<tag>`.")
+        if rt in ("transit_2d", "transit_3d") and not _is_trident():
+            st.info("Needs `beta_dn_joint` (day-night opening angle, deg); `p_bot`/`p_top` and `f_cloud` "
+                    "only as `_joint`.")
+        if _is_trident():
+            st.info("TRIDENT: set both T-P Profile and Chemistry to `trident` (transit_1d/2d/3d). Untagged "
+                    "parameters: `T_bar_term`, `Delta_T_term`, `Delta_T_DN`, `T_deep`, `alpha_em`, `beta_dn`, "
+                    "`log_X_bar_term_<sp>` (+ optional `Delta_log_X_*`, `log_X_deep_<sp>`).")
+
+        if rt in TRANSIT_SCHEMES:
+            st.selectbox("RT precision", RT_PRECISION_OPTIONS, key="rt_precision",
+                         help="float32 (default) is 1.5-3x faster; float64 for full double precision.")
+            if rt in ("transit_1_5d", "transit_3d"):
+                st.selectbox("Sector loop", SECTOR_LOOP_OPTIONS, key="sector_loop",
+                             help="vmap: all sectors at once (default); map: one at a time, less memory.")
+            if _is_trident():
+                if rt == "transit_3d":
+                    st.number_input("TRIDENT n_slice_em (even)", min_value=0, max_value=20, value=2, step=2, key="n_slice_em")
+                if rt in ("transit_2d", "transit_3d"):
+                    st.number_input("TRIDENT n_slice_dn (even)", min_value=0, max_value=20, value=2, step=2, key="n_slice_dn")
+            elif rt in ("transit_2d", "transit_3d"):
+                st.number_input("Day-night slices (n_zenith)", min_value=2, max_value=40, value=6, key="n_zenith",
+                                help=">= 6 keeps the error below ~1e-3 relative.")
+            st.checkbox("Iceberg clouds (iceberg_cloud)", key="iceberg_cloud",
+                        help="Cloud in an azimuthal wedge: f_cld, phi_0_cld, theta_0_cld (_joint when tagged). "
+                             "Needs vert_cloud/opac_cloud or the grey deck (log_10_k_cld, log_10_p_cld); not with f_cloud.")
 
         # Conditional UI: only show emission options if emission scheme selected
         # This demonstrates how to make the form dynamic
@@ -931,8 +1021,9 @@ def render_physics_section():
 
         # st.number_input creates a numeric input with optional bounds
         st.number_input("Number of layers", min_value=10, max_value=500, value=99, key="nlay")
-        # st.checkbox creates a toggle
-        st.checkbox("Calculate contribution function", key="contri_func")
+        # st.checkbox creates a toggle (contribution functions: 1D only, not TRIDENT)
+        if rt not in MULTID_SCHEMES and not _is_trident():
+            st.checkbox("Calculate contribution function", key="contri_func")
 
     with col2:
         st.subheader("Vertical Structure")
@@ -952,9 +1043,10 @@ def render_physics_section():
         # Only show cloud distribution if clouds are enabled
         if st.session_state.vert_cloud != "None":
             st.selectbox("Cloud Size Distribution", CLOUD_DIST_OPTIONS, key="cloud_dist")
-        # Only show refraction for transit mode
-        if st.session_state.get('rt_scheme') == "transit_1d":
-            st.selectbox("Refraction", REFRACTION_OPTIONS, key="refraction")
+        # Refraction: transit only; cutoff is temporarily unavailable, so None is written
+        if st.session_state.get('rt_scheme') in TRANSIT_SCHEMES:
+            st.selectbox("Refraction", REFRACTION_OPTIONS, key="refraction",
+                         help="cutoff is temporarily unavailable while the transmission RT is unified.")
 
 
 def render_opac_section():
@@ -977,7 +1069,12 @@ def render_opac_section():
                       placeholder="e.g., ../../opac_data/wl_R20000.txt")
         st.checkbox("Full wavelength grid", value=True, key="full_grid")
     with col2:
-        st.checkbox("Use correlated-k tables", key="use_ck")
+        # Line opacity ck needs the ck tables, so the box is ticked (and locked) for it
+        line_ck = st.session_state.get('opac_line', 'ck') == 'ck'
+        if line_ck:
+            st.session_state['use_ck'] = True
+        st.checkbox("Use correlated-k tables", key="use_ck", disabled=line_ck,
+                    help="Required (and set automatically) when Line Opacity is ck.")
         # Only show CK mixing rule if CK is enabled
         if st.session_state.get('use_ck'):
             ck_options = _ck_mix_options(st.session_state.get('rt_scheme'))
