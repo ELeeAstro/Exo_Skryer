@@ -24,7 +24,9 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
+import jax
 import jax.numpy as jnp
+from jax import lax
 
 from .aux_functions import safe_sqrt
 
@@ -40,6 +42,7 @@ __all__ = [
     "azimuth_weights",
     "insert_zone_edge",
     "sector_geometry",
+    "zoned_paths",
     "day_night_slices",
 ]
 
@@ -173,6 +176,32 @@ def sector_geometry(
     return P, opaque
 
 
+def zoned_paths(
+    b: jnp.ndarray,             # (nray,)
+    r_low: jnp.ndarray,         # (nslice, nlay) columns of one sector
+    r_up: jnp.ndarray,          # (nslice, nlay)
+    theta_edges: jnp.ndarray,   # (nslice' + 1,) zone edges
+    zone=None,                  # (nslice',) column of each zone (None: zones are the slices)
+    cloudy=None,                # (nslice',) bool, zones that hold the cloud (None: all)
+):
+    """Path tensors of one sector folded onto its columns: (P, P_cloud, opaque).
+
+    The zones may split a column's slice (``insert_zone_edge``); P sums each column's zones,
+    so the optical-depth contraction runs over the columns only, and P_cloud sums only the
+    cloudy zones (the cloud optical depth is then a per-column field). Both (nray, nslice, nlay).
+    """
+    if zone is None:
+        P, opaque = sector_geometry(b, r_low, r_up, theta_edges)
+        if cloudy is None:
+            return P, P, opaque
+        return P, P * cloudy[None, :, None].astype(P.dtype), opaque
+    P_ext, opaque = sector_geometry(b, r_low[zone], r_up[zone], theta_edges)
+    onehot = (zone[:, None] == jnp.arange(r_low.shape[0])[None, :]).astype(P_ext.dtype)   # (nslice', nslice)
+    fold = lambda Q: jnp.einsum("ikl,km->iml", Q, onehot)
+    P_cld = P_ext if cloudy is None else P_ext * cloudy[None, :, None].astype(P_ext.dtype)
+    return fold(P_ext), fold(P_cld), opaque
+
+
 def day_night_slices(n_zenith: int, beta: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Zenith slices and interpolation weights for a day-night (2D) terminator (TRIDENT).
 
@@ -253,3 +282,22 @@ def insert_zone_edge(theta_edges: jnp.ndarray, theta_0: jnp.ndarray):
     centre = 0.5 * (edges[:-1] + edges[1:])
     k = jnp.clip(jnp.searchsorted(theta_edges, centre, side="right") - 1, 0, theta_edges.shape[0] - 2)
     return edges, k, centre >= theta_0
+
+
+
+SECTOR_LOOPS = ("vmap", "map")
+
+
+def loop_sectors(fn, n: int, loop: str = "vmap"):
+    """Evaluate ``fn(j)`` for j = 0 .. n-1 and stack the outputs (any pytree).
+
+    ``loop="vmap"`` runs all sectors at once; ``loop="map"`` runs them one after another
+    (``lax.map``, memory ~ one sector). On a 12-core CPU vmap is ~10% faster for a few
+    percent more XLA temp memory (3D Iceberg and TRIDENT benchmarks, Nov 2026).
+    """
+    idx = jnp.arange(n)
+    if loop == "map":
+        return lax.map(fn, idx)
+    if loop == "vmap":
+        return jax.vmap(fn)(idx)
+    raise ValueError(f"physics.sector_loop must be one of {SECTOR_LOOPS}, got {loop!r}.")

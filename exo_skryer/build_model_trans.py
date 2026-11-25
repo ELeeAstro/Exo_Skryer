@@ -65,8 +65,8 @@ from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
 from .vert_mu import compute_mu
 from .limb_asymmetry import ANCHOR_TAGS, merge_limb_parameter_dict, split_limb_parameter_dict
 from .RT_trans_core_ck import column_dtau_ck, column_dtau_ck_trans, sector_dR2_ro, _get_ck_weights
-from .RT_trans_core_os import column_dtau_os, sector_dR2
-from .RT_trans_geometry import FULL_CHORD, azimuth_weights, day_night_slices, insert_zone_edge
+from .RT_trans_core_os import RT_PRECISIONS, column_dtau_os, sector_dR2
+from .RT_trans_geometry import FULL_CHORD, SECTOR_LOOPS, azimuth_weights, day_night_slices, insert_zone_edge
 
 __all__ = ["build_forward_model_trans"]
 
@@ -213,6 +213,10 @@ def trident_column_profiles(p_lev, p_lay, phi, theta, params, species):
             "vmr_lay": vmr}
 
 
+_PRECISION_ALIASES = {"f32": "float32", "single": "float32", "32": "float32",
+                      "f64": "float64", "double": "float64", "64": "float64"}
+
+
 def _flag(raw) -> bool:
     return str(raw).strip().lower() in ("true", "1", "yes", "on")
 
@@ -230,6 +234,12 @@ def iceberg_dtau(states, params):
     lp_cld = jnp.log(10.0 ** params["log_10_p_cld"] * bar)
     below = jnp.clip((lp[:, :-1] - lp_cld) / (lp[:, :-1] - lp[:, 1:]), 0.0, 1.0)
     return kappa * states["dz"] * below
+
+
+def _cloud_tau(state, comps):
+    """Cloud optical depth (nlay, nwl[, ng]) of one column from its cloud opacity [cm^2 g^-1]."""
+    k = comps["cloud"]
+    return k * (state["rho_lay"] * state["dz"]).reshape((-1,) + (1,) * (k.ndim - 1))
 
 
 def _trident_layout(geometry: str, cfg):
@@ -279,10 +289,24 @@ def build_forward_model_trans(
         n_em, n_dn = _trident_layout(geometry, cfg)
         n_sector = 1 if n_em is None else 2 + n_em
         n_slice = 1 if n_dn is None else 2 + n_dn
-    iceberg = trident and _flag(getattr(cfg.physics, "iceberg_cloud", False))
+    iceberg = _flag(getattr(cfg.physics, "iceberg_cloud", False))
+    # Iceberg cloud opacity: the POSEIDON grey deck (log_10_k_cld [m^-1], benchmarks) or, by default,
+    # the column's own cloud scheme (e.g. vert_cloud: slab + opac_cloud: grey_profile) masked in angle.
+    iceberg_deck = iceberg and any(q.name in ("log_10_k_cld", "log_10_k_cld_joint") for q in cfg.params)
     has_limb_obs = (geometry in ("1_5d", "3d") or trident) and bool(obs.get("has_limb_observations", False))
     mode = "os" if not spec.ck else ("ck_trans" if spec.ck_mix is CkMix.TRANS else "ck")
     want_contrib = spec.contri_func
+    # Sectors in parallel (vmap, default: ~10% faster on CPU) or one at a time (map, less memory).
+    sector_loop = str(getattr(cfg.physics, "sector_loop", "vmap")).strip().lower()
+    if sector_loop not in SECTOR_LOOPS:
+        raise ValueError(f"physics.sector_loop must be one of {SECTOR_LOOPS}, got {sector_loop!r}.")
+    # Precision of the opacity sums and the RT (float32 default; ~1e-5 ppm from float64, 1.5-3x faster
+    # on CPU, far more on GPUs). physics.rt_precision: float64 restores full double precision.
+    raw_precision = str(getattr(cfg.physics, "rt_precision", "float32")).strip().lower()
+    rt_precision = _PRECISION_ALIASES.get(raw_precision, raw_precision)
+    if rt_precision not in RT_PRECISIONS:
+        raise ValueError(f"physics.rt_precision must be float32 or float64 (or f32/f64, single/double, "
+                         f"32/64), got {raw_precision!r}.")
 
     nlay = int(getattr(cfg.physics, "nlay", 99))
     wl_hi = jnp.asarray(np.asarray(XS.master_wavelength_cut(), dtype=float))
@@ -308,7 +332,16 @@ def build_forward_model_trans(
         # State and opacities in one vmapped function: static fields of the state (nlay, nwl,
         # flags) are traced once they leave a vmap, and the opacity kernels need them static.
         def with_opacities(state, p):
+            if rt_precision == "float32":
+                state = {**state, "opac_float32": 1}     # opacity sums in float32 (aux_functions.opac_dtype)
             return state, p, opacities(state, p, opac)
+
+        def phi_edges_of(p):
+            """Northern sector edges: TRIDENT's, or one sector spanning the terminator, or east
+            (evening) / west (morning) halves."""
+            if trident:
+                return trident_angles(n_em, p.get("alpha_em", 0.0))[0]
+            return jnp.linspace(-0.5 * jnp.pi, 0.5 * jnp.pi, n_sector + 1)
 
         frac_all = sector_frac
         if trident:
@@ -350,37 +383,56 @@ def build_forward_model_trans(
         g_weights = _get_ck_weights(opac)[: comps["line"].shape[-1]] if mode == "ck" else None
         partial_cloud = "f_cloud" in col_params and "cloud" in comps
 
+        # With rt_precision float32 the RT inputs are built in float32 (half the memory traffic).
+        rt_dtype = jnp.float32 if rt_precision == "float32" else None
+        lowp = (lambda x: x) if rt_dtype is None else (lambda x: x.astype(rt_dtype))
+
         def column_dtau(clear: bool):
             """Vertical optical depths of every column on the (nsector, nslice, ...) grid."""
             if mode == "ck_trans":
-                dcont, dspec = jax.vmap(lambda s, c: column_dtau_ck_trans(s, c, clear))(states, comps)
+                dcont, dspec = jax.vmap(lambda s, c: column_dtau_ck_trans(s, c, clear, rt_dtype))(states, comps)
                 return grid(dcont), jnp.moveaxis(grid(dspec), 2, 1)          # (nsec, nspec, nslice, ...)
             if mode == "ck":
-                return grid(jax.vmap(lambda s, c: column_dtau_ck(s, c, opac, clear))(states, comps))
-            return grid(jax.vmap(lambda s, c: column_dtau_os(s, c, clear))(states, comps))
+                return grid(jax.vmap(lambda s, c: lowp(column_dtau_ck(s, c, opac, clear)))(states, comps))
+            return grid(jax.vmap(lambda s, c: lowp(column_dtau_os(s, c, clear)))(states, comps))
 
-        def areas(dt, rl, ru, edges, zone=None, extra=None):
+        def areas(dt, edges, zone=None, cloud=None, cloudy=None):
             """Per-sector absorbing area (nsector, nwl[, ng]), per-cell contribution, R_base.
 
-            ``zone`` (nslice',) picks each slice's background column (an inserted zone edge);
-            ``extra`` (nsector, nslice', nlay) is a grey optical depth added to the gas.
+            ``edges`` may be zone edges with ``zone`` (nslice',) the column of each zone (an
+            inserted zone edge). With ``cloud`` (nsector, nslice, nlay[, nwl]), a per-column
+            cloud optical depth present in the ``cloudy`` zones, the area is (nsector, 2, nwl[, ng]):
+            clear and cloudy from one gas pass.
             """
-            pick = (lambda x: x) if zone is None else (lambda x: x[zone])
-            add = (lambda x, j: x) if extra is None else \
-                (lambda x, j: x + extra[j].reshape(extra[j].shape + (1,) * (x.ndim - 2)))
+            cloud_fn = None if cloud is None else (lambda j: cloud[j])
             if mode == "ck_trans":
                 dcont, dspec = dt
-                dR2, R_base = sector_dR2_ro(rl, ru, edges,
-                                            lambda j: (add(pick(dcont[j]), j), dspec[j][:, zone] if zone is not None
-                                                       else dspec[j]), _get_ck_weights(opac))
+                dR2, R_base = sector_dR2_ro(r_low, r_up, edges, lambda j: (dcont[j], dspec[j]),
+                                            _get_ck_weights(opac), sector_loop, cloud_fn, rt_precision, zone, cloudy)
                 return dR2, None, R_base
-            return sector_dR2(rl, ru, edges, lambda j: add(pick(dt[j]), j), g_weights, want_contrib)
+            return sector_dR2(r_low, r_up, edges, lambda j: dt[j], g_weights, want_contrib, sector_loop, cloud_fn,
+                              rt_precision, zone, cloudy)
 
-        dtau = column_dtau(clear=False)
-        dR2, contrib, R_base = areas(dtau, r_low, r_up, theta_edges)
+        # With an Iceberg mask on the column clouds the base columns are clear.
+        dtau = column_dtau(clear=iceberg and not iceberg_deck)
+        if iceberg:
+            # Clear and cloudy areas of every sector from one gas pass on the zone grid with
+            # theta_0 inserted; the cloud optical depth is added only in the cloudy zones.
+            W = azimuth_weights(phi_edges_of(all_params), jnp.deg2rad(joint.get("phi_0_cld", -90.0)),
+                                joint.get("f_cld", 1.0), cloud=True)                  # (nsec, 2, 2)
+            edges_c, zone_c, cloudy_zone = insert_zone_edge(
+                theta_edges, jnp.deg2rad(joint.get("theta_0_cld", -90.0)))
+            if iceberg_deck:
+                tau = lowp(grid(iceberg_dtau(states, joint)))             # (nsec, nslice, nlay)
+            else:
+                tau = lowp(grid(jax.vmap(_cloud_tau)(states, comps)))     # (nsec, nslice, nlay, nwl)
+            dR2_cs, _, R_base = areas(dtau, edges_c, zone_c, tau, cloudy_zone)
+            dR2 = contrib = None
+        else:
+            dR2, contrib, R_base = areas(dtau, theta_edges)
         if partial_cloud:
             f = jnp.clip(grid(col_params["f_cloud"])[:, 0], 0.0, 1.0)            # (nsector,)
-            dR2_clear, contrib_clear, _ = areas(column_dtau(clear=True), r_low, r_up, theta_edges)
+            dR2_clear, contrib_clear, _ = areas(column_dtau(clear=True), theta_edges)
             fb = f.reshape((-1,) + (1,) * (dR2.ndim - 1))
             dR2 = fb * dR2 + (1.0 - fb) * dR2_clear
             if want_contrib:
@@ -392,24 +444,18 @@ def build_forward_model_trans(
             D = (R_base**2 + dR2_s) / (R_s**2)
             return jnp.sum(D * g_weights.astype(D.dtype), axis=-1) if g_weights is not None else D
 
-        if trident:
+        if trident or iceberg:
             # Shares of the full annulus per (sector, clear/cloudy, evening/morning).
-            phi_edges = trident_angles(n_em, all_params.get("alpha_em", 0.0))[0]
             if iceberg:
-                W = azimuth_weights(phi_edges, jnp.deg2rad(all_params.get("phi_0_cld", -90.0)),
-                                    all_params.get("f_cld", 1.0), cloud=True)
-                edges_c, zone_c, cloudy_zone = insert_zone_edge(
-                    theta_edges, jnp.deg2rad(all_params.get("theta_0_cld", -90.0)))
-                tau_cld = grid(iceberg_dtau(states, all_params))[:, zone_c] * cloudy_zone[None, :, None]
-                dR2_cld, _, _ = areas(dtau, r_low[:, zone_c], r_up[:, zone_c], edges_c, zone_c, tau_cld)
-                D_cs = jnp.stack([depth(dR2), depth(dR2_cld)], axis=1)        # (nsec, 2, nwl)
+                D_cs = depth(dR2_cs)                                          # (nsec, 2, nwl)
             else:
-                W = azimuth_weights(phi_edges)
+                W = azimuth_weights(phi_edges_of(all_params))[:, :1]
                 D_cs = depth(dR2)[:, None]
-                W = W[:, :1]
             D_limb = jnp.einsum("jce,jc...->e...", W, D_cs)                  # (2, nwl): evening, morning
             frac_all = jnp.sum(W, axis=(1, 2))
             D_hires = jnp.sum(D_limb, axis=0)
+            if not trident and n_sector == 2:
+                D_sector = D_limb                                             # east = evening, west = morning
         else:
             # Each sector's share of the transit depth; they sum to the total.
             frac = frac_all.reshape((-1,) + (1,) * (dR2.ndim - 1))
@@ -450,7 +496,7 @@ def build_forward_model_trans(
             diag = {"r_low_columns": r_low, "r_up_columns": r_up, "sector_frac": frac_all, "azimuth_weights": W}
             if mode == "os":
                 diag["dtau_columns"] = dtau
-            if iceberg:
+            if iceberg_deck:
                 diag["dtau_cloud_columns"] = grid(iceberg_dtau(states, all_params))
             return {
                 "hires": D_hires, "binned": D_bin, "binned_likelihood": likelihood,

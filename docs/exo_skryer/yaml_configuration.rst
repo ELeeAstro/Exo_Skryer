@@ -343,14 +343,25 @@ determines which retrieval parameters (in ``params``) you must provide.
     morning half-annulus spectra (as in 1.5D: ``east`` = evening, ``west`` = morning). Outputs
     ``hires_east`` / ``hires_west`` (full-circle equivalent) and ``*_scaled`` (halves summing to
     the total).
-  * Iceberg clouds (Eq. 47): ``physics.iceberg_cloud: True`` adds a grey cloud of opacity
-    ``10**log_10_k_cld`` [m^-1] at P >= ``10**log_10_p_cld`` [bar], in the azimuthal wedge starting
-    at ``phi_0_cld`` [deg, clockwise from the north pole] and covering a fraction ``f_cld`` of the
-    terminator, and on the nightside of the zenith angle ``theta_0_cld`` [deg]. Defaults
-    ``f_cld = 1``, ``phi_0_cld = theta_0_cld = -90`` give a uniform deck. Cloud edges become extra
-    sector and zone boundaries, so the cloud may break north-south symmetry. Each sector is
-    computed clear and cloudy (2x the RT cost). Matches POSEIDON ``TRIDENT()`` exactly with its
-    quadrature. Not combinable with ``f_cloud``.
+  * Iceberg clouds (Eq. 47): see ``physics.iceberg_cloud`` below (works with TRIDENT and with the
+    anchor-column geometries).
+
+  Iceberg clouds (``physics.iceberg_cloud: True``, any transit geometry):
+
+  * Masks the column cloud in angle: the cloud sits in the azimuthal wedge starting at
+    ``phi_0_cld`` [deg, clockwise from the north pole; evening limb at -90] and covering a
+    fraction ``f_cld`` of the terminator, on the nightside of the zenith angle ``theta_0_cld``
+    [deg]. Defaults ``f_cld = 1``, ``phi_0_cld = theta_0_cld = -90`` (cloud everywhere). Tagged
+    geometries use ``_joint`` names (``f_cld_joint`` etc.).
+  * The cloud itself is the usual ``vert_cloud`` / ``opac_cloud`` scheme, with its usual units, e.g.
+    the default slab (``vert_cloud: slab``, ``opac_cloud: grey_profile``: ``log_10_p_top_slab``,
+    ``log_10_dp_slab`` [bar], ``log_10_k_cld_grey`` [cm^2 g^-1]).
+  * Alternatively the POSEIDON grey deck: ``log_10_k_cld`` [m^-1] at P >= ``10**log_10_p_cld`` [bar]
+    (used for the POSEIDON benchmark; matches ``TRIDENT()`` exactly with its quadrature).
+  * Cloud edges become extra sector and zone boundaries, so the cloud may break north-south
+    symmetry. Each sector's clear and cloudy spectra share one gas slant optical depth; only the
+    cloud term is added for the cloudy one. The theta_0 zone edge is folded into the path tensors,
+    so the gas contraction runs over the columns only. Not combinable with ``f_cloud`` or ``contri_func``.
 
   Notes for ``transit_3d`` (east/west limbs, each with day-night structure):
 
@@ -364,6 +375,36 @@ determines which retrieval parameters (in ``params``) you must provide.
   * Fits limb-resolved spectra (``data.obs_east`` / ``data.obs_west``, half-annulus
     depths) or the whole-terminator spectrum, as in 1.5D. The same restrictions as 2D
     apply. A smooth azimuthal transition between the limbs is planned.
+
+  ``physics.sector_loop`` (multi-sector transit geometries): ``vmap`` (default) computes all
+  sectors at once; ``map`` computes them one after another, using less memory (~6% less XLA
+  temporary memory, ~10% slower in the 3D / TRIDENT benchmarks on a 12-core CPU).
+
+  ``physics.rt_precision`` (all transit geometries): ``float32`` (default) or ``float64`` (also
+  ``f32``/``f64``, ``single``/``double``, ``32``/``64``). To run everything in double precision, set
+
+  .. code-block:: yaml
+
+     physics:
+       rt_precision: float64
+
+  It sets the precision of the opacity sums and of the slant optical depth contraction (path
+  tensor x vertical optical depth), the dominant radiative-transfer cost.
+
+  * In ``float32``: the line (os), per-species ck (TRANS), Rayleigh and CIA opacity sums, the
+    optics-grid cloud's wavelength interpolation, the per-column optical depths, the slant optical
+    depths, exp(-tau) and the g-average. CIA cross sections (~1e-46 cm^5) are below the float32
+    range, so the per-layer factor n_i n_j / rho is folded into the exponent (added in float64).
+  * Always ``float64``: hydrostatics, ray geometry, the other cloud schemes (on-the-fly Mie needs
+    it), RORR/PRAS mixing, the product over species, the area sums and the depths.
+  * Accuracy: each float32 opacity is within 2e-7 of float64 (CIA 2e-6), below the precision of the
+    float32 opacity tables themselves. Spectra change by < 1e-4 ppm at posterior samples (< 1e-3 ppm
+    anywhere in the priors tested), log-likelihoods by ~1e-5. Checked with
+    ``experiments/HD209_Barstow_multiD/f32_validation.py`` and ``f32_opacity_check.py``.
+  * Speed (12-core CPU): forward model 1.5-2.7x faster, about half the memory. 3D Iceberg ck:
+    23.7 -> 8.5 ms; TRIDENT os: 13.5 -> 8.1 ms. GPUs with slow float64 should gain far more
+    (consumer cards run float64 at 1/32-1/64 of the float32 rate). The contraction uses
+  ``Precision.HIGHEST``, so GPUs do not drop to TF32.
 
 ``physics.emission_mode``
   Only relevant for ``physics.rt_scheme: emission_1d``.

@@ -28,7 +28,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from .aux_functions import sum_present
-from .RT_trans_geometry import impact_parameters_1d, path_matrix_1d, sector_geometry, shared_ray_grid
+from .RT_trans_geometry import impact_parameters_1d, loop_sectors, path_matrix_1d, shared_ray_grid, zoned_paths
 
 __all__ = [
     "vertical_tau",
@@ -38,6 +38,8 @@ __all__ = [
     "transit_depth_and_contrib",
     "mix_partial_cloud",
     "transit_depth_1d_from_opacity",
+    "RT_PRECISIONS",
+    "sector_slant_tau",
     "sector_dR2",
     "depth_from_dR2",
     "transit_depth_columns",
@@ -176,9 +178,25 @@ def transit_depth_1d_from_opacity(
 # Multi-column atmospheres (sectors x zenith slices)
 # ---------------------------------------------------------------------------
 
-def sector_slant_tau(P: jnp.ndarray, dtau_v: jnp.ndarray) -> jnp.ndarray:
-    """Slant optical depth for one sector: P (nray, nslice, nlay) x dtau (nslice, nlay, ...) -> (nray, ...)."""
-    return jnp.einsum("ikl,kl...->i...", P, dtau_v)
+RT_PRECISIONS = ("float64", "float32")
+
+
+def sector_slant_tau(P: jnp.ndarray, dtau_v: jnp.ndarray, precision: str = "float64",
+                     cast_back: bool = True) -> jnp.ndarray:
+    """Slant optical depth for one sector: P (nray, nslice, nlay) x dtau (nslice, nlay, ...) -> (nray, ...).
+
+    ``precision="float32"`` does the contraction (the dominant RT cost) in float32 and
+    returns float64; ``Precision.HIGHEST`` keeps GPUs from using TF32 (~1e-3 relative).
+    Transmission, areas and depths stay float64.
+    """
+    if precision == "float64":
+        return jnp.einsum("ikl,kl...->i...", P, dtau_v)
+    if precision != "float32":
+        raise ValueError(f"physics.rt_precision must be one of {RT_PRECISIONS}, got {precision!r}.")
+    out_dtype = jnp.result_type(P.dtype, dtau_v.dtype)
+    tau = jnp.einsum("ikl,kl...->i...", P.astype(jnp.float32), dtau_v.astype(jnp.float32),
+                     precision=lax.Precision.HIGHEST)
+    return tau.astype(out_dtype) if cast_back else tau
 
 
 def sector_dR2(
@@ -188,12 +206,17 @@ def sector_dR2(
     dtau_fn: Callable[[jnp.ndarray], jnp.ndarray],
     g_weights: Optional[jnp.ndarray] = None,
     want_contrib: bool = False,
+    loop: str = "vmap",
+    cloud_fn: Optional[Callable[[jnp.ndarray], jnp.ndarray]] = None,
+    precision: str = "float64",
+    zone: Optional[jnp.ndarray] = None,
+    cloudy: Optional[jnp.ndarray] = None,
 ):
     """Absorbing area of each sector of a multi-column atmosphere.
 
     ``dtau_fn(j)`` returns the vertical optical depth of sector j's columns, shape
-    (nslice, nlay, nwl[, ng]). It is called inside a ``lax.map`` over sectors (with a
-    traced j), so only one sector's columns are in memory at a time. Rays use a grid
+    (nslice, nlay, nwl[, ng]), for a traced j. Sectors run all at once (``loop="vmap"``)
+    or one at a time (``"map"``), see ``loop_sectors``. Rays use a grid
     shared by all columns (``shared_ray_grid``); a ray that dips below a column's bottom
     is opaque.
 
@@ -210,18 +233,38 @@ def sector_dR2(
     The transit depth is (R_base^2 + sum_j f_j dR2_j) / R_s^2 with f_j the azimuthal
     fraction of sector j (then g-weighted for ck). With one sector and one slice covering
     the whole chord this is the 1D calculation.
+
+    With ``cloud_fn(j)`` (a cloud optical depth (nslice, nlay[, nwl]) added to the gas)
+    dR2 is (nsector, 2, nwl[, ng]): the clear and the cloudy area of each sector, from
+    one gas slant optical depth (Iceberg clouds). No contribution functions then.
+    ``precision`` is that of the slant-tau contraction (``sector_slant_tau``).
+    With ``zone`` (nslice',), ``theta_edges`` (nslice' + 1,) are zone edges that may split the
+    columns' slices, and ``cloudy`` (nslice',) marks the zones holding the cloud; the path
+    tensors are folded onto the columns (``zoned_paths``), so dtau and cloud dtau are per column.
     """
+    if cloud_fn is not None and want_contrib:
+        raise NotImplementedError("Contribution functions with a clear/cloudy split are not supported.")
     b, area, R_base = shared_ray_grid(r_low, r_up)
 
     def sector(j):
-        P, opaque = sector_geometry(b, r_low[j], r_up[j], theta_edges)
+        P, P_cld, opaque = zoned_paths(b, r_low[j], r_up[j], theta_edges, zone, cloudy)
         dtau_v = dtau_fn(j)
-        tau = sector_slant_tau(P, dtau_v)
-        omt = 1.0 - jnp.exp(-tau)
-        shape = (-1,) + (1,) * (omt.ndim - 1)
-        omt = jnp.where(opaque.reshape(shape), 1.0, omt)
-        extra = (None,) * (omt.ndim - 1)
-        a = area[(slice(None),) + extra]
+        # float32: tau and 1 - exp(-tau) stay float32 (absolute error ~1e-7 per ray); the
+        # area sums are float64. Contribution functions keep the float64 path.
+        low = precision == "float32" and not want_contrib
+        tau = sector_slant_tau(P, dtau_v, precision, cast_back=not low)
+        shape = (-1,) + (1,) * (tau.ndim - 1)
+        a = area.reshape(shape)
+
+        def absorbing_area(t):
+            omt = (1.0 - jnp.exp(-t)).astype(a.dtype)
+            return jnp.sum(a * jnp.where(opaque.reshape(shape), 1.0, omt), axis=0)
+
+        if cloud_fn is not None:
+            tau_c = sector_slant_tau(P_cld, cloud_fn(j), precision, cast_back=not low)
+            tau_c = tau_c.reshape(tau_c.shape + (1,) * (tau.ndim - tau_c.ndim))
+            return jnp.stack([absorbing_area(tau), absorbing_area(tau + tau_c)]), None
+        omt = jnp.where(opaque.reshape(shape), 1.0, 1.0 - jnp.exp(-tau))
         dR2_j = jnp.sum(a * omt, axis=0)
         if not want_contrib:
             return dR2_j, None
@@ -233,7 +276,7 @@ def sector_dR2(
             cell = jnp.sum(cell * g_weights.astype(cell.dtype), axis=-1)
         return dR2_j, cell
 
-    dR2, contrib = lax.map(sector, jnp.arange(r_low.shape[0]))
+    dR2, contrib = loop_sectors(sector, r_low.shape[0], loop)
     return dR2, contrib, R_base
 
 
@@ -267,9 +310,10 @@ def transit_depth_columns(
 
 def column_dtau_os(state: Dict[str, jnp.ndarray], comps: Mapping[str, jnp.ndarray], clear: bool = False):
     """Vertical optical depth (nlay, nwl) of one column; ``clear`` drops the cloud opacity."""
-    k = _sum_opacity_components_os(state, comps)
-    if clear and "cloud" in comps:
-        k = k - comps["cloud"]
+    # The clear sum leaves the cloud out rather than subtracting it: total - cloud cancels
+    # catastrophically when the cloud dominates (fatal in float32, ~1e-16 x ratio in float64).
+    keys = tuple(c for c in _OS_COMPONENTS if c != "cloud") if clear else _OS_COMPONENTS
+    k = _sum_opacity_components_os(state, comps, keys)
     return vertical_tau(k, state["rho_lay"], state["dz"])
 
 
@@ -280,9 +324,10 @@ def column_dtau_os(state: Dict[str, jnp.ndarray], comps: Mapping[str, jnp.ndarra
 def _sum_opacity_components_os(
     state: Dict[str, jnp.ndarray],
     opacity_components: Mapping[str, jnp.ndarray],
+    keys: Tuple[str, ...] = _OS_COMPONENTS,
 ) -> jnp.ndarray:
-    """Summed opacity (nlay, nwl) of all components present (zeros if none)."""
-    total = sum_present(opacity_components, _OS_COMPONENTS) if opacity_components else None
+    """Summed opacity (nlay, nwl) of the components in ``keys`` present (zeros if none)."""
+    total = sum_present(opacity_components, keys) if opacity_components else None
     if total is None:
         nwl = state["wl"].shape[0] if "wl" in state else int(state["nwl"])
         return jnp.zeros((state["rho_lay"].shape[0], nwl))

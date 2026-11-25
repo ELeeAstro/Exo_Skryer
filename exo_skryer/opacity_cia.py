@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
-from .aux_functions import interp_table_axis, t_interp_scheme
+from .aux_functions import interp_table_axis, opac_dtype, t_interp_scheme
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
 _LN10 = 2.302585092994046
@@ -119,7 +119,8 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
     t_interp = t_interp_scheme(state)
 
     weights_nd2_over_rho = (number_density**2 / density)  # (nlay,)
-    out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float64)
+    low = opac_dtype(state) == jnp.float32          # float32 RT (physics.rt_precision)
+    out = jnp.zeros((layer_count, wavelengths.shape[0]), dtype=jnp.float32 if low else jnp.float64)
 
     vmr_stack = jnp.stack(
         [jnp.broadcast_to(layer_vmr[species], (layer_count,)) for species in species_order],
@@ -141,9 +142,16 @@ def compute_cia_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         tiny = jnp.array(-199.0, dtype=s_interp.dtype)
         s_interp = jnp.where(below_min[:, None], tiny, s_interp)
 
-        sigma_val = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl)
         pair_weight = vmr_stack[pair_i[i]] * vmr_stack[pair_j[i]]  # (nlay,)
         normalization = pair_weight * weights_nd2_over_rho  # (nlay,)
+        if low:
+            # sigma (~1e-46 cm^5) is below the float32 range, kappa is not: fold the per-layer
+            # factor into the exponent (added in float64, then float32 exp). The floor keeps
+            # log10 and its gradient finite for a zero VMR (kappa is then 0).
+            log_norm = jnp.log10(jnp.maximum(normalization, 1e-300))
+            x = (s_interp.astype(jnp.float64) + log_norm[:, None]).astype(jnp.float32)
+            return acc + jnp.exp(_LN10 * x)
+        sigma_val = jnp.exp(_LN10 * s_interp.astype(jnp.float64))  # (nlay, nwl)
         return acc + normalization[:, None] * sigma_val
 
     # Unrolled at trace time (pair count is static); the barrier keeps pairs

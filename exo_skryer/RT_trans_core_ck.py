@@ -26,7 +26,7 @@ from .RT_trans_core_os import (
     mix_partial_cloud, normalised_output, sector_slant_tau, slant_tau, transit_depth,
     transit_depth_1d_from_opacity, vertical_tau,
 )
-from .RT_trans_geometry import impact_parameters_1d, path_matrix_1d, sector_geometry, shared_ray_grid
+from .RT_trans_geometry import impact_parameters_1d, loop_sectors, path_matrix_1d, shared_ray_grid, zoned_paths
 
 __all__ = [
     "transit_depth_ro_product",
@@ -39,6 +39,7 @@ __all__ = [
 ]
 
 _CONTINUUM = ("rayleigh", "cia", "special", "cloud")
+_CLEAR_CONTINUUM = ("rayleigh", "cia", "special")
 
 
 def _get_ck_weights(opac: Mapping[str, jnp.ndarray]) -> jnp.ndarray:
@@ -56,13 +57,14 @@ def _nwl(state):
 # Mixed k-tables (ck)
 # ---------------------------------------------------------------------------
 
-def _sum_opacity_components_ck(state, opacity_components, opac) -> jnp.ndarray:
-    """Total opacity (nlay, nwl, ng): line (nlay, nwl, ng) plus the (nlay, nwl) components broadcast over g."""
+def _sum_opacity_components_ck(state, opacity_components, opac, continuum=_CONTINUUM) -> jnp.ndarray:
+    """Total opacity (nlay, nwl, ng): line (nlay, nwl, ng) plus the (nlay, nwl) ``continuum``
+    components broadcast over g."""
     line_opacity = opacity_components.get("line")
     if line_opacity is None:
         ng = _get_ck_weights(opac).shape[-1]
         line_opacity = jnp.zeros((state["rho_lay"].shape[0], _nwl(state), ng))
-    summed_2d = sum_present(opacity_components, _CONTINUUM)
+    summed_2d = sum_present(opacity_components, continuum)
     if summed_2d is None:
         return line_opacity
     return line_opacity + summed_2d[:, :, None]
@@ -176,24 +178,51 @@ def sector_dR2_ro(
     theta_edges: jnp.ndarray,  # (nslice + 1,)
     dtau_fn,                   # j -> (dtau_cont (nslice, nlay, nwl), dtau_species (nspec, nslice, nlay, nwl, ng))
     g_weights: jnp.ndarray,
+    loop: str = "vmap",
+    cloud_fn=None,
+    precision: str = "float64",
+    zone=None,
+    cloudy=None,
 ):
-    """ck_trans version of ``sector_dR2``: per-sector absorbing area (nsector, nwl) and R_base."""
+    """ck_trans version of ``sector_dR2``: per-sector absorbing area (nsector, nwl) and R_base.
+
+    With ``cloud_fn(j)`` (cloud dtau (nslice, nlay[, nwl]), added to the continuum) the area
+    is (nsector, 2, nwl): clear and cloudy, sharing the per-species transmission product.
+    ``zone`` / ``cloudy``: zone edges folded onto the columns, as in ``sector_dR2``.
+    """
     b, area, R_base = shared_ray_grid(r_low, r_up)
 
     def sector(j):
-        P, opaque = sector_geometry(b, r_low[j], r_up[j], theta_edges)
+        P, P_cld, opaque = zoned_paths(b, r_low[j], r_up[j], theta_edges, zone, cloudy)
         dtau_cont, dtau_spec = dtau_fn(j)
         ng = dtau_spec.shape[-1]
-        w = g_weights[:ng].astype(dtau_spec.dtype)
-        T_prod = jnp.ones(dtau_cont.shape[-1:], dtype=dtau_spec.dtype)[None, :] * jnp.ones((b.shape[0], 1))
+        w = g_weights[:ng].astype(P.dtype)                    # float64 even when dtau is float32
+        T_prod = jnp.ones((b.shape[0], dtau_cont.shape[-1]), dtype=P.dtype)
         for s_idx in range(dtau_spec.shape[0]):
-            tau_s = jnp.clip(sector_slant_tau(P, dtau_spec[s_idx]), 0.0, 300.0)
-            T_prod = lax.optimization_barrier(T_prod * jnp.clip(jnp.sum(jnp.exp(-tau_s) * w, axis=-1), 1e-99, 1.0))
-        T = jnp.exp(-jnp.clip(sector_slant_tau(P, dtau_cont), 0.0, 300.0)) * T_prod
-        omt = jnp.where(opaque[:, None], 1.0, 1.0 - jnp.clip(T, 0.0, 1.0))
-        return jnp.sum(area[:, None] * omt, axis=0)
+            if precision == "float32":
+                # tau, exp and the g-average in float32 (absolute error ~1e-7 in T_s); the g-average
+                # as a contraction with the weight vector, since a broadcast multiply + sum makes XLA
+                # materialise the weights at the full (nray, nwl, ng) shape. Product over species float64.
+                tau_s = jnp.clip(sector_slant_tau(P, dtau_spec[s_idx], precision, cast_back=False), 0.0, 300.0)
+                T_s = jnp.einsum("rwg,g->rw", jnp.exp(-tau_s), w.astype(jnp.float32),
+                                 precision=lax.Precision.HIGHEST).astype(P.dtype)
+            else:
+                tau_s = jnp.clip(sector_slant_tau(P, dtau_spec[s_idx], precision), 0.0, 300.0)
+                T_s = jnp.sum(jnp.exp(-tau_s) * w, axis=-1)
+            T_prod = lax.optimization_barrier(T_prod * jnp.clip(T_s, 1e-99, 1.0))
+        tau_cont = sector_slant_tau(P, dtau_cont, precision)
 
-    return lax.map(sector, jnp.arange(r_low.shape[0])), R_base
+        def absorbing_area(t):
+            T = jnp.exp(-jnp.clip(t, 0.0, 300.0)) * T_prod
+            return jnp.sum(area[:, None] * jnp.where(opaque[:, None], 1.0, 1.0 - jnp.clip(T, 0.0, 1.0)), axis=0)
+
+        if cloud_fn is None:
+            return absorbing_area(tau_cont)
+        tau_c = sector_slant_tau(P_cld, cloud_fn(j), precision)
+        tau_c = tau_c.reshape(tau_c.shape + (1,) * (tau_cont.ndim - tau_c.ndim))
+        return jnp.stack([absorbing_area(tau_cont), absorbing_area(tau_cont + tau_c)])
+
+    return loop_sectors(sector, r_low.shape[0], loop), R_base
 
 
 def transit_depth_columns_ro(
@@ -213,21 +242,24 @@ def transit_depth_columns_ro(
 
 def column_dtau_ck(state, comps, opac, clear: bool = False):
     """Vertical optical depth (nlay, nwl, ng) of one column; ``clear`` drops the cloud opacity."""
-    k = _sum_opacity_components_ck(state, comps, opac)
-    if clear and "cloud" in comps:
-        cloud = comps["cloud"]
-        k = k - (cloud[:, :, None] if cloud.ndim == 2 else cloud)
+    # Clear: the cloud is left out of the sum, not subtracted (see column_dtau_os).
+    k = _sum_opacity_components_ck(state, comps, opac, _CLEAR_CONTINUUM if clear else _CONTINUUM)
     return vertical_tau(k, state["rho_lay"], state["dz"])
 
 
-def column_dtau_ck_trans(state, comps, clear: bool = False):
-    """(continuum dtau (nlay, nwl), per-species dtau (nspec, nlay, nwl, ng)) of one column."""
+def column_dtau_ck_trans(state, comps, clear: bool = False, dtype=None):
+    """(continuum dtau (nlay, nwl), per-species dtau (nspec, nlay, nwl, ng)) of one column.
+
+    With ``dtype`` (e.g. float32) both are built in it: the per-species dtau, the largest
+    tensor of the model, is then never formed in float64.
+    """
     scale = state["rho_lay"] * state["dz"]
-    cont = sum_present(comps, _CONTINUUM)
+    cont = sum_present(comps, _CLEAR_CONTINUUM if clear else _CONTINUUM)   # clear: cloud left out
     if cont is None:
         cont = jnp.zeros((state["rho_lay"].shape[0], _nwl(state)), dtype=state["rho_lay"].dtype)
-    if clear and "cloud" in comps:
-        cont = cont - comps["cloud"]
     dcont = jnp.maximum(cont, 0.0) * scale[:, None]
-    dspec = comps["line_perspecies"] * comps["vmr_perspecies"][:, :, None, None] * scale[None, :, None, None]
-    return dcont, dspec
+    coef = comps["vmr_perspecies"] * scale[None, :]                       # (nspec, nlay)
+    line = comps["line_perspecies"]
+    if dtype is not None:
+        dcont, coef, line = dcont.astype(dtype), coef.astype(dtype), line.astype(dtype)
+    return dcont, line * coef[:, :, None, None]

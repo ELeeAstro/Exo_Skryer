@@ -18,6 +18,13 @@ __all__ = ['safe_sqrt', 'pchip_1d', 'interp_table_axis', 't_interp_scheme', 'lat
 T_INTERP_SCHEMES = ("linear", "pchip")  # index = code stored in state["opac_T_interp"]
 
 
+def opac_dtype(state):
+    """Dtype of the opacity sums: float32 when the transit RT runs in float32
+    (``physics.rt_precision: float32`` sets the static ``opac_float32`` code in ``state``),
+    since the RT then casts the optical depths to float32 anyway; float64 otherwise."""
+    return jnp.float32 if int(state.get("opac_float32", 0)) else jnp.float64
+
+
 def t_interp_scheme(state) -> str:
     """Temperature-interpolation scheme name from the static code in ``state``.
 

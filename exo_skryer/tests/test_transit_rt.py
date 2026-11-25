@@ -393,3 +393,60 @@ def test_iceberg_dtau_levels_and_fraction():
     np.testing.assert_allclose(t, 1e-7 * 1e7 * (np.arange(10) < 5), rtol=1e-12)   # P >= 1 mbar: layers 0-4
     t = np.asarray(iceberg_dtau(st, {"log_10_k_cld": -5.0, "log_10_p_cld": -3.25}))[0]
     np.testing.assert_allclose(t[5], 0.25 * 1.0, rtol=1e-12)
+
+
+# --- float32 slant-tau contraction (physics.rt_precision) -------------------------------
+
+from exo_skryer.RT_trans_core_os import sector_dR2, sector_slant_tau  # noqa: E402
+from exo_skryer.RT_trans_core_ck import sector_dR2_ro  # noqa: E402
+
+
+@pytest.mark.parametrize("mode", ["os", "ck", "ck_trans"])
+def test_float32_slant_tau_matches_float64(mode):
+    """float32 contraction: areas (clear and cloudy) within 1e-6 of float64, output float64."""
+    st, rng = _state()
+    n_sector, n_slice = 2, 3
+    r_low, r_up = _tile_columns(st, n_sector, n_slice)
+    edges = uniform_theta_edges(n_slice)
+    cloud = jnp.asarray(10 ** rng.uniform(-6, -2, (n_sector, n_slice, NLAY)))
+    scale = st["rho_lay"] * st["dz"]
+    if mode == "ck_trans":
+        nspec = 2
+        dspec = (jnp.asarray(10 ** rng.uniform(-2, 3, (nspec, NLAY, NWL, NG)))
+                 * jnp.asarray(10 ** rng.uniform(-6, -2, (nspec, NLAY)))[:, :, None, None] * scale[None, :, None, None])
+        dcont = jnp.asarray(10 ** rng.uniform(-4, 0, (NLAY, NWL))) * scale[:, None]
+        fn = lambda j: (jnp.broadcast_to(dcont, (n_slice,) + dcont.shape),
+                        jnp.broadcast_to(dspec[:, None], (nspec, n_slice) + dspec.shape[1:]))
+        run = lambda prec: sector_dR2_ro(r_low, r_up, edges, fn, _opac()["g_weights"], cloud_fn=lambda j: cloud[j],
+                                         precision=prec)[0]
+    else:
+        shape = (NLAY, NWL) if mode == "os" else (NLAY, NWL, NG)
+        k = jnp.asarray(10 ** rng.uniform(-4, 1, shape))
+        dtau = vertical_tau(k, st["rho_lay"], st["dz"])
+        fn = lambda j: jnp.broadcast_to(dtau, (n_slice,) + dtau.shape)
+        run = lambda prec: sector_dR2(r_low, r_up, edges, fn, cloud_fn=lambda j: cloud[j], precision=prec)[0]
+    a64, a32 = run("float64"), run("float32")
+    assert a32.dtype == jnp.float64
+    np.testing.assert_allclose(a32, a64, rtol=1e-6)
+    with pytest.raises(ValueError):
+        sector_slant_tau(jnp.ones((2, 1, 2)), jnp.ones((1, 2, 3)), "float16")
+
+
+def test_zone_folding_matches_duplicated_columns():
+    """sector_dR2 with zone/cloudy (path tensors folded onto the columns) equals the explicit
+    zone grid with each zone's column duplicated and the cloud masked per zone."""
+    from exo_skryer.RT_trans_geometry import insert_zone_edge
+    st, rng = _state()
+    n_sector, n_slice = 2, 4
+    r_low, r_up = _tile_columns(st, n_sector, n_slice)
+    r_low = r_low * (1.0 + 1e-3 * jnp.arange(n_slice))[None, :, None]     # distinct columns
+    r_up = r_up * (1.0 + 1e-3 * jnp.arange(n_slice))[None, :, None]
+    dtau = jnp.asarray(10 ** rng.uniform(-4, 1, (n_sector, n_slice, NLAY, NWL)))
+    cloud = jnp.asarray(10 ** rng.uniform(-4, -1, (n_sector, n_slice, NLAY)))
+    edges, zone, cloudy = insert_zone_edge(uniform_theta_edges(n_slice), jnp.deg2rad(17.0))
+    folded = sector_dR2(r_low, r_up, edges, lambda j: dtau[j], cloud_fn=lambda j: cloud[j],
+                        zone=zone, cloudy=cloudy)[0]
+    cloud_z = cloud[:, zone] * cloudy[None, :, None]
+    explicit = sector_dR2(r_low[:, zone], r_up[:, zone], edges, lambda j: dtau[j][zone],
+                          cloud_fn=lambda j: cloud_z[j])[0]
+    np.testing.assert_allclose(folded, explicit, rtol=1e-12)

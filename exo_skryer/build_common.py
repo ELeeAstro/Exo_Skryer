@@ -278,6 +278,21 @@ def validate_model(cfg, spec: ModelSpec, opac_cache: Mapping[str, jnp.ndarray]) 
             raise ValueError("physics.contri_func=True is not supported with opac.ck_mix=TRANS. "
                              "Use ck_mix=RORR/PRAS or disable contribution functions.")
 
+    if str(getattr(cfg.physics, "iceberg_cloud", False)).strip().lower() in ("true", "1", "yes", "on"):
+        if not transit:
+            raise NotImplementedError("physics.iceberg_cloud is for transit rt_schemes.")
+        has = lambda base: base in names or f"{base}_joint" in names
+        if has("log_10_k_cld"):          # POSEIDON grey deck (benchmarks): kappa [m^-1] below P_cld
+            if not has("log_10_p_cld"):
+                raise ValueError("physics.iceberg_cloud with log_10_k_cld (grey deck, m^-1) needs log_10_p_cld [bar].")
+        elif spec.cloud is None:
+            raise ValueError("physics.iceberg_cloud masks the column cloud in angle: set vert_cloud / opac_cloud "
+                             "(e.g. slab + grey_profile), or give the POSEIDON deck (log_10_k_cld, log_10_p_cld).")
+        if any(split_limb_tag(n)[0] == "f_cloud" for n in names):
+            raise ValueError("physics.iceberg_cloud sets the cloud cover with f_cld; remove f_cloud.")
+        if spec.contri_func:
+            raise NotImplementedError("physics.iceberg_cloud does not support contri_func.")
+
     if spec.schemes.get("vert_Tp") == "trident" or spec.schemes.get("vert_chem") == "trident":
         if not (spec.schemes.get("vert_Tp") == "trident" and spec.schemes.get("vert_chem") == "trident"):
             raise ValueError("TRIDENT parameterisation needs both physics.vert_Tp: trident and vert_chem: trident.")
@@ -289,16 +304,7 @@ def validate_model(cfg, spec: ModelSpec, opac_cache: Mapping[str, jnp.ndarray]) 
                              f"log_X_bar_term_<species> (missing: {missing or 'abundances'}).")
         if spec.contri_func or spec.ck_mix is CkMix.PRAS:
             raise NotImplementedError("TRIDENT parameterisation: contri_func and ck_mix: PRAS are not supported.")
-        if str(getattr(cfg.physics, "iceberg_cloud", False)).strip().lower() in ("true", "1", "yes", "on"):
-            need = [k for k in ("log_10_p_cld", "log_10_k_cld") if k not in names]
-            if need:
-                raise ValueError(f"physics.iceberg_cloud needs parameters {need} (optional: f_cld, "
-                                 "phi_0_cld, theta_0_cld [deg]; default a uniform deck).")
-            if "f_cloud" in names:
-                raise ValueError("physics.iceberg_cloud already sets the cloud cover (f_cld); remove f_cloud.")
         return
-    if str(getattr(cfg.physics, "iceberg_cloud", False)).strip().lower() in ("true", "1", "yes", "on"):
-        raise NotImplementedError("physics.iceberg_cloud needs the TRIDENT parameterisation (vert_Tp: trident).")
 
     if spec.geometry in ("1_5d", "2d", "3d"):
         from .limb_asymmetry import ANCHOR_TAGS, validate_limb_parameter_names

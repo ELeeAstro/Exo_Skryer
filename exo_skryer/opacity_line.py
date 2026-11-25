@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import lax
 
 from . import build_opacities as XS
-from .aux_functions import interp_table_axis, t_interp_scheme
+from .aux_functions import interp_table_axis, opac_dtype, t_interp_scheme
 from .data_constants import amu, bar
 
 # exp(_LN10 * x) is several times faster than 10.0 ** x on these large arrays.
@@ -120,7 +120,8 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
     n_species = sigma_cube.shape[0]
     n_wl = sigma_cube.shape[-1]
 
-    def _accumulate_one(i: jnp.ndarray, acc: jnp.ndarray) -> jnp.ndarray:
+    def _sigma(i: int) -> jnp.ndarray:
+        """Cross section (nlay, nwl) [cm^2] of species i, in the table's precision (float32)."""
         sigma_3d = sigma_cube[i]  # (nT, nP, nwl) in log10(cm^2)
         log_temp_grid = log_temperature_grids[i]  # (nT,)
 
@@ -131,15 +132,23 @@ def compute_line_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndar
                     + p_weight[:, None] * sigma_3d[t_idx, p_idx + 1, :])  # (nlay, nwl)
 
         s_interp = interp_table_axis(log_t_layers, log_temp_grid, _at_t, t_interp)  # log10 sigma
-
-        sigma_linear = jnp.exp(_LN10 * s_interp)  # (nlay, nwl) in cm^2, table precision
-        return acc + sigma_linear.astype(acc.dtype) * mixing_ratios[i, :, None]
+        return jnp.exp(_LN10 * s_interp)
 
     # Unrolled at trace time (n_species is static, so each species is a static slice).
     # The barrier keeps species sequential: without it XLA materialises every
     # species' (nlay, nwl) term at once (~2.5x the temp memory) and is slower.
+    if opac_dtype(state) == jnp.float32:
+        # float32 RT: accumulate in float32, with vmr / (mu amu) as one coefficient formed in
+        # float64 (no subnormal sigma * vmr intermediates).
+        coef = (mixing_ratios / (layer_mu[None, :] * amu)).astype(jnp.float32)    # (nspec, nlay)
+        kappa = jnp.zeros((layer_count, n_wl), dtype=jnp.float32)
+        for i in range(n_species):
+            kappa = lax.optimization_barrier(kappa + _sigma(i).astype(jnp.float32) * coef[i, :, None])
+        return kappa
+
     weighted_sigma = jnp.zeros((layer_count, n_wl), dtype=jnp.float64)
     for i in range(n_species):
-        weighted_sigma = lax.optimization_barrier(_accumulate_one(i, weighted_sigma))
+        weighted_sigma = lax.optimization_barrier(
+            weighted_sigma + _sigma(i).astype(jnp.float64) * mixing_ratios[i, :, None])
 
     return weighted_sigma / (layer_mu[:, None] * amu)

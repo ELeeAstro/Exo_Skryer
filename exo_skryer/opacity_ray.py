@@ -7,7 +7,9 @@ from __future__ import annotations
 from typing import Dict
 
 import jax.numpy as jnp
+from jax import lax
 from . import registry_ray as XR
+from .aux_functions import opac_dtype
 
 __all__ = [
     "zero_ray_opacity",
@@ -88,5 +90,9 @@ def compute_ray_opacity(state: Dict[str, jnp.ndarray], opac: Dict[str, jnp.ndarr
         [jnp.broadcast_to(layer_vmr[name], (layer_count,)) for name in species_names],
         axis=0,
     )  # (n_species, nlay)
+    if opac_dtype(state) == jnp.float32:
+        # float32 RT: nd / rho = 1 / (mu amu) folded into the VMRs in float64, contraction in float32.
+        w = (mixing_ratios * (number_density / density)[None, :]).astype(jnp.float32)
+        return jnp.einsum("sl,sw->lw", w, sigma_values.astype(jnp.float32), precision=lax.Precision.HIGHEST)
     sigma_weighted = jnp.einsum("sl,sw->lw", mixing_ratios, sigma_values)
     return (number_density[:, None] * sigma_weighted) / density[:, None]
