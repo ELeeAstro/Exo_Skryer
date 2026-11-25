@@ -334,9 +334,21 @@ def run_nested_nautilus(
 
     _ = sampler.run(**run_kwargs)
 
-    # Extract posterior samples
+    # Extract posterior samples. nautilus' equal-weight output keeps each point with probability
+    # w / max(w), i.e. ~sum(w) / max(w) samples, which one heavy point can collapse to a few hundred
+    # even at n_eff ~ 1e4. equal_weight_boost (default: n_eff / that count) resamples to ~n_eff
+    # equal-weight samples (with repeats), as dynesty's resample_equal does.
+    post_kwargs: Dict[str, Any] = {}
+    if equal_weight:
+        _, log_w_all, _ = sampler.posterior(equal_weight=False)
+        n_plain = float(np.sum(np.exp(log_w_all - np.max(log_w_all))))
+        boost = getattr(ncfg, "equal_weight_boost", None)
+        boost = float(boost) if boost is not None else max(1.0, float(sampler.n_eff) / n_plain)
+        post_kwargs["equal_weight_boost"] = boost
+        print(f"[Nautilus] equal-weight resampling: boost {boost:.1f} (~{n_plain * boost:.0f} samples, "
+              f"n_eff {float(sampler.n_eff):.0f})")
     try:
-        points, log_w, log_l = sampler.posterior(return_as_dict=True, equal_weight=equal_weight)
+        points, log_w, log_l = sampler.posterior(return_as_dict=True, equal_weight=equal_weight, **post_kwargs)
     except TypeError:
         # Compatibility fallback for older versions lacking return_as_dict.
         points, log_w, log_l = sampler.posterior(equal_weight=equal_weight)

@@ -1,6 +1,7 @@
 """Summarise a finished retrieval in this directory and plot its spectrum fit.
 
     python analyse.py 1D [1_5D 2D 3D_iceberg ...]
+    python analyse.py nautilus_250/1D ...     (runs in a subdirectory; summary.md written there)
 
 Prints evidence, sampler cost, best-fit chi2 and parameter medians (16-84%), writes
 <geom>/fit_spectrum.png (data, best fit, 1-sigma band; limb/side components for multi-D)
@@ -33,7 +34,7 @@ def analyse(geom):
     names = [q.name for q in cfg.params if q.dist != "delta"]
     samples = {n: np.asarray(post[n]).ravel() for n in names}
     ll = np.asarray(tree.sample_stats["log_likelihood"]).ravel()
-    log = (d / "dynesty_run.log").read_text()
+    log = next((d / f).read_text() for f in ("run.log", "dynesty_run.log") if (d / f).exists())
     took = re.findall(r"\[done\] Full model took: (.*)", log)
 
     obs, fm = build_retrieval_inputs(cfg, d)
@@ -66,20 +67,20 @@ def analyse(geom):
     ax.errorbar(wl, y * 1e2, dy * 1e2, fmt="o", ms=3, color="k", lw=0.8, label="Sing+2016", zorder=3)
     ax.fill_between(wl[o], lo[o] * 1e2, hi[o] * 1e2, color="C0", alpha=0.3, label="1$\\sigma$ (200 draws)")
     ax.plot(wl[o], m_best[o] * 1e2, color="C0", lw=1.2, label=f"best fit ($\\chi^2$={chi2:.0f})")
-    if geom in COMPONENTS:
+    if Path(geom).name in COMPONENTS:
         r = fm_hi(best)
-        for k, c, lab in zip(COMPONENTS[geom], ("C3", "C2"), ("evening (east)", "morning (west)")):
+        for k, c, lab in zip(COMPONENTS[Path(geom).name], ("C3", "C2"), ("evening (east)", "morning (west)")):
             comp = np.asarray(r[f"binned_{k}"])  # full-circle equivalent
             ax.plot(wl[o], comp[o] * 1e2, color=c, lw=0.9, ls="--", label=lab + " limb, full-circle equiv.")
     ax.set_xscale("log"); ax.set_xlabel("wavelength [$\\mu$m]"); ax.set_ylabel("transit depth [%]")
     ax.set_title(f"HD 209458b {geom}: logZ = {at['logZ']:.1f}")
     ax.legend(fontsize=8, ncol=2); fig.tight_layout(); fig.savefig(d / "fit_spectrum.png", dpi=130); plt.close(fig)
 
-    summ = HERE / "summary.md"
+    summ = d.parent / "summary.md"
     if not summ.exists():
         summ.write_text("| geometry | free | logZ | max logL | chi2 (N=%d) | n_like | wall time |\n|---|---|---|---|---|---|---|\n" % y.size)
     with open(summ, "a") as f:
-        f.write(f"| {geom} | {len(names)} | {at['logZ']:.2f} +- {at['logZ_err']:.2f} | {at['max_log_likelihood']:.2f} | "
+        f.write(f"| {Path(geom).name} | {len(names)} | {at['logZ']:.2f} +- {at['logZ_err']:.2f} | {at['max_log_likelihood']:.2f} | "
                 f"{chi2:.1f} | {int(at['n_like'])} | {took[-1] if took else '?'} |\n")
     return rows
 
