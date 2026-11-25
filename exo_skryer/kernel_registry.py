@@ -226,6 +226,14 @@ CLOUD_NK_CACHE = ("cloud_nk_n", "cloud_nk_k")
 # Vertical structure
 # ---------------------------------------------------------------------------
 
+def _trident_marker(*args, **kwargs):
+    """TRIDENT parameterisation marker: the transit builder generates these profiles per column."""
+    raise NotImplementedError("vert_Tp/vert_chem 'trident' are built per column by build_model_trans; "
+                              "they cannot be called as 1D kernels.")
+
+
+register("vert_Tp", "trident", _trident_marker)
+register("vert_chem", "trident", _trident_marker)
 register("vert_Tp", "isothermal", isothermal, aliases=("constant",))
 register("vert_Tp", "barstow", Barstow)
 register("vert_Tp", "milne", Milne)

@@ -288,3 +288,40 @@ def test_3d_tags_and_offset_chain():
     with pytest.raises(ValueError):   # days cannot come from nights
         validate_limb_parameter_names({"T_iso_east_night": 1, "T_iso_west_night": 1,
                                        "delta_T_iso_east_day": 0, "delta_T_iso_west_day": 0}, A)
+
+
+# ---------------------------------------------------------------------------
+# TRIDENT parameterisation (values checked against POSEIDON compute_T_field_gradient,
+# compute_X_field_gradient and angular_grids to <= 2e-15; see experiments/TRIDENT_benchmark)
+# ---------------------------------------------------------------------------
+
+from exo_skryer.build_model_trans import trident_angles, trident_high_value, trident_vertical  # noqa: E402
+
+
+def test_trident_angles_layout():
+    e, c, w = trident_angles(None, 0.0)
+    np.testing.assert_allclose(e, [-np.pi / 2, np.pi / 2]); np.testing.assert_allclose(c, [0.0])
+    e, c, w = trident_angles(4, 40.0)
+    a = np.deg2rad(40.0)
+    np.testing.assert_allclose(e, [-np.pi / 2, -a / 2, -a / 4, 0.0, a / 4, a / 2, np.pi / 2], atol=1e-15)
+    np.testing.assert_allclose(float(jnp.sum(w)), np.pi)
+    np.testing.assert_allclose(c, 0.5 * (e[1:] + e[:-1]), atol=1e-15)
+
+
+def test_trident_high_value_piecewise():
+    bar, dterm, ddn, a, b = 1400.0, 500.0, 1000.0, 40.0, 20.0
+    f = lambda ph, th: float(trident_high_value(jnp.asarray(ph), jnp.asarray(th), bar, dterm, ddn, a, b))
+    assert f(-1.0, 0.0) == bar + dterm / 2          # evening, terminator plane
+    assert f(1.0, 0.0) == bar - dterm / 2           # morning
+    assert f(0.0, 0.0) == bar                       # middle of the azimuthal transition
+    assert f(-1.0, -1.0) == bar + dterm / 2 + ddn / 2   # evening dayside
+    assert f(1.0, 1.0) == bar - dterm / 2 - ddn / 2     # morning nightside
+    q = np.deg2rad(b) / 4                            # halfway into the day-night transition (night side)
+    np.testing.assert_allclose(f(0.0, q), bar - 0.5 * ddn / 2)
+
+
+def test_trident_vertical_profile():
+    p = jnp.asarray([1e-7, 1e-5, 1e-2, 10.0, 100.0])
+    T = np.asarray(trident_vertical(p, 1000.0, 2000.0))
+    np.testing.assert_allclose(T[[0, 1]], 1000.0); np.testing.assert_allclose(T[[3, 4]], 2000.0)
+    np.testing.assert_allclose(T[2], 1000.0 + 1000.0 * 3.0 / 6.0)    # log10(1e-2/1e-5) / log10(10/1e-5)

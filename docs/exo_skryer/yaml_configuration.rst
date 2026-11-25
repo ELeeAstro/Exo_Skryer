@@ -325,6 +325,22 @@ determines which retrieval parameters (in ``params``) you must provide.
   * Fits a single (whole-terminator) spectrum, ``data.obs``.
   * ``M_p``, ``physics.contri_func: true`` and ``ck_mix: PRAS`` are not supported.
 
+  TRIDENT parameterisation (``physics.vert_Tp: trident`` and ``physics.vert_chem: trident``;
+  MacDonald & Lewis 2022, as in POSEIDON):
+
+  * Works with ``transit_1d`` (one column), ``transit_2d`` (1 sector x (2 + ``physics.n_slice_dn``)
+    zones) and ``transit_3d`` ((2 + ``physics.n_slice_em``) x (2 + ``n_slice_dn``)); slice counts
+    are even integers (or None for a single region), as in POSEIDON.
+  * Untagged parameters: ``T_bar_term``, ``Delta_T_term`` (evening - morning), ``Delta_T_DN``
+    (day - night), ``T_deep``, ``alpha_em`` and ``beta_dn`` (opening angles, degrees); per species
+    ``log_X_bar_term_<sp>``, ``Delta_log_X_term_<sp>``, ``Delta_log_X_DN_<sp>`` and optional
+    ``log_X_deep_<sp>`` (without it, constant with altitude). Missing Delta_* are 0. H2/He fill
+    the rest with He/H2 = ``He_fraction`` (default 0.17).
+  * Each column takes T(p) and X(p) at its sector/zone centre: linear in angle across the
+    transitions, linear in log P between 1e-5 and 10 bar, constant outside. Every column
+    computes its own hydrostatics and opacities.
+  * Fits the whole-terminator spectrum (``data.obs``).
+
   Notes for ``transit_3d`` (east/west limbs, each with day-night structure):
 
   * Two half-annulus sectors (east = evening, west = morning), each cut into

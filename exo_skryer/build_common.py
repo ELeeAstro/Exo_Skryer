@@ -278,6 +278,19 @@ def validate_model(cfg, spec: ModelSpec, opac_cache: Mapping[str, jnp.ndarray]) 
             raise ValueError("physics.contri_func=True is not supported with opac.ck_mix=TRANS. "
                              "Use ck_mix=RORR/PRAS or disable contribution functions.")
 
+    if spec.schemes.get("vert_Tp") == "trident" or spec.schemes.get("vert_chem") == "trident":
+        if not (spec.schemes.get("vert_Tp") == "trident" and spec.schemes.get("vert_chem") == "trident"):
+            raise ValueError("TRIDENT parameterisation needs both physics.vert_Tp: trident and vert_chem: trident.")
+        if not transit or spec.geometry == "1_5d":
+            raise NotImplementedError("vert_Tp: trident is supported for transit_1d, transit_2d and transit_3d.")
+        missing = [k for k in ("T_bar_term", "T_deep") if k not in names]
+        if missing or not any(n.startswith("log_X_bar_term_") for n in names):
+            raise ValueError("TRIDENT parameterisation needs T_bar_term, T_deep and at least one "
+                             f"log_X_bar_term_<species> (missing: {missing or 'abundances'}).")
+        if spec.contri_func or spec.ck_mix is CkMix.PRAS:
+            raise NotImplementedError("TRIDENT parameterisation: contri_func and ck_mix: PRAS are not supported.")
+        return
+
     if spec.geometry in ("1_5d", "2d", "3d"):
         from .limb_asymmetry import ANCHOR_TAGS, validate_limb_parameter_names
         scheme = f"transit_{spec.geometry}"

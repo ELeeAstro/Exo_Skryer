@@ -55,7 +55,9 @@ from .build_common import (
     select_model,
     validate_model,
 )
+from .data_constants import bar
 from .instru_convolve import apply_response_functions_cached, get_bandpass_cache
+from .vert_mu import compute_mu
 from .limb_asymmetry import ANCHOR_TAGS, merge_limb_parameter_dict, split_limb_parameter_dict
 from .RT_trans_core_ck import column_dtau_ck, column_dtau_ck_trans, sector_dR2_ro, _get_ck_weights
 from .RT_trans_core_os import column_dtau_os, sector_dR2
@@ -120,6 +122,109 @@ def _interp_columns(anchor: Dict, w: jnp.ndarray, prof: Dict):
     return cols_prof, {k: lin(v) for k, v in anchor.items()}
 
 
+# ---------------------------------------------------------------------------
+# TRIDENT parameterisation (MacDonald & Lewis 2022, Eqs. 34-36; POSEIDON
+# compute_T_field_gradient / compute_X_field_gradient / angular_grids)
+# ---------------------------------------------------------------------------
+
+TRIDENT_P_HIGH = 1.0e-5    # bar: columns isothermal / isochemical above this
+TRIDENT_P_DEEP = 10.0      # bar: and below this
+_TRIDENT_X_PREFIX = "log_X_bar_term_"
+
+
+def trident_angles(n_slice: Optional[int], opening_deg):
+    """Edges, centres and widths of TRIDENT sectors (phi) or zones (theta), POSEIDON layout.
+
+    ``n_slice`` None: one region spanning (-pi/2, pi/2). Otherwise 2 + n_slice regions: the
+    two outer ones and ``n_slice`` equal slices across the opening angle (degrees) centred
+    on 0. Northern hemisphere only (north-south symmetry).
+    """
+    half = 0.5 * jnp.pi
+    if n_slice is None:
+        edges = jnp.array([-half, half])
+    else:
+        a = jnp.deg2rad(opening_deg)
+        inner = -0.5 * a + jnp.arange(n_slice + 1) * (a / n_slice)
+        edges = jnp.concatenate([jnp.array([-half]), inner, jnp.array([half])])
+    widths = jnp.diff(edges)
+    centres = -half + jnp.cumsum(widths) - 0.5 * widths
+    return edges, centres, widths
+
+
+def _trident_angle_value(angle, half_open, low_value, mid, delta_half, high_value):
+    """POSEIDON's piecewise rule: low for angle <= -a/2, linear for |angle| < a/2, high otherwise."""
+    lin = mid - (angle / jnp.where(half_open > 0, half_open, 1.0)) * delta_half
+    return jnp.where(angle <= -half_open, low_value,
+                     jnp.where((angle > -half_open) & (angle < half_open), lin, high_value))
+
+
+def trident_high_value(phi, theta, bar, d_term, d_dn, alpha_deg, beta_deg):
+    """Value at P_high for a column at (phi, theta): Eqs. 34-35 (T, or log X for abundances)."""
+    a2, b2 = 0.5 * jnp.deg2rad(alpha_deg), 0.5 * jnp.deg2rad(beta_deg)
+    term = _trident_angle_value(phi, a2, bar + 0.5 * d_term, bar, 0.5 * d_term, bar - 0.5 * d_term)
+    return _trident_angle_value(theta, b2, term + 0.5 * d_dn, term, 0.5 * d_dn, term - 0.5 * d_dn)
+
+
+def trident_vertical(p_bar, high, deep):
+    """Eq. 36: constant above P_high, linear in log P to ``deep`` at P_deep, constant below."""
+    slope = (deep - high) / jnp.log10(TRIDENT_P_DEEP / TRIDENT_P_HIGH)
+    mid = high + slope * jnp.log10(jnp.maximum(p_bar, 1e-300) / TRIDENT_P_HIGH)
+    return jnp.where(p_bar <= TRIDENT_P_HIGH, high, jnp.where(p_bar < TRIDENT_P_DEEP, mid, deep))
+
+
+def trident_species(params) -> tuple:
+    """Species with TRIDENT abundance fields (from log_X_bar_term_<species> parameters)."""
+    return tuple(sorted(k[len(_TRIDENT_X_PREFIX):] for k in params if k.startswith(_TRIDENT_X_PREFIX)))
+
+
+def trident_column_profiles(p_lev, p_lay, phi, theta, params, species):
+    """T(p) and VMR(p) of one column at (phi, theta) from the TRIDENT parameters.
+
+    Missing Delta_* parameters are zero. Species without ``log_X_deep_<sp>`` are constant
+    with altitude. H2 and He fill the rest with He/H2 = ``He_fraction`` (default 0.17).
+    Pressures in dyne cm^-2.
+    """
+    get = lambda k, d=0.0: params.get(k, d)
+    alpha, beta = get("alpha_em"), get("beta_dn")
+    T_high = trident_high_value(phi, theta, params["T_bar_term"], get("Delta_T_term"), get("Delta_T_DN"),
+                                alpha, beta)
+    T_deep = params["T_deep"]
+    p_lev_bar, p_lay_bar = p_lev / bar, p_lay / bar
+    vmr, x_sum = {}, 0.0
+    for sp in species:
+        logX_high = trident_high_value(phi, theta, params[_TRIDENT_X_PREFIX + sp], get(f"Delta_log_X_term_{sp}"),
+                                       get(f"Delta_log_X_DN_{sp}"), alpha, beta)
+        deep_key = f"log_X_deep_{sp}"
+        logX = trident_vertical(p_lay_bar, logX_high, params[deep_key]) if deep_key in params \
+            else jnp.full_like(p_lay_bar, logX_high)
+        vmr[sp] = 10.0 ** logX
+        x_sum = x_sum + vmr[sp]
+    he_frac = get("He_fraction", 0.17)
+    vmr["H2"] = (1.0 - x_sum) / (1.0 + he_frac)
+    vmr["He"] = he_frac * vmr["H2"]
+    return {"p_lev": p_lev, "p_lay": p_lay,
+            "T_lev": trident_vertical(p_lev_bar, T_high, T_deep),
+            "T_lay": trident_vertical(p_lay_bar, T_high, T_deep),
+            "vmr_lay": vmr}
+
+
+def _trident_layout(geometry: str, cfg):
+    """(n_slice_em or None, n_slice_dn or None) for a TRIDENT model of the given geometry."""
+    def n(key):
+        raw = getattr(cfg.physics, key, None)
+        if raw is None or str(raw).strip().lower() in ("none", "off"):
+            return None
+        v = int(raw)
+        if v < 0 or v % 2:
+            raise ValueError(f"physics.{key} must be an even integer >= 0 (POSEIDON convention), or None.")
+        return v
+    if geometry == "1d":
+        return None, None
+    if geometry == "2d":
+        return None, n("n_slice_dn")
+    return n("n_slice_em"), n("n_slice_dn")
+
+
 def build_forward_model_trans(
     cfg,
     obs: Dict,
@@ -141,10 +246,17 @@ def build_forward_model_trans(
     opac_cache = XS.runtime_opacity_cache()
     validate_model(cfg, spec, opac_cache)
 
+    trident = spec.schemes.get("vert_Tp") == "trident"
     names, fracs = _LAYOUTS[geometry]
     n_sector = len(names)
     sector_frac = jnp.asarray(fracs)
     n_slice = int(getattr(cfg.physics, "n_zenith", 6)) if geometry in ("2d", "3d") else 1
+    if trident:
+        n_em, n_dn = _trident_layout(geometry, cfg)
+        n_sector = 1 if n_em is None else 2 + n_em
+        n_slice = 1 if n_dn is None else 2 + n_dn
+        if obs.get("has_limb_observations", False):
+            raise NotImplementedError("TRIDENT parameterisation fits the whole-terminator spectrum (data.obs).")
     has_limb_obs = geometry in ("1_5d", "3d") and bool(obs.get("has_limb_observations", False))
     mode = "os" if not spec.ck else ("ck_trans" if spec.ck_mix is CkMix.TRANS else "ck")
     want_contrib = spec.contri_func
@@ -152,24 +264,48 @@ def build_forward_model_trans(
     nlay = int(getattr(cfg.physics, "nlay", 99))
     wl_hi = jnp.asarray(np.asarray(XS.master_wavelength_cut(), dtype=float))
     bandpass_cache = get_bandpass_cache()
-    chem, trace_species = prepare_chemistry_kernel(cfg, spec.chem, spec.opacity_schemes())
-    mu_kernel = make_mu_kernel(cfg, spec, trace_species)
-    atmosphere = make_atmosphere_fn(spec, chem, mu_kernel, nlay)
-    profiles = make_profile_fn(spec, chem, nlay)
+    if trident:
+        mu_kernel = lambda params, vmr_lay, n: compute_mu(vmr_lay)
+        atmosphere = profiles = None
+    else:
+        chem, trace_species = prepare_chemistry_kernel(cfg, spec.chem, spec.opacity_schemes())
+        mu_kernel = make_mu_kernel(cfg, spec, trace_species)
+        atmosphere = make_atmosphere_fn(spec, chem, mu_kernel, nlay)
+        profiles = make_profile_fn(spec, chem, nlay)
     column = make_column_fn(spec, mu_kernel, nlay)
     opacities = make_opacity_fn(spec)
-    fixed_params = extract_fixed_params(cfg, geometry)
+    fixed_params = extract_fixed_params(cfg, "1d" if trident else geometry)
+    nlev = nlay + 1
 
     @jax.jit
     def _forward_model_impl(params, wl, opac, bandpass):
-        joint, anchors = _anchor_params(geometry, {**fixed_params, **params})
+        all_params = {**fixed_params, **params}
+        joint, anchors = (all_params, None) if trident else _anchor_params(geometry, all_params)
 
         # State and opacities in one vmapped function: static fields of the state (nlay, nwl,
         # flags) are traced once they leave a vmap, and the opacity kernels need them static.
         def with_opacities(state, p):
             return state, p, opacities(state, p, opac)
 
-        if geometry in _DAY_NIGHT_PAIRS:
+        frac_all = sector_frac
+        if trident:
+            # Every column from the TRIDENT field at its (phi, theta) centre; sector weights from alpha.
+            _, phi_c, phi_w = trident_angles(n_em, all_params.get("alpha_em", 0.0))
+            theta_edges, theta_c, _ = trident_angles(n_dn, all_params.get("beta_dn", 0.0))
+            frac_all = phi_w / jnp.pi
+            p_lev = jnp.logspace(jnp.log10(all_params["p_bot"] * bar), jnp.log10(all_params["p_top"] * bar), nlev)
+            p_lay = (p_lev[1:] - p_lev[:-1]) / jnp.log(p_lev[1:] / p_lev[:-1])
+            species = trident_species(all_params)
+            phis = jnp.repeat(phi_c, n_slice)                     # sector-major
+            thetas = jnp.tile(theta_c, n_sector)
+            w_night = theta_c
+
+            def trident_column(ph, th):
+                prof = trident_column_profiles(p_lev, p_lay, ph, th, all_params, species)
+                return with_opacities(*column(prof, all_params, wl, opac))
+
+            states, col_params, comps = jax.vmap(trident_column)(phis, thetas)
+        elif geometry in _DAY_NIGHT_PAIRS:
             # Anchor profiles, then each sector's columns interpolated from its day to its night anchor.
             theta_edges, w_night = day_night_slices(n_slice, jnp.deg2rad(joint["beta_dn"]))
             anchor_prof = jax.vmap(profiles)(anchors)
@@ -217,7 +353,7 @@ def build_forward_model_trans(
                 contrib = fc * contrib + (1.0 - fc) * contrib_clear
 
         # Each sector's share of the transit depth; they sum to the total.
-        frac = sector_frac.reshape((-1,) + (1,) * (dR2.ndim - 1))
+        frac = frac_all.reshape((-1,) + (1,) * (dR2.ndim - 1))
         D_sector = frac * (R_base**2 + dR2) / (R_s**2)                       # (nsector, nwl[, ng])
         if g_weights is not None:
             D_sector = jnp.sum(D_sector * g_weights.astype(D_sector.dtype), axis=-1)
@@ -242,15 +378,18 @@ def build_forward_model_trans(
                 result["p_lay"] = state0["p_lay"]
             return result
 
-        if geometry == "2d":
+        if geometry == "2d" or trident:
             D_bin = apply_response_functions_cached(D_hires, bandpass)
             if not return_highres:
                 return D_bin
+            diag = {"r_low_columns": r_low, "r_up_columns": r_up, "sector_frac": frac_all}
+            if mode == "os":
+                diag["dtau_columns"] = grid(jax.vmap(lambda st, c: column_dtau_os(st, c))(states, comps))
             return {
                 "hires": D_hires, "binned": D_bin,
                 "theta_edges": theta_edges, "night_weight": w_night,
                 "p_lay": states["p_lay"][0], "T_lay_columns": states["T_lay"],
-                "z_lev_columns": states["z_lev"],
+                "z_lev_columns": states["z_lev"], **diag,
             }
 
         # 1.5D / 3D: sector j's depth is its half-annulus share (= 0.5 x its full-circle depth).
