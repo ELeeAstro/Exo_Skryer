@@ -19,6 +19,9 @@ __all__ = [
     "grey_const_cloud",
     "grey_profile_cloud",
     "deck_and_powerlaw",
+    "poseidon_deck_haze",
+    "poseidon_haze",
+    "poseidon_deck",
     "F18_cloud",
     "direct_nk",
     "nk_f18_blend",
@@ -837,6 +840,58 @@ def deck_and_powerlaw(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarr
     g = jnp.zeros_like(k_cld)
 
     return k_cld, ssa, g
+
+
+# POSEIDON deck / haze (MacDonald & Madhusudhan 2017; POSEIDON absorption.extinction)
+POSEIDON_SIGMA_0 = 5.31e-27     # H2 Rayleigh cross section at 0.35 um [cm^2] (POSEIDON: 5.31e-31 m^2)
+POSEIDON_WL_0 = 0.35            # haze reference wavelength [um]
+DECK_TAU_LAYER = 1.0e10         # optical depth of each deck layer (POSEIDON: kappa = 1e250 m^-1)
+
+
+def _poseidon_haze_deck(state: Dict[str, jnp.ndarray], params: Dict[str, jnp.ndarray],
+                        haze: bool, deck: bool) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    """POSEIDON's ``haze`` / ``deck`` / ``deck_haze`` cloud models as a mass opacity [cm^2 g^-1].
+
+    Haze (every layer): kappa = n a sigma_0 (lambda / 0.35 um)^gamma, with n the total number
+    density, a = 10**log_10_a_haze, gamma = gamma_haze (-4 is Rayleigh-like) and sigma_0 the H2
+    Rayleigh cross section at 0.35 um. The mass opacity is kappa / rho, so k rho dz is POSEIDON's
+    kappa dz exactly.
+
+    Deck: opaque in every layer with P_lay > P_deck = 10**log_10_p_deck bar (POSEIDON's layer-centre
+    switch, no partial layers). POSEIDON uses kappa = 1e250 m^-1; here each deck layer gets optical
+    depth DECK_TAU_LAYER (finite, so the float32 slant-tau contraction stays free of inf * 0). Any ray
+    through a deck layer is fully absorbed either way.
+
+    Pure extinction (ssa = g = 0), as POSEIDON's transmission treats it.
+    """
+    wl = state["wl"]
+    rho = state["rho_lay"]
+    k = jnp.zeros((state["nlay"], wl.shape[0]), dtype=rho.dtype)
+    if haze:
+        a = 10.0 ** params["log_10_a_haze"]
+        slope = (wl / POSEIDON_WL_0) ** params["gamma_haze"]
+        k = k + (state["nd_lay"] * a * POSEIDON_SIGMA_0 / rho)[:, None] * slope[None, :]
+    if deck:
+        in_deck = state["p_lay"] > 10.0 ** params["log_10_p_deck"] * bar
+        k_deck = jnp.where(in_deck, DECK_TAU_LAYER / (rho * state["dz"]), 0.0)
+        k = k + k_deck[:, None]
+    zeros = jnp.zeros_like(k)
+    return k, zeros, zeros
+
+
+def poseidon_deck_haze(state, params):
+    """POSEIDON ``deck_haze``: params log_10_a_haze, gamma_haze, log_10_p_deck [log10 bar]."""
+    return _poseidon_haze_deck(state, params, haze=True, deck=True)
+
+
+def poseidon_haze(state, params):
+    """POSEIDON ``haze``: params log_10_a_haze, gamma_haze."""
+    return _poseidon_haze_deck(state, params, haze=True, deck=False)
+
+
+def poseidon_deck(state, params):
+    """POSEIDON ``deck``: param log_10_p_deck [log10 bar]."""
+    return _poseidon_haze_deck(state, params, haze=False, deck=True)
 
 
 def F18_cloud(

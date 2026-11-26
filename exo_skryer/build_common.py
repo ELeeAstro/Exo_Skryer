@@ -455,6 +455,18 @@ def _cloud_profile_caller(fn: Callable) -> Callable:
     return call
 
 
+def resolve_gravity(params):
+    """Fixed-mass gravity: with ``M_p`` [M_jup] and ``R_p`` [R_jup] but no ``log_10_g``, set
+    ``log_10_g = log10(G M_p / R_p**2)`` at R_p (the radius at p_ref), as POSEIDON does with a fixed
+    planet mass and a free reference radius. Given ``log_10_g`` (with or without ``M_p``), params are
+    returned unchanged; with both ``M_p`` and ``log_10_g`` the radius follows from them (``column``).
+    """
+    if "M_p" in params and "log_10_g" not in params and "R_p" in params:
+        g = G * params["M_p"] * M_jup / (params["R_p"] * R_jup) ** 2
+        return {**params, "log_10_g": jnp.log10(g)}
+    return params
+
+
 def make_profile_fn(spec: ModelSpec, chem: Callable, nlay: int) -> Callable:
     """Return ``profiles(params) -> prof`` with the pressure grid, T-p and chemistry.
 
@@ -472,6 +484,7 @@ def make_profile_fn(spec: ModelSpec, chem: Callable, nlay: int) -> Callable:
     nlev = nlay + 1
 
     def profiles(params):
+        params = resolve_gravity(params)
         if file_grid:
             # Layers (and derived levels) of the user T-p-mu-Kzz file
             p_lev, p_lay = p_lev_file, p_lay_file
@@ -492,8 +505,9 @@ def make_column_fn(spec: ModelSpec, mu: Callable, nlay: int) -> Callable:
 
     Adds the radius, mean molecular weight, hydrostatic altitude, densities and cloud
     profile to the T-p and chemistry in ``prof`` (from ``make_profile_fn``, or
-    interpolated between anchor columns). With ``M_p`` the radius follows from mass and
-    gravity and is written back as ``R_p`` so altitude kernels use the same radius as the RT.
+    interpolated between anchor columns). With ``M_p`` and ``log_10_g`` the radius follows from mass
+    and gravity and is written back as ``R_p`` so altitude kernels use the same radius as the RT; with
+    ``M_p`` and ``R_p`` but no ``log_10_g`` the gravity follows from them (``resolve_gravity``).
     """
     from . import profile_io
 
@@ -504,6 +518,7 @@ def make_column_fn(spec: ModelSpec, mu: Callable, nlay: int) -> Callable:
     cloud_profile = _cloud_profile_caller(spec.cloud_profile)
 
     def column(prof, params, wl, opac):
+        params = resolve_gravity(params)
         if "M_p" in params:
             M_p = params["M_p"] * M_jup
             g = 10.0 ** params["log_10_g"]

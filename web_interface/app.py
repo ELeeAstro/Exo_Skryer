@@ -199,16 +199,19 @@ OPAC_CIA_OPTIONS = ["ck", "os", "None"]
 # - nk_f18_blend: direct_nk + F18 additive combination (shared vertical profile)
 # - madt_rayleigh: MADT Rayleigh approximation using cached n,k file
 # - lxmie: Full Mie calculation (LX-MIE) using cached n,k file
+# - deck_haze / haze / deck: POSEIDON cloud models (log_10_a_haze, gamma_haze, log_10_p_deck)
 OPAC_CLOUD_OPTIONS = [
     "None", "grey_const", "grey_profile", "powerlaw",
     "f18", "f18_skew",
     "direct_nk", "nk_f18_blend",
     "madt_rayleigh", "lxmie",
+    "deck_haze", "haze", "deck",
 ]
 
 # Schemes that retrieve n,k as free parameters — no cached n,k file needed
 _OPAC_CLOUD_NO_FILE = {"direct_nk", "nk_f18_blend", "f18", "f18_skew",
-                        "grey_const", "grey_profile", "powerlaw", "None", "none"}
+                        "grey_const", "grey_profile", "powerlaw", "None", "none",
+                        "deck_haze", "haze", "deck"}
 
 # Special opacity sources (like H- bound-free, free-free)
 # See: kernel_registry.py opac_special entries

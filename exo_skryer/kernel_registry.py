@@ -82,6 +82,9 @@ from .opacity_cloud import (
     grey_const_cloud,
     grey_profile_cloud,
     deck_and_powerlaw,
+    poseidon_deck_haze,
+    poseidon_haze,
+    poseidon_deck,
     direct_nk,
     nk_f18_blend,
     f18_skew_cloud,
@@ -332,6 +335,10 @@ register("opac_cloud", "none", None, aliases=("off",))
 register("opac_cloud", "grey_const", grey_const_cloud)
 register("opac_cloud", "grey_profile", grey_profile_cloud, aliases=("grey_slab",))
 register("opac_cloud", "powerlaw", deck_and_powerlaw, aliases=("deck_and_powerlaw",))
+# POSEIDON cloud models (exact analogues): deck_haze / haze / deck
+register("opac_cloud", "deck_haze", poseidon_deck_haze, aliases=("poseidon_deck_haze",))
+register("opac_cloud", "haze", poseidon_haze, aliases=("poseidon_haze",))
+register("opac_cloud", "deck", poseidon_deck, aliases=("poseidon_deck",))
 register("opac_cloud", "f18", _f18)
 register("opac_cloud", "madt_rayleigh", _madt, cache=CLOUD_NK_CACHE, aliases=("madt-rayleigh", "mie_madt"))
 register("opac_cloud", "lxmie", _lxmie, cache=CLOUD_NK_CACHE, aliases=("mie_full", "full_mie"))

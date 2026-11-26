@@ -178,6 +178,13 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``hypsometric_variable_g``: ``log_10_g, R_p``
   * ``hypsometric_variable_g_pref``: ``log_10_g, R_p, log_10_p_ref``
 
+  Gravity can instead come from the planet mass (1D only):
+
+  * ``M_p`` [M_jup] and ``R_p``, no ``log_10_g``: fixed mass, ``log_10_g = log10(G M_p / R_p^2)`` at
+    ``R_p`` (POSEIDON's convention with a fixed mass and a free reference radius). Every kernel that
+    reads ``log_10_g`` (T-p, chemistry, altitude) gets this value.
+  * ``M_p`` and ``log_10_g``, no free ``R_p``: the radius follows, ``R_p = sqrt(G M_p / g)``.
+
 ``physics.vert_chem`` (chemistry)
   Selects the chemistry profile model.
 
@@ -270,6 +277,12 @@ determines which retrieval parameters (in ``params``) you must provide.
   * ``grey_const``: grey opacity in every layer
   * ``grey_profile``: grey opacity only where ``vert_cloud`` gives ``q_c_lay > 0`` (alias: ``grey_slab``)
   * ``deck_and_powerlaw`` (alias: ``powerlaw``)
+  * ``deck_haze``, ``haze``, ``deck`` (aliases: ``poseidon_deck_haze``, ``poseidon_haze``,
+    ``poseidon_deck``): exact analogues of POSEIDON's cloud models. Haze in every layer,
+    kappa = n 10**``log_10_a_haze`` sigma_0 (lambda / 0.35 um)**``gamma_haze`` (sigma_0 = 5.31e-27 cm^2,
+    the H2 Rayleigh cross section at 0.35 um; ``gamma_haze`` = -4 is Rayleigh-like); opaque deck in
+    every layer with P_lay > 10**``log_10_p_deck`` bar (layer-centre switch, as POSEIDON). Pure
+    extinction. No ``vert_cloud`` needed (use ``None``).
   * ``F18``
   * ``direct_nk`` (alias: ``nk``)
   * ``nk_f18_blend`` (alias: ``nk_f18``)
