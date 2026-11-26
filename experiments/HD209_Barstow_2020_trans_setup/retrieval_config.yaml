@@ -221,7 +221,7 @@ easychem_jax:
 fastchem_grid_jax:
   # Required path to NPZ produced by FastChem/Generate_FastChem_grid.py
   # Relative paths are resolved against the experiment directory first.
-  grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
+  grid_path: ../../FastChem/fastchem_grid_5d_log10.zarr.zip
   solver:
     mode: vmap   # vmap | scan
   bounds:

@@ -192,12 +192,12 @@ def _load_line_zarr(index: int, path: str, target_wavelengths: np.ndarray) -> Li
     temperatures = np.asarray(root["temperature"][:], dtype=float)
     pressures = np.asarray(root["pressure"][:], dtype=float)
     native_wavelengths = np.asarray(root["wavelength"][:], dtype=float)
-    xs = np.asarray(root["cross_section"][:], dtype=float)
+    xs_array = root["cross_section"]
 
-    if xs.ndim != 3:
-        raise ValueError(f"Invalid cross_section shape {xs.shape} in {path}; expected 3D array.")
+    if xs_array.ndim != 3:
+        raise ValueError(f"Invalid cross_section shape {xs_array.shape} in {path}; expected 3D array.")
 
-    n_temperatures, n_pressures, native_wl_count = xs.shape
+    n_temperatures, n_pressures, native_wl_count = xs_array.shape
     if native_wavelengths.size != native_wl_count:
         raise ValueError(
             f"Wavelength grid length {native_wavelengths.size} does not match cross-section axis {native_wl_count} in {path}."
@@ -207,19 +207,34 @@ def _load_line_zarr(index: int, path: str, target_wavelengths: np.ndarray) -> Li
     if target_wavelengths.ndim != 1:
         raise ValueError("Target wavelength grid must be 1D.")
 
-    if native_wavelengths.shape == target_wavelengths.shape and np.allclose(native_wavelengths, target_wavelengths):
-        xs_interp = xs
+    # Read only the native columns that bracket the target grid (one extra column on each side
+    # for the interpolation), not the whole table: most runs use a small part of a 0.3-30 um table.
+    i0 = max(int(np.searchsorted(native_wavelengths, target_wavelengths.min(), side="right")) - 1, 0)
+    i1 = min(int(np.searchsorted(native_wavelengths, target_wavelengths.max(), side="left")) + 1, native_wl_count)
+    i1 = max(i1, i0 + 1)
+    native_wavelengths = native_wavelengths[i0:i1]
+    xs = np.asarray(xs_array[:, :, i0:i1], dtype=np.float32)          # log10 cross sections
+
+    # Target points lying on native points (e.g. the master grid is the table's own grid, cut to
+    # the data) are taken directly; otherwise one vectorised linear interpolation in float64, as
+    # np.interp with -99 outside the table.
+    pos = np.searchsorted(native_wavelengths, target_wavelengths)
+    on_grid = (pos < native_wavelengths.size) & np.isclose(
+        native_wavelengths[np.minimum(pos, native_wavelengths.size - 1)], target_wavelengths, rtol=1e-12, atol=0.0)
+    if np.all(on_grid):
+        xs_interp = xs[:, :, pos]
     else:
-        xs_interp = np.empty((n_temperatures, n_pressures, target_wavelengths.size), dtype=np.float64)
-        for iT in range(n_temperatures):
-            for iP in range(n_pressures):
-                xs_interp[iT, iP, :] = np.interp(
-                    target_wavelengths,
-                    native_wavelengths,
-                    xs[iT, iP, :],
-                    left=-99.0,
-                    right=-99.0,
-                )
+        j = np.clip(pos - 1, 0, max(native_wavelengths.size - 2, 0))
+        x0, x1 = native_wavelengths[j], native_wavelengths[np.minimum(j + 1, native_wavelengths.size - 1)]
+        w = np.where(x1 > x0, (target_wavelengths - x0) / np.where(x1 > x0, x1 - x0, 1.0), 0.0)
+        y0 = xs[:, :, j].astype(np.float64)
+        y1 = xs[:, :, np.minimum(j + 1, native_wavelengths.size - 1)].astype(np.float64)
+        xs_interp = (1.0 - w) * y0 + w * y1
+        outside = (target_wavelengths < native_wavelengths[0]) | (target_wavelengths > native_wavelengths[-1])
+        xs_interp[:, :, outside] = -99.0
+        # exact nodes keep the table value (as np.interp)
+        xs_interp[:, :, on_grid] = xs[:, :, pos[on_grid]]
+        xs_interp = xs_interp.astype(np.float32)
 
     return LineRegistryEntry(
         name=name,
@@ -227,7 +242,7 @@ def _load_line_zarr(index: int, path: str, target_wavelengths: np.ndarray) -> Li
         pressures=pressures.astype(np.float64),
         temperatures=temperatures.astype(np.float64),
         wavelengths=target_wavelengths.astype(np.float64),
-        cross_sections=xs_interp.astype(np.float64),
+        cross_sections=xs_interp,          # float32 (the device cache is float32)
     )
 
 

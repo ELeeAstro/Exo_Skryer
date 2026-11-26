@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import zarr
-from zarr.codecs import BloscCodec, BloscShuffle
+from zarr.codecs import BloscCodec
 from zarr.storage import ZipStore
 
 
@@ -244,8 +244,10 @@ def generate_species_tables(cfg: RunConfig, spec: SpeciesConfig, wl: np.ndarray,
     zarr_name = base_name + ".zarr"
     zip_name = base_name + ".zarr.zip"
 
-    comp = BloscCodec(cname="lz4", clevel=1, shuffle=BloscShuffle.shuffle)
-    chunks_k = (1, 1, min(nb, 2048))
+    comp = BloscCodec(cname="lz4", clevel=1, shuffle="shuffle")
+    # Full T and P per chunk, 2048 wavelengths: tens of zip members instead of ~70,000 tiny ones
+    # (per-chunk overhead made a full read ~50x slower); wavelength slices stay cheap.
+    chunks_k = (k_os_cube.shape[0], k_os_cube.shape[1], min(nb, 2048))
 
     arrays = dict(
         temperature=(np.asarray(temps, np.float64), (temps.shape[0],)),
@@ -254,15 +256,15 @@ def generate_species_tables(cfg: RunConfig, spec: SpeciesConfig, wl: np.ndarray,
         cross_section=(np.asarray(k_os_cube, np.float32), chunks_k),
     )
 
-    root = zarr.open_group(zarr_name, mode="w", zarr_format=3)
-    root.attrs["molecule"] = str(spec.molname)
+    # attributes at creation: setting them afterwards writes zarr.json twice (a duplicate zip entry)
+    root = zarr.open_group(zarr_name, mode="w", zarr_format=3, attributes={"molecule": str(spec.molname)})
     for key, (data, chunks) in arrays.items():
         root.create_array(key, data=data, chunks=chunks, compressors=comp)
     print("Wrote", zarr_name)
 
     with ZipStore(zip_name, mode="w") as zstore:
-        root_zip = zarr.open_group(store=zstore, mode="w", zarr_format=3)
-        root_zip.attrs["molecule"] = str(spec.molname)
+        root_zip = zarr.open_group(store=zstore, mode="w", zarr_format=3,
+                                   attributes={"molecule": str(spec.molname)})
         for key, (data, chunks) in arrays.items():
             root_zip.create_array(key, data=data, chunks=chunks, compressors=comp)
     print("Wrote", zip_name)

@@ -106,6 +106,30 @@ def has_cia_data() -> bool:
     return _CIA_SIGMA_CACHE is not None
 
 # Load the CIA cross section data from the formatted npz files
+
+def _interp_rows(x: np.ndarray, xp: np.ndarray, fp: np.ndarray, fill: float) -> np.ndarray:
+    """np.interp(x, xp, fp[i], left=fill, right=fill) for every row i of fp, vectorised.
+
+    The bracket indices are found once for all rows, and the arithmetic is numpy's
+    (slope * (x - xp[j]) + fp[j], the last node taken exactly, the same NaN fallback),
+    so the result is bit-identical to the per-row loop.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    xp = np.asarray(xp, dtype=np.float64)
+    fp = np.asarray(fp, dtype=np.float64)
+    n = xp.size
+    j = np.clip(np.searchsorted(xp, x, side="right") - 1, 0, max(n - 2, 0))
+    j1 = np.minimum(j + 1, n - 1)
+    slope = (fp[:, j1] - fp[:, j]) / np.where(xp[j1] > xp[j], xp[j1] - xp[j], 1.0)
+    out = slope * (x - xp[j]) + fp[:, j]
+    bad = np.isnan(out)
+    if bad.any():                                      # numpy's fallback from the right node
+        out = np.where(bad, slope * (x - xp[j1]) + fp[:, j1], out)
+        out = np.where(np.isnan(out) & (fp[:, j] == fp[:, j1]), fp[:, j], out)
+    out[:, x == xp[-1]] = fp[:, -1:]
+    out[:, (x < xp[0]) | (x > xp[-1])] = fill
+    return out
+
 def _load_cia_npz(index: int, path: str, target_wavelengths: np.ndarray) -> CiaRegistryEntry:
 
     # Load the table
@@ -143,12 +167,7 @@ def _load_cia_npz(index: int, path: str, target_wavelengths: np.ndarray) -> CiaR
 
     # Interpolate to the master wavelength grid
     # Use float64 for log10 cross sections to keep dtype consistent.
-    n_temperatures, _ = native_xs.shape
-    wavelength_count = target_wavelengths.size
-    xs_interp = np.empty((n_temperatures, wavelength_count), dtype=np.float64)
-    for idx_temp in range(n_temperatures):
-        xs_interp[idx_temp, :] = np.interp(target_wavelengths, native_wavelengths, native_xs[idx_temp, :], left=-199.0, right=-199.0)
-    xs_interp = np.maximum(xs_interp, -199.0)
+    xs_interp = np.maximum(_interp_rows(target_wavelengths, native_wavelengths, native_xs, fill=-199.0), -199.0)
 
     # Return a CIA table registry entry with NumPy arrays (will be converted to JAX later)
     # Float64 for grids and cross sections.
@@ -205,12 +224,7 @@ def _load_cia_zarr(index: int, path: str, target_wavelengths: np.ndarray) -> Cia
             "filling out-of-range σ with 1e-199."
         )
 
-    n_temperatures, _ = native_xs.shape
-    wavelength_count = target_wavelengths.size
-    xs_interp = np.empty((n_temperatures, wavelength_count), dtype=np.float64)
-    for idx_temp in range(n_temperatures):
-        xs_interp[idx_temp, :] = np.interp(target_wavelengths, native_wavelengths, native_xs[idx_temp, :], left=-199.0, right=-199.0)
-    xs_interp = np.maximum(xs_interp, -199.0)
+    xs_interp = np.maximum(_interp_rows(target_wavelengths, native_wavelengths, native_xs, fill=-199.0), -199.0)
 
     return CiaRegistryEntry(
         name=name,
