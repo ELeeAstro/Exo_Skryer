@@ -138,7 +138,7 @@ params:
 # FastChem 5D Grid (CE backend for quench_approx)
 # ----------------------------------------------------------------------------------
 fastchem_grid_jax:
-  grid_path: ../../FastChem/fastchem_grid_5d_log10.npz
+  grid_path: ../../FastChem/fastchem_grid_5d_log10.zarr.zip
   solver:
     mode: vmap   # vmap | scan
   bounds:

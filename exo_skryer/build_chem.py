@@ -33,6 +33,38 @@ __all__ = [
 ]
 
 
+
+
+# Settings each chemistry cache was built with. A cache is reused only when the new config gives the
+# same key; otherwise it is reloaded (building a second model with other species, grids or solver
+# settings in the same process used to silently reuse the first model's cache).
+_CACHE_KEYS: dict[str, Any] = {}
+
+
+def _freeze(obj: Any) -> Any:
+    """Hashable, comparable form of a config block (namespaces, dicts, lists, scalars)."""
+    if isinstance(obj, dict):
+        return tuple(sorted((str(k), _freeze(v)) for k, v in obj.items()))
+    if hasattr(obj, "__dict__") and not isinstance(obj, type):
+        return _freeze(vars(obj))
+    if isinstance(obj, (list, tuple)):
+        return tuple(_freeze(v) for v in obj)
+    return obj
+
+
+def _reuse_cache(name: str, loaded: bool, key: Any) -> bool:
+    """True if cache ``name`` is loaded with the same settings (``key``); reports a reload otherwise."""
+    if loaded and _CACHE_KEYS.get(name) == key:
+        print(f"[info] {name} cache already loaded (same settings)")
+        return True
+    if loaded:
+        print(f"[info] {name} cache loaded with other settings: reloading")
+    return False
+
+def _grid_available(path: Path) -> bool:
+    """The grid file exists, or (for a .npz) its .zarr.zip version next to it (which the loader uses)."""
+    return path.exists() or (path.suffix == ".npz" and path.with_name(path.name[:-4] + ".zarr.zip").exists())
+
 def _extract_species_list(block) -> list[str]:
     if not block:
         return []
@@ -507,9 +539,9 @@ def load_nasa9(cfg: Any, exp_dir: Path) -> None:
     """
     from .chem_rate_jax import is_nasa9_cache_loaded, load_nasa9_cache
 
-    if is_nasa9_cache_loaded():
-        print("[info] NASA-9 cache already loaded")
-    else:
+    data_cfg = getattr(cfg, "data", None)
+    key = (str(getattr(data_cfg, "nasa9", None) if data_cfg is not None else None), str(exp_dir))
+    if not _reuse_cache("NASA-9", is_nasa9_cache_loaded(), key):
         data_cfg = getattr(cfg, "data", None)
         nasa9_rel_path = getattr(data_cfg, "nasa9", None) if data_cfg is not None else None
         if nasa9_rel_path is None:
@@ -527,6 +559,7 @@ def load_nasa9(cfg: Any, exp_dir: Path) -> None:
 
         print(f"[info] Loading NASA-9 thermo tables from {nasa9_path}")
         thermo = load_nasa9_cache(nasa9_path)
+        _CACHE_KEYS["NASA-9"] = key
         print(f"[info] NASA-9 cache loaded: {len(thermo.data)} species")
 
 
@@ -538,11 +571,11 @@ def init_fastchem_grid(cfg: Any, exp_dir: Path) -> None:
         get_fastchem_grid_cache_info,
     )
 
-    if is_fastchem_grid_cache_loaded():
-        print("[info] FastChem-grid cache already loaded")
+    fc_cfg = getattr(cfg, "fastchem_grid_jax", None)
+    key = (_freeze(fc_cfg), tuple(infer_active_opacity_species(cfg) or ()), str(exp_dir))
+    if _reuse_cache("FastChem-grid", is_fastchem_grid_cache_loaded(), key):
         return
 
-    fc_cfg = getattr(cfg, "fastchem_grid_jax", None)
     if fc_cfg is None:
         raise ValueError(
             "fastchem_grid_jax config block is required when physics.vert_chem "
@@ -560,11 +593,11 @@ def init_fastchem_grid(cfg: Any, exp_dir: Path) -> None:
         base_dir = Path.cwd() if exp_dir is None else Path(exp_dir)
         candidate_exp = (base_dir / grid_path_obj).resolve()
         candidate_repo = (Path.cwd() / grid_path_obj).resolve()
-        if candidate_exp.exists():
+        if _grid_available(candidate_exp):
             grid_path = candidate_exp
         else:
             grid_path = candidate_repo
-    if not grid_path.exists():
+    if not _grid_available(grid_path):
         raise FileNotFoundError(f"FastChem grid file not found: {grid_path}")
 
     bounds_cfg = getattr(fc_cfg, "bounds", None)
@@ -655,6 +688,7 @@ def init_fastchem_grid(cfg: Any, exp_dir: Path) -> None:
                     f"Missing={missing_special}, mapped={list(mapped_species)}. "
                     "Fix via fastchem_grid_jax.species_map and/or grid contents."
                 )
+    _CACHE_KEYS["FastChem-grid"] = key
     print("[info] FastChem-grid cache loaded")
 
 
@@ -662,11 +696,13 @@ def init_element_potentials(cfg: Any, exp_dir: Path) -> None:
     """Initialise and cache the element-potentials (easychem_jax) backend."""
     from .vert_chem import is_element_potentials_cache_loaded, load_element_potentials_cache
 
-    if is_element_potentials_cache_loaded():
-        print("[info] Element-potentials cache already loaded")
+    ep_cfg = getattr(cfg, "easychem_jax", None)
+    data_cfg = getattr(cfg, "data", None)
+    key = (_freeze(ep_cfg), str(getattr(data_cfg, "nasa9", None) if data_cfg is not None else None),
+           str(exp_dir), int(getattr(cfg.physics, "nlay", 99)))
+    if _reuse_cache("Element-potentials", is_element_potentials_cache_loaded(), key):
         return
 
-    ep_cfg = getattr(cfg, "easychem_jax", None)
     if ep_cfg is None:
         raise ValueError(
             "easychem_jax config block is required when physics.vert_chem is "
@@ -737,6 +773,7 @@ def init_element_potentials(cfg: Any, exp_dir: Path) -> None:
         p0_bar=p0_bar,
         e_ref=e_ref,
     )
+    _CACHE_KEYS["Element-potentials"] = key
     print("[info] Element-potentials cache loaded")
 
 
@@ -755,8 +792,8 @@ def init_atmodeller(cfg: Any, exp_dir: Path) -> None:
 
     from .vert_chem import is_atmodeller_cache_loaded, load_atmodeller_cache
 
-    if is_atmodeller_cache_loaded():
-        print("[info] Atmodeller cache already loaded")
+    key = (_freeze(atm_cfg), int(cfg.physics.nlay))
+    if _reuse_cache("Atmodeller", is_atmodeller_cache_loaded(), key):
         return
 
     species_list = list(getattr(atm_cfg, "species_network", None) or [])
@@ -780,6 +817,7 @@ def init_atmodeller(cfg: Any, exp_dir: Path) -> None:
     if solver_kwargs:
         print(f"[info] Atmodeller solver settings: {solver_kwargs}")
     load_atmodeller_cache(species_list, nlay, solver_kwargs=solver_kwargs)
+    _CACHE_KEYS["Atmodeller"] = key
     print("[info] Atmodeller cache loaded")
 
 
@@ -789,11 +827,11 @@ def init_quench_approx(cfg: Any, exp_dir: Path) -> None:
 
     from .vert_chem import is_quench_approx_cache_loaded, load_quench_approx_cache
 
-    if is_quench_approx_cache_loaded():
-        print("[info] Quench species already loaded")
+    qa_cfg = getattr(cfg, "quench_approx", None)
+    key = _freeze(qa_cfg)
+    if _reuse_cache("Quench-species", is_quench_approx_cache_loaded(), key):
         return
 
-    qa_cfg = getattr(cfg, "quench_approx", None)
     if qa_cfg is None:
         raise ValueError(
             "quench_approx config block is required when physics.vert_chem is "
@@ -823,6 +861,7 @@ def init_quench_approx(cfg: Any, exp_dir: Path) -> None:
         )
 
     load_quench_approx_cache(quench_species)
+    _CACHE_KEYS["Quench-species"] = key
     print(f"[info] Quench species loaded: {list(quench_species)}")
 
 

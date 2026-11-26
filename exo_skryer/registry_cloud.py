@@ -413,7 +413,7 @@ def clear_cloud_optics_data() -> None:
 
 
 def read_cloud_optics_grid(path: str | Path, wl_master: np.ndarray) -> Dict[str, np.ndarray]:
-    """Read an optics-grid HDF5 file and prepare it for the forward-model hot path.
+    """Read an optics grid (HDF5, or its .zarr.zip version) and prepare it for the forward-model hot path.
 
     Expected datasets (as written by the LX-MIE grid generator)::
 
@@ -429,18 +429,30 @@ def read_cloud_optics_grid(path: str | Path, wl_master: np.ndarray) -> Dict[str,
     wavelength) is precomputed here. The table is cut to the wavelengths that
     bracket ``wl_master``. Model wavelengths outside the table are held at the
     edge values.
-    """
-    import h5py
 
+    A .zarr.zip with the same datasets (opac_data/DACE_tools/convert_aux_to_zarr.py) is read the
+    same way (~5x faster); one next to a requested .h5 is used automatically.
+    """
     resolved = Path(path).expanduser().resolve()
-    with h5py.File(resolved, "r") as f:
-        r_g = np.asarray(f["r_g_micron"][()], dtype=np.float64)
-        sig = np.asarray(f["sigma_g"][()], dtype=np.float64)
-        wl_tab = np.asarray(f["wavelength_micron"][()], dtype=np.float64)
-        c_ext = np.asarray(f["c_ext_cm2"][()], dtype=np.float64)
-        c_sca = np.asarray(f["c_sca_cm2"][()], dtype=np.float64)
-        g = np.asarray(f["asymmetry_parameter"][()], dtype=np.float64)
-        vol = np.asarray(f["mean_particle_volume_cm3"][()], dtype=np.float64)
+    if resolved.suffix.lower() in (".h5", ".hdf5"):
+        zpath = resolved.with_name(resolved.stem + ".zarr.zip")
+        if zpath.exists():
+            print(f"[cloud_optics] using {zpath.name} (zarr version of {resolved.name})")
+            resolved = zpath
+    keys = ("r_g_micron", "sigma_g", "wavelength_micron", "c_ext_cm2", "c_sca_cm2",
+            "asymmetry_parameter", "mean_particle_volume_cm3")
+    if resolved.name.endswith(".zarr.zip"):
+        import zarr
+        from zarr.storage import ZipStore
+        grp = zarr.open_group(store=ZipStore(resolved, mode="r"), mode="r")
+        arr = {k: np.asarray(grp[k][:], dtype=np.float64) for k in keys}
+    else:
+        import h5py
+        with h5py.File(resolved, "r") as f:
+            arr = {k: np.asarray(f[k][()], dtype=np.float64) for k in keys}
+    r_g, sig, wl_tab = arr["r_g_micron"], arr["sigma_g"], arr["wavelength_micron"]
+    c_ext, c_sca, g = arr["c_ext_cm2"], arr["c_sca_cm2"], arr["asymmetry_parameter"]
+    vol = arr["mean_particle_volume_cm3"]
 
     nr, ns, nwl_tab = r_g.size, sig.size, wl_tab.size
     for name, arr in (("c_ext_cm2", c_ext), ("c_sca_cm2", c_sca), ("asymmetry_parameter", g)):

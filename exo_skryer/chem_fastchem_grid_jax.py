@@ -19,6 +19,8 @@ from .data_constants import CHEM_SPECIES_DATA
 __all__ = [
     "FastChemGridModel",
     "load_fastchem_grid",
+    "load_fastchem_grid_species",
+    "resolve_grid_path",
     "resolve_species_indices",
     "select_species",
     "interpolate_profile_scan",
@@ -130,13 +132,101 @@ class FastChemGridModel:
     mmw_interpolator: RegularGridInterpolator
 
 
-def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
-    """Load and validate a FastChem 5D grid NPZ."""
-    path = Path(npz_path).expanduser().resolve()
+def resolve_grid_path(grid_path: str | Path) -> Path:
+    """Path of a FastChem grid, preferring a .zarr.zip next to a requested .npz.
+
+    The .zarr.zip version (opac_data/DACE_tools/convert_aux_to_zarr.py) holds the same values with one chunk
+    per species, so a run reads only its species (~ms instead of ~2 s for the full 5D grid).
+    """
+    path = Path(grid_path).expanduser().resolve()
+    if path.suffix == ".npz":
+        zpath = path.with_name(path.name[:-4] + ".zarr.zip")
+        if zpath.exists():
+            print(f"[FastChem] using {zpath.name} (zarr version of {path.name})")
+            return zpath
     if not path.exists():
         raise FileNotFoundError(f"FastChem grid file not found: {path}")
+    return path
+
+
+def _open_grid(path: Path):
+    """(array keys, get(key) -> array, get_vmr(key, indices | None) -> array) for .npz or .zarr(.zip)."""
+    if path.name.endswith(".zarr.zip") or path.suffix == ".zarr":
+        import zarr
+        from zarr.storage import ZipStore
+        group = zarr.open_group(store=ZipStore(path, mode="r") if path.name.endswith(".zip") else str(path), mode="r")
+        keys = set(group.array_keys())
+
+        def get(key):
+            return group[key][:]
+
+        def get_vmr(key, indices):
+            if indices is None:
+                return group[key][:]
+            return group[key].get_orthogonal_selection((slice(None),) * 4 + (list(indices),))
+        return keys, get, get_vmr
 
     data = np.load(path, allow_pickle=False)
+
+    def get_vmr(key, indices):
+        arr = data[key]
+        return arr if indices is None else arr[..., list(indices)]
+    return set(data.files), (lambda key: data[key]), get_vmr
+
+
+def _species_index(species_names) -> tuple[dict[str, int], dict[str, int]]:
+    raw = {name: i for i, name in enumerate(species_names)}
+    canonical: dict[str, int] = {}
+    for i, name in enumerate(species_names):
+        canonical.setdefault(_canonical_formula(name), i)
+    return raw, canonical
+
+
+def load_fastchem_grid_species(
+    grid_path: str | Path,
+    species_out: list[str] | tuple[str, ...],
+    species_map_override: dict[str, str] | None = None,
+) -> tuple[FastChemGridModel, dict[str, int], list[str]]:
+    """Load only the grid species needed for ``species_out``.
+
+    Species are resolved from the names alone, then only their mixing ratios are read (from a
+    .zarr.zip; a .npz is read whole and sliced). Returns (model holding the resolved species in the
+    order of ``species_out``, {species: index in that model}, unmapped species).
+    """
+    path = resolve_grid_path(grid_path)
+    _, get, _ = _open_grid(path)
+    raw, canonical = _species_index(_decode_species_names(np.asarray(get("species_names"))))
+    from types import SimpleNamespace
+    resolved, missing = resolve_species_indices(
+        SimpleNamespace(species_index_raw=raw, species_index_canonical=canonical), species_out,
+        species_map_override=species_map_override)
+    names = tuple(resolved)
+    if not names:
+        raise ValueError(
+            "No requested opacity species could be mapped to FastChem grid species. "
+            f"Requested={list(species_out)}"
+        )
+    model = load_fastchem_grid(path, indices=[resolved[s] for s in names])
+    return model, {s: i for i, s in enumerate(names)}, missing
+
+
+def load_fastchem_grid(npz_path: str | Path, indices: list[int] | None = None) -> FastChemGridModel:
+    """Load and validate a FastChem 5D grid (.npz or .zarr.zip).
+
+    With ``indices`` only those species are loaded (in that order); a .zarr.zip then reads only
+    their chunks.
+    """
+    path = resolve_grid_path(npz_path)
+    keys, get, get_vmr = _open_grid(path)
+
+    class _Data(dict):     # dict-like view on the arrays, read on access
+        def __contains__(self, key):
+            return key in keys
+
+        def __getitem__(self, key):
+            return get(key)
+
+    data = _Data()
     has_log10 = all(k in data for k in _REQUIRED_KEYS_LOG10)
     has_linear = all(k in data for k in _REQUIRED_KEYS_LINEAR)
     if not has_log10 and not has_linear:
@@ -152,7 +242,7 @@ def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
         log10_P_np = np.asarray(data["log10_pressure"], dtype=np.float64)
         log10_MH_np = np.asarray(data["log10_M_H"], dtype=np.float64)
         log10_CO_np = np.asarray(data["log10_C_O"], dtype=np.float64)
-        log10_vmr_np = np.asarray(data["log10_mixing_ratios"], dtype=np.float64)
+        log10_vmr_np = np.asarray(get_vmr("log10_mixing_ratios", indices), dtype=np.float64)
         log10_mmw_np = np.asarray(data["log10_mean_molecular_weight"], dtype=np.float64)
 
         T_np = np.power(10.0, log10_T_np)
@@ -171,7 +261,7 @@ def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
         P_np = np.asarray(data["pressure"], dtype=np.float64)
         MH_np = np.asarray(data["M_H"], dtype=np.float64)
         CO_np = np.asarray(data["C_O"], dtype=np.float64)
-        vmr_np = np.asarray(data["mixing_ratios"], dtype=np.float64)
+        vmr_np = np.asarray(get_vmr("mixing_ratios", indices), dtype=np.float64)
         mmw_np = np.asarray(data["mean_molecular_weight"], dtype=np.float64)
 
         vmr_np = np.maximum(vmr_np, 1e-300)
@@ -189,6 +279,8 @@ def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
     use_log_axes = True
 
     species_names = _decode_species_names(np.asarray(data["species_names"]))
+    if indices is not None:
+        species_names = tuple(species_names[i] for i in indices)
 
     _assert_strictly_increasing("temperature", T_np)
     _assert_strictly_increasing("pressure", P_np)
@@ -222,10 +314,7 @@ def load_fastchem_grid(npz_path: str | Path) -> FastChemGridModel:
     interp_MH = jnp.asarray(interp_MH_np, dtype=jnp.float64)
     interp_CO = jnp.asarray(interp_CO_np, dtype=jnp.float64)
 
-    species_index_raw = {name: i for i, name in enumerate(species_names)}
-    species_index_canonical: dict[str, int] = {}
-    for i, name in enumerate(species_names):
-        species_index_canonical.setdefault(_canonical_formula(name), i)
+    species_index_raw, species_index_canonical = _species_index(species_names)
 
     axes = (interp_T, interp_P, interp_MH, interp_CO)
     vmr_interp = RegularGridInterpolator(

@@ -1,0 +1,101 @@
+# HD 209458b morning/evening (1.5D) free retrieval after the setup of Maguire et al. (arXiv:2609.16834):
+# isothermal limbs (evening = morning + delta_T), free per-limb chemistry, grey slab cloud per limb (single
+# kappa), R_p fixed, p_ref free, ck R250 TRANS, F444W offset [ppm]; nautilus (n_live 1000, dlogz 0.1) in
+# place of dynesty (nlive 1500, dlogz 1).
+# Changes from the paper YAML:
+#   rt_scheme transit_2d -> transit_1_5d (transit_2d is now the day/night geometry);
+#   cloud: the YAML received was an older setup (exponential profile); the paper's cloud is a single grey
+#     kappa, so here a grey slab per limb (vert_cloud slab + opac_cloud grey_profile);
+#   temperature: T_iso_east = T_iso_west + delta_T_iso_east, delta in [0, 500] K (evening at least as hot,
+#     as published: Delta T_iso = 45 K). The YAML had T_west = T_east + delta (morning forced hotter) plus
+#     dummy T_iso_west / delta_T_iso_east, which the current tagging rejects (no dummies needed);
+#   data and opacity paths made relative; nasa9 dropped (not used by this setup).
+# Written by hand, not by make_limb_configs.py. Same data files as retrieval_NIRCam_Maguire2026.yaml.
+
+data:
+  obs: None
+  obs_east: NIRCam_Maguire2026_evening_east.txt
+  obs_west: NIRCam_Maguire2026_morning_west.txt
+  stellar: None
+
+physics:
+  nlay: 99
+  vert_Tp: isothermal
+  vert_alt: p_ref
+  vert_chem: constant_vmr
+  vert_mu: dynamic
+  vert_cloud: slab
+  opac_line: ck
+  opac_ray: ck
+  opac_cia: ck
+  opac_cloud: grey_profile    # constant grey kappa inside the slab
+  opac_special: None
+  rt_scheme: transit_1_5d
+  contri_func: false
+  refraction: None
+
+opac:
+  wl_master: ../../../opac_data/ck/wl_ck_R250.txt
+  full_grid: False
+  ck: True
+  ck_mix: TRANS
+  line:
+    - {species: H2O, path: ../../../opac_data/ck/H2O_ck_R250.zarr.zip}
+    - {species: CO2, path: ../../../opac_data/ck/CO2_ck_R250.zarr.zip}
+    - {species: CO,  path: ../../../opac_data/ck/CO_ck_R250.zarr.zip}
+    - {species: CH4, path: ../../../opac_data/ck/CH4_ck_R250.zarr.zip}
+  ray:
+    - {species: H2}
+    - {species: He}
+  cia:
+    - {species: H2-H2, path: ../../../opac_data/cia/H2-H2_2011.zarr.zip}
+    - {species: H2-He, path: ../../../opac_data/cia/H2-He_2011.zarr.zip}
+  special: None
+  cloud: None
+
+params:
+  # --- Shared geometry / pressure structure ---
+  - { name: R_s_joint,           dist: delta, value: 1.18655, transform: identity, init: 1.18655}
+  - { name: p_bot_joint,         dist: delta, value: 100.0,   transform: identity, init: 100.0  }
+  - { name: p_top_joint,         dist: delta, value: 1e-8,    transform: identity, init: 1e-8   }
+  - { name: R_p_joint,           dist: delta, value: 1.3969,  transform: identity, init: 1.3969}
+  - { name: log_10_p_ref_joint,  dist: uniform, low: -2, high: 2, transform: logit, init: 1.5161 }
+  - { name: log_10_g_joint,      dist: uniform, low: 2.5, high: 3.5, transform: logit, init: 2.5434 }
+  # --- East (evening) limb: T_iso_east = T_iso_west + delta_T_iso_east ---
+  - { name: delta_T_iso_east,    dist: uniform, low: 0.0, high: 500.0, transform: logit, init: 50.0 }  # T_east = T_west + delta
+  - { name: log_10_f_H2O_east,   dist: uniform, low: -12, high: -2, transform: logit, init: -3.7694 }
+  - { name: log_10_f_CO2_east,   dist: uniform, low: -12, high: -2, transform: logit, init: -6.7493 }
+  - { name: log_10_f_CO_east,    dist: uniform, low: -12, high: -2, transform: logit, init: -9.5740 }
+  - { name: log_10_f_CH4_east,   dist: uniform, low: -12, high: -2, transform: logit, init: -10.2338 }
+  - { name: log_10_p_top_slab_east, dist: uniform, low: -6, high: 2, transform: logit, init: -3.5 }
+  - { name: log_10_dp_slab_east,    dist: uniform, low: -4, high: 2, transform: logit, init: 0.0 }
+  - { name: log_10_k_cld_grey_east, dist: uniform, low: -6.0, high: 6.0, transform: logit, init: -0.0342 }
+  # --- West (morning) limb ---
+  - { name: T_iso_west,          dist: uniform, low: 500.0, high: 3000.0, transform: logit, init: 1834.2983 }
+  - { name: log_10_f_H2O_west,   dist: uniform, low: -12, high: -2, transform: logit, init: -3.7694 }
+  - { name: log_10_f_CO2_west,   dist: uniform, low: -12, high: -2, transform: logit, init: -6.7493 }
+  - { name: log_10_f_CO_west,    dist: uniform, low: -12, high: -2, transform: logit, init: -9.5740 }
+  - { name: log_10_f_CH4_west,   dist: uniform, low: -12, high: -2, transform: logit, init: -10.2338 }
+  - { name: log_10_p_top_slab_west, dist: uniform, low: -6, high: 2, transform: logit, init: -2.5 }
+  - { name: log_10_dp_slab_west,    dist: uniform, low: -4, high: 2, transform: logit, init: 0.0 }
+  - { name: log_10_k_cld_grey_west, dist: uniform, low: -6.0, high: 6.0, transform: logit, init: 0.4055 }
+  # --- Instrument offsets [ppm] ---
+  - { name: offset_F322W2_joint, dist: delta, value: 0, transform: identity, init: 0 }
+  - { name: offset_F444W_joint,  dist: uniform, low: -200, high: 200, transform: logit, init: -10.7387 }
+
+sampling:
+  engine: nautilus
+  nautilus:
+    n_live: 1000
+    f_live: 0.0952        # = dynesty dlogz 0.1 (1 - exp(-0.1))
+    n_shell: 1
+    n_eff: 10000
+    discard_exploration: false
+    equal_weight: true
+    verbose: true
+    seed: 42
+
+runtime:
+  platform: cpu
+  cuda_visible_devices: 0
+  threads: 12

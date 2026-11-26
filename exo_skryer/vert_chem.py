@@ -25,6 +25,7 @@ from .chem_easychem_short_jax import (
 from .chem_fastchem_grid_jax import (
     FastChemGridModel,
     load_fastchem_grid,
+    load_fastchem_grid_species,
     resolve_species_indices,
     select_species,
     interpolate_profile_scan as interpolate_fc_profile_scan,
@@ -107,8 +108,9 @@ def load_fastchem_grid_cache(
     """Load and cache a FastChem 5D interpolation grid."""
     global _FC_GRID_MODEL, _FC_GRID_SPECIES_OUT, _FC_GRID_SPECIES_IDX, _FC_GRID_SOLVER_MODE, _FC_GRID_UNMAPPED
 
-    model = load_fastchem_grid(grid_path)
-    resolved, missing = resolve_species_indices(model, species_out, species_map_override=species_map_override)
+    # Only the species in use are read (all of them from a .npz, just theirs from a .zarr.zip).
+    model, resolved, missing = load_fastchem_grid_species(grid_path, species_out,
+                                                          species_map_override=species_map_override)
     if not resolved:
         raise ValueError(
             "No requested opacity species could be mapped to FastChem grid species. "
@@ -120,7 +122,7 @@ def load_fastchem_grid_cache(
         raise ValueError("fastchem_grid_jax.solver.mode must be one of: scan, vmap")
 
     _FC_GRID_SPECIES_OUT = tuple(resolved.keys())
-    _FC_GRID_MODEL = select_species(model, [resolved[s] for s in _FC_GRID_SPECIES_OUT])
+    _FC_GRID_MODEL = model                       # already holds just these species, in this order
     _FC_GRID_SPECIES_IDX = jnp.arange(len(_FC_GRID_SPECIES_OUT), dtype=jnp.int32)
     _FC_GRID_SOLVER_MODE = mode
     _FC_GRID_UNMAPPED = tuple(missing)

@@ -271,8 +271,8 @@ def build_opacities(cfg, obs, exp_dir: Optional[Path] = None):
                 if exp_dir is None:
                     raise ValueError("cfg.opac.cloud path is relative but exp_dir was not provided.")
                 path = (exp_dir / path).resolve()
-            if path.suffix.lower() in (".h5", ".hdf5"):
-                # Precomputed size-averaged optics grid (opac_cloud: optics_grid).
+            if path.suffix.lower() in (".h5", ".hdf5") or path.name.endswith(".zarr.zip"):
+                # Precomputed size-averaged optics grid (opac_cloud: optics_grid), HDF5 or .zarr.zip.
                 print(f"[cloud_optics] loading optics grid from file: {path}")
                 load_cloud_optics_grid(path, wl_master=lam_master_cut)
             else:
