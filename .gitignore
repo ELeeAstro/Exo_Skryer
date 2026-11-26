@@ -229,3 +229,6 @@ experiments/HD209_JWST_trans_1_5D_setup/*.txt
 experiments/TRIDENT_*/
 # WASP-17b limb map: raw Zenodo record (10.5281/zenodo.21245265, 112 MB); fetch it, don't commit it
 experiments/WASP-17b_JWST_limb_map_setup/zenodo_21245265/
+
+# Local dev notes
+/TODO.md

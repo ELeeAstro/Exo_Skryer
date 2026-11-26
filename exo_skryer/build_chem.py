@@ -498,8 +498,6 @@ def prepare_chemistry_kernel(cfg, chemistry_kernel, opacity_schemes: dict):
                 break
 
     if need_atomic_h:
-        from .vert_chem import constant_vmr, constant_vmr_clr
-
         if chemistry_kernel in (constant_vmr, constant_vmr_clr):
             cfg_param_names = _cfg_param_base_names(cfg)
             if "log_10_H_over_H2" not in cfg_param_names:

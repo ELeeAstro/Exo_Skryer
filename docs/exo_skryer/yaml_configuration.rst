@@ -416,7 +416,7 @@ determines which retrieval parameters (in ``params``) you must provide.
   * Speed (12-core CPU): forward model 1.5-2.7x faster, about half the memory. 3D Iceberg ck:
     23.7 -> 8.5 ms; TRIDENT os: 13.5 -> 8.1 ms. GPUs with slow float64 should gain far more
     (consumer cards run float64 at 1/32-1/64 of the float32 rate). The contraction uses
-  ``Precision.HIGHEST``, so GPUs do not drop to TF32.
+    ``Precision.HIGHEST``, so GPUs do not drop to TF32.
 
 ``physics.emission_mode``
   Only relevant for ``physics.rt_scheme: emission_1d``.

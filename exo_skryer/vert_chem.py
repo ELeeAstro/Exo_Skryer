@@ -24,10 +24,7 @@ from .chem_easychem_short_jax import (
 )
 from .chem_fastchem_grid_jax import (
     FastChemGridModel,
-    load_fastchem_grid,
     load_fastchem_grid_species,
-    resolve_species_indices,
-    select_species,
     interpolate_profile_scan as interpolate_fc_profile_scan,
     interpolate_profile_vmap as interpolate_fc_profile_vmap,
 )
